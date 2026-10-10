@@ -1,0 +1,81 @@
+# IntelliJ and operating system files
+.idea/
+*.iml
+.DS_Store
+
+# Java builds
+target/
+build/
+.gradle/
+*.class
+*.jar
+*.war
+*.ear
+hs_err_pid*
+
+# Python caches, environments, and packaging
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+.tox/
+*.egg-info/
+.ipynb_checkpoints/
+.coverage
+htmlcov/
+
+# Node.js and frontend outputs
+node_modules/
+dist/
+.next/
+.vite/
+coverage/
+*.tsbuildinfo
+
+# Environment files and credentials
+.env
+.env.*
+!.env.example
+*.local
+secrets/
+credentials/
+.aws/
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+
+# Local datasets, persisted services, and temporary outputs
+/data/
+/datasets/
+/local-data/
+/outputs/
+/artifacts/
+/tmp/
+/temp/
+**/spark-warehouse/
+**/metastore_db/
+**/checkpoints/
+/infrastructure/local/volumes/
+*.parquet
+*.avro
+*.orc
+*.duckdb
+*.duckdb.wal
+*.log
+
+# Terraform working files, state, plans, and variable values
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
+# Keep .terraform.lock.hcl versioned if Terraform is approved later.
