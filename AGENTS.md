@@ -45,4 +45,3 @@
 - Include meaningful logging without exposing sensitive information.
 - Update relevant documentation when behavior or architecture changes.
 - Report incomplete work, known limitations, and unverified assumptions.
-

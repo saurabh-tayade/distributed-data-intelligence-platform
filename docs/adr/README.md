@@ -14,4 +14,3 @@ Name records `NNNN-short-title.md`, starting with `0001`. Each record should inc
 A proposed decision is not an implemented feature. Accepted records describe an agreed choice; implementation status must be reported separately. Preserve historical records and link a replacement when superseding a decision.
 
 No standalone ADRs have been accepted yet. The [charter](../charter.md) establishes project constraints; the [architecture overview](../architecture/overview.md) describes the planned design and open choices.
-
