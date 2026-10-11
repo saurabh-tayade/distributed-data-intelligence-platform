@@ -2,7 +2,7 @@
 
 An MSN-inspired Content Intelligence & Analytics Platform exploring how heterogeneous content metadata and engagement events can become reliable analytical data products.
 
-**Current status: Foundation (M0.1).** Implemented: repository layout, project charter, architecture proposal, agent guidelines, and development hygiene. No applications, ingestion jobs, datasets, containers, infrastructure, or deployments exist yet. All pipeline capabilities below are planned.
+**Current status: Foundation (M0.1 and M0.3).** Implemented: repository layout, project charter, architecture proposal, agent guidelines, development hygiene, and documentation CI. No applications, ingestion jobs, datasets, containers, infrastructure, or deployments exist yet. All pipeline capabilities below are planned.
 
 ## Engineering objectives
 
@@ -60,7 +60,7 @@ Batch processing comes first; streaming is introduced incrementally. Consumers m
 | `infrastructure/local/` | Future local environment definitions |
 | `infrastructure/aws/` | Reserved for explicitly approved cloud validation |
 | `tests/` | Future integration and end-to-end tests |
-| `scripts/` | Future development and operational helpers |
+| `scripts/` | Repository checks and future operational helpers |
 
 Empty directories contain `.gitkeep` placeholders so the layout survives a future clone.
 
@@ -68,7 +68,7 @@ Empty directories contain `.gitkeep` placeholders so the layout survives a futur
 
 | Milestone | Planned outcome |
 | --- | --- |
-| M0 | Repository foundation and development conventions (M0.1 complete) |
+| M0 | Repository foundation and development conventions (M0.1 and M0.3 implemented) |
 | M1 | Source contracts and reproducible local environment |
 | M2 | Batch ingestion into Bronze |
 | M3 | Spark transformations into Silver |
@@ -79,13 +79,30 @@ Empty directories contain `.gitkeep` placeholders so the layout survives a futur
 | M8 | Reproducible benchmarks and optimization |
 | M9 | Optional, approved temporary AWS validation and teardown |
 
-Only M0.1 is implemented. M1–M9 are not started; M9 is outside the local MVP.
+M0.1 and M0.3 are implemented. M1–M9 are not started; M9 is outside the local MVP.
 
 ## Getting started
 
-Start with the [charter](docs/charter.md), [architecture proposal](docs/architecture/overview.md), and [agent guidelines](AGENTS.md). No installation or runtime command is available at this stage. `.env.example` is a documented placeholder without credentials.
+Start with the [charter](docs/charter.md), [architecture proposal](docs/architecture/overview.md), and [agent guidelines](AGENTS.md). No application runtime is available at this stage. `.env.example` is a documented placeholder without credentials.
 
 Record consequential choices using the [ADR process](docs/adr/README.md). This project is inspired by a content portal domain and is not affiliated with MSN or Microsoft.
+
+## Documentation checks (M0.3)
+
+[CI](.github/workflows/ci.yml) runs on pull requests targeting `main` and pushes to `main`, with read-only repository permissions. It checks Markdown formatting, local documentation links, and repository hygiene.
+
+From the repository root, with Git, Bash, Node.js 24.x, and npm installed:
+
+```sh
+npm ci --ignore-scripts --no-audit --no-fund
+npm run check
+```
+
+Run checks separately with `npm run lint:markdown` or `npm run check:hygiene`. The npm manifest contains development tooling only; it does not introduce a frontend or application. Exact tool versions and their dependency graph are recorded in `package-lock.json`. Installation requires npm registry access; the checks run offline afterward.
+
+Markdown checks use [markdownlint-cli2](https://github.com/DavidAnson/markdownlint-cli2) and [markdownlint-rule-relative-links](https://github.com/theoludwig/markdownlint-rule-relative-links). Default formatting rules apply except line length, preserving the existing long prose and tables. Non-ignored Markdown files are checked, including new files before staging. Markdown links and images are checked for existing local targets and Markdown heading fragments. External URL availability and HTML links are not checked; this keeps CI independent of third-party website availability.
+
+The hygiene script checks the entire tracked working tree and new non-ignored files for Git whitespace errors (trailing whitespace, extra blank lines at EOF, and spaces before indentation tabs) and conflict markers. It also rejects tracked files matching ignore rules, including force-added local data or environment files. This is not a secret scanner or full EditorConfig validator; sensitive content in otherwise allowed files still requires review.
 
 ## Project Intent & AI Assistance Disclosure
 

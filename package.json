@@ -1,0 +1,16 @@
+{
+  "name": "distributed-data-intelligence-platform-checks",
+  "private": true,
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "check": "npm run lint:markdown && npm run check:hygiene",
+    "lint:markdown": "markdownlint-cli2",
+    "check:hygiene": "bash scripts/check-hygiene.sh"
+  },
+  "devDependencies": {
+    "markdownlint-cli2": "0.23.3",
+    "markdownlint-rule-relative-links": "5.1.3"
+  }
+}
