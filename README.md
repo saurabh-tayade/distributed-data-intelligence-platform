@@ -2,7 +2,7 @@
 
 An MSN-inspired Content Intelligence & Analytics Platform exploring how heterogeneous content metadata and engagement events can become reliable analytical data products.
 
-**Current status: Foundation (M0.1 and M0.3).** Implemented: repository layout, project charter, architecture proposal, agent guidelines, development hygiene, and documentation CI. No applications, ingestion jobs, datasets, containers, infrastructure, or deployments exist yet. All pipeline capabilities below are planned.
+**Current status: Foundation M0.1 and M0.3 complete; first M1 RSS/Atom contract implemented.** Repository conventions, documentation CI, and a Java 21 raw feed retrieval library with offline tests exist. Storage, parsing, jobs, containers, and deployments remain planned.
 
 ## Engineering objectives
 
@@ -53,7 +53,7 @@ Batch processing comes first; streaming is introduced incrementally. Consumers m
 | Path | Purpose |
 | --- | --- |
 | `docs/` | Charter, architecture, decision records, and future benchmarks |
-| `ingestion/` | Future source adapters and ingestion jobs |
+| `ingestion/` | Java 21 RSS/Atom retrieval contract; future ingestion jobs |
 | `processing/` | Future Spark transformations and data quality checks |
 | `services/` | Future APIs and application services |
 | `frontend/` | Future analytics UI |
@@ -79,11 +79,11 @@ Empty directories contain `.gitkeep` placeholders so the layout survives a futur
 | M8 | Reproducible benchmarks and optimization |
 | M9 | Optional, approved temporary AWS validation and teardown |
 
-M0.1 and M0.3 are implemented. M1–M9 are not started; M9 is outside the local MVP.
+M0.1 and M0.3 are implemented. M1 has begun with the RSS/Atom contract; M2–M9 are not started; M9 is outside the local MVP.
 
 ## Getting started
 
-Start with the [charter](docs/charter.md), [architecture proposal](docs/architecture/overview.md), and [agent guidelines](AGENTS.md). No application runtime is available at this stage. `.env.example` is a documented placeholder without credentials.
+Start with the [charter](docs/charter.md), [architecture proposal](docs/architecture/overview.md), and [agent guidelines](AGENTS.md). The first ingestion library requires JDK 21; see the [RSS/Atom contract](docs/architecture/rss-ingestion.md). Run its offline tests with `bash scripts/test-ingestion.sh`. No application service is available yet. `.env.example` is a documented placeholder without credentials.
 
 Record consequential choices using the [ADR process](docs/adr/README.md). This project is inspired by a content portal domain and is not affiliated with MSN or Microsoft.
 
