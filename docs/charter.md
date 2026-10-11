@@ -4,14 +4,14 @@
 
 Build a public, portfolio-quality, local-first Content Intelligence & Analytics Platform inspired by a large content portal. Demonstrate heterogeneous ingestion, distributed transformations, trustworthy analytical layers, SQL exploration, and multiple consumers with reproducible evidence.
 
-Foundation documentation is implemented. The capabilities in this charter are planned, not delivered.
+Foundation documentation and the first Java 21 RSS/Atom retrieval contract are implemented. The complete pipeline capabilities in this charter remain planned.
 
 ## MVP scope
 
 - Content metadata from a documented batch source and engagement events from a reproducible event source, using synthetic or appropriately licensed inputs introduced in a later milestone.
 - Batch ingestion and a bounded streaming use case with documented event-time and replay behavior.
 - Bronze raw records, Silver validated records, and Gold content/engagement aggregates in object storage.
-- Spark batch transformations and incremental processing; JSON landing data and Parquet analytical outputs.
+- Spark batch transformations and incremental processing; original RSS/Atom payloads (JSON where appropriate for other sources) and Parquet analytical outputs.
 - SQL analysis, a read API, and a small analytics dashboard as distinct consumers.
 - A Docker Compose environment that runs locally, with documented resource requirements established through measurement.
 - Tests for functional changes, data quality checks, failure/replay validation, and a reproducible benchmark.
@@ -39,7 +39,7 @@ Develop locally first; add services only when justified. Prefer small, understan
 | M8 — Benchmarks | Reproducible workload, hardware/configuration details, correctness checks, and measured results |
 | M9 — Optional AWS validation | Explicitly approved bounded experiment, local/cloud comparison, cost report, and verified teardown |
 
-M0.1 is complete; M1–M9 are not started. Milestones express intended sequencing, not delivery dates.
+M0.1 is complete; M1 has begun with the RSS/Atom contract; M2–M9 are not started. Milestones express intended sequencing, not delivery dates.
 
 ## Success criteria
 

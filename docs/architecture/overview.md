@@ -1,6 +1,6 @@
 # Architecture overview
 
-**Status: proposed architecture.** Only repository foundation files are implemented. No component described below is running or provisioned.
+**Status: proposed platform architecture, with the first RSS/Atom retrieval contract implemented.** See the [raw ingestion contract](rss-ingestion.md). Storage and processing components remain unimplemented.
 
 ## Sources and ingestion
 
@@ -12,7 +12,7 @@ Batch adapters will land inputs with source identifiers, ingestion timestamps, a
 
 | Layer | Planned responsibility | Candidate representation |
 | --- | --- | --- |
-| Bronze | Preserve raw payloads and provenance for audit and replay | JSON in local MinIO object storage |
+| Bronze | Preserve raw payloads and provenance for audit and replay | Original feed bytes plus metadata for RSS/Atom; JSON for appropriate sources; local MinIO proposed |
 | Silver | Validate schemas, normalize types, deduplicate by defined keys, and isolate rejected records | Parquet with documented schemas |
 | Gold | Publish curated content and engagement aggregates with explicit grains and metric definitions | Parquet consumed through SQL or serving projections |
 
@@ -53,4 +53,4 @@ No AWS infrastructure may be introduced without explicit approval. See the [char
 
 ## Decisions and open choices
 
-The foundation establishes local-first development, incremental delivery, a layered analytical architecture, and an honest distinction between plans and working features. Broker selection, initial sources, runtime versions, orchestration details, and cloud services remain open. Record consequential implementation decisions using the [ADR process](../adr/README.md).
+The foundation establishes local-first development, incremental delivery, a layered analytical architecture, and an honest distinction between plans and working features. Broker selection, concrete source feeds, processing runtime versions, orchestration details, and cloud services remain open. The ingestion contract targets Java 21. Record consequential implementation decisions using the [ADR process](../adr/README.md).
