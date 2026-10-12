@@ -5,8 +5,8 @@ if [[ "$(javac -version 2>&1)" != javac\ 21.* ]]; then
   printf 'Java 21 JDK is required; set PATH to its bin directory.\n' >&2
   exit 1
 fi
-classes=$(mktemp -d "${TMPDIR:-/tmp}/rss-tests.XXXXXX")
-trap 'rm -rf "$classes"' EXIT
-find ingestion/src/main/java ingestion/src/test/java -name '*.java' -print > "$classes/sources"
-javac --release 21 --add-modules jdk.httpserver -Xlint:all -Werror -d "$classes" @"$classes/sources"
-java --add-modules jdk.httpserver -cp "$classes" platform.ingestion.rss.HttpFeedFetcherTest
+if ! command -v mvn >/dev/null 2>&1; then
+  printf 'Maven 3.9.16 or compatible Maven 3.9+ is required on PATH.\n' >&2
+  exit 1
+fi
+exec mvn -B -ntp -f ingestion/pom.xml test "$@"

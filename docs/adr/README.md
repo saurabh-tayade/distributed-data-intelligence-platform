@@ -14,3 +14,5 @@ Name records `NNNN-short-title.md`, starting with `0001`. Each record should inc
 A proposed decision is not an implemented feature. Accepted records describe an agreed choice; implementation status must be reported separately. Preserve historical records and link a replacement when superseding a decision.
 
 [ADR 0001](0001-rss-raw-ingestion-contract.md) records the accepted RSS/Atom raw ingestion boundary and bounded buffering design. The [charter](../charter.md) establishes project constraints; the [architecture overview](../architecture/overview.md) describes the planned design and open choices.
+
+[ADR 0002](0002-bronze-object-storage.md) proposes Bronze S3 persistence, local SeaweedFS, and the Maven build introduced for external Java dependencies.

@@ -2,7 +2,7 @@
 
 An MSN-inspired Content Intelligence & Analytics Platform exploring how heterogeneous content metadata and engagement events can become reliable analytical data products.
 
-**Current status: Foundation M0.1 and M0.3 complete; first M1 RSS/Atom contract implemented.** Repository conventions, documentation CI, and a Java 21 raw feed retrieval library with offline tests exist. Storage, parsing, jobs, containers, and deployments remain planned.
+**Current status: M1 RSS retrieval and Bronze storage contracts implemented.** The Java 21 Maven module includes bounded raw retrieval, S3 persistence, and offline tests. A pinned local SeaweedFS Compose configuration and opt-in integration tests are provided; SeaweedFS 4.48 upload/read-back, integrity, retries, and restart persistence have passed local integration validation. Parsing, scheduled jobs, and downstream processing remain planned.
 
 ## Engineering objectives
 
@@ -21,13 +21,13 @@ An MSN-inspired Content Intelligence & Analytics Platform exploring how heteroge
 | Distributed processing | Apache Spark, PySpark, Spark SQL |
 | Operational storage | PostgreSQL |
 | Event transport | Kafka or Redpanda (selection deferred) |
-| Object storage | MinIO locally; Amazon S3 for approved cloud validation |
+| Object storage | SeaweedFS locally (ADR 0002 proposed); Amazon S3 for approved cloud validation |
 | Data formats | JSON, Parquet; Iceberg deferred |
 | SQL analytics | DuckDB locally; Athena as a cloud candidate |
 | Frontend | React, TypeScript |
 | Local orchestration | Docker Compose |
 
-These are directions, not installed dependencies or compatibility guarantees.
+Most entries remain directions. Java ingestion now uses Maven and AWS SDK v2; the SeaweedFS 4.48 local integration and restart checks have passed. No cloud compatibility guarantee is claimed.
 
 ## Planned high-level pipeline
 
@@ -53,11 +53,11 @@ Batch processing comes first; streaming is introduced incrementally. Consumers m
 | Path | Purpose |
 | --- | --- |
 | `docs/` | Charter, architecture, decision records, and future benchmarks |
-| `ingestion/` | Java 21 RSS/Atom retrieval contract; future ingestion jobs |
+| `ingestion/` | Java 21 Maven module: RSS retrieval and Bronze S3 storage |
 | `processing/` | Future Spark transformations and data quality checks |
 | `services/` | Future APIs and application services |
 | `frontend/` | Future analytics UI |
-| `infrastructure/local/` | Future local environment definitions |
+| `infrastructure/local/` | Pinned SeaweedFS Compose configuration |
 | `infrastructure/aws/` | Reserved for explicitly approved cloud validation |
 | `tests/` | Future integration and end-to-end tests |
 | `scripts/` | Repository checks and future operational helpers |
@@ -79,17 +79,17 @@ Empty directories contain `.gitkeep` placeholders so the layout survives a futur
 | M8 | Reproducible benchmarks and optimization |
 | M9 | Optional, approved temporary AWS validation and teardown |
 
-M0.1 and M0.3 are implemented. M1 has begun with the RSS/Atom contract; M2–M9 are not started; M9 is outside the local MVP.
+M0.1 and M0.3 are implemented. M1 includes RSS/Atom and Bronze storage contracts; M2–M9 are not started; M9 is outside the local MVP.
 
 ## Getting started
 
-Start with the [charter](docs/charter.md), [architecture proposal](docs/architecture/overview.md), and [agent guidelines](AGENTS.md). The first ingestion library requires JDK 21; see the [RSS/Atom contract](docs/architecture/rss-ingestion.md). Run its offline tests with `bash scripts/test-ingestion.sh`. No application service is available yet. `.env.example` is a documented placeholder without credentials.
+Start with the [charter](docs/charter.md), [architecture proposal](docs/architecture/overview.md), and [agent guidelines](AGENTS.md). The ingestion library requires JDK 21 and Maven 3.9.16 or compatible Maven 3.9+. Run `mvn -B -ntp -f ingestion/pom.xml verify` or `bash scripts/test-ingestion.sh`. See the [RSS/Atom contract](docs/architecture/rss-ingestion.md), [Bronze contract](docs/architecture/bronze-storage.md), and [local SeaweedFS setup](docs/local-seaweedfs.md). `.env.example` documents required local-only configuration; credentials stay in ignored `.env`. No application service or scheduler is introduced.
 
 Record consequential choices using the [ADR process](docs/adr/README.md). This project is inspired by a content portal domain and is not affiliated with MSN or Microsoft.
 
 ## Documentation checks (M0.3)
 
-[CI](.github/workflows/ci.yml) runs on pull requests targeting `main` and pushes to `main`, with read-only repository permissions. It checks Markdown formatting, local documentation links, and repository hygiene.
+[CI](.github/workflows/ci.yml) runs on pull requests targeting `main` and pushes to `main`, with read-only repository permissions. It checks Markdown formatting, local documentation links, repository hygiene, and Maven Java 21 tests. Default CI needs no storage service or AWS credentials.
 
 From the repository root, with Git, Bash, Node.js 24.x, and npm installed:
 
