@@ -1,6 +1,6 @@
 # Architecture overview
 
-**Status: proposed platform architecture, with the first RSS/Atom retrieval contract implemented.** See the [raw ingestion contract](rss-ingestion.md). Storage and processing components remain unimplemented.
+**Status: proposed platform architecture, with the first RSS/Atom retrieval contract implemented.** See the [raw ingestion contract](rss-ingestion.md). The [Bronze storage contract](bronze-storage.md) is implemented with a local SeaweedFS deployment definition; SeaweedFS 4.48 local integration and restart persistence have passed validation, while Amazon S3 remains untested. Processing remains unimplemented.
 
 ## Sources and ingestion
 
@@ -12,11 +12,11 @@ Batch adapters will land inputs with source identifiers, ingestion timestamps, a
 
 | Layer | Planned responsibility | Candidate representation |
 | --- | --- | --- |
-| Bronze | Preserve raw payloads and provenance for audit and replay | Original feed bytes plus metadata for RSS/Atom; JSON for appropriate sources; local MinIO proposed |
+| Bronze | Preserve raw payloads and provenance for audit and replay | Original feed bytes plus metadata for RSS/Atom; JSON for appropriate sources; local SeaweedFS proposed in ADR 0002 |
 | Silver | Validate schemas, normalize types, deduplicate by defined keys, and isolate rejected records | Parquet with documented schemas |
 | Gold | Publish curated content and engagement aggregates with explicit grains and metric definitions | Parquet consumed through SQL or serving projections |
 
-Partitions, schema evolution, retention, write atomicity, and replay semantics require explicit design before implementation. Parquet alone does not provide transactions or upserts. Iceberg is deferred; it may be reconsidered if table-management requirements justify it.
+The RSS Bronze adapter defines deterministic keys and metadata-last publication under a single-writer precondition. Schema evolution, retention, downstream partitions, and broader replay semantics still require design. Parquet alone does not provide transactions or upserts. Iceberg is deferred; it may be reconsidered if table-management requirements justify it.
 
 ## Distributed processing
 
@@ -34,7 +34,7 @@ Object storage is the analytical system of record. PostgreSQL is not intended to
 
 ## Local-first deployment direction
 
-Docker Compose is planned for the local services actually needed at each milestone: object storage, broker, PostgreSQL, and processing/consumer components. No Compose definitions or containers are introduced in M0.1. Keep data and service volumes outside version control. Establish startup, health checks, resource limits, and teardown instructions incrementally. Local execution must not depend on AWS access.
+A single-node SeaweedFS Compose definition is provided for M1; see [local setup](../local-seaweedfs.md). Other services remain deferred until needed. SeaweedFS 4.48 local integration and restart persistence were validated on 2026-10-12; Amazon S3 compatibility has not been tested. Keep data and service volumes outside version control. Establish startup, health checks, resource limits, and teardown instructions incrementally. Local execution must not depend on AWS access.
 
 ## Candidate AWS mappings
 
@@ -42,7 +42,7 @@ These mappings are options for an approved, temporary validation exercise, not d
 
 | Local role | AWS candidate | Validation consideration |
 | --- | --- | --- |
-| MinIO object storage | Amazon S3 | Verify APIs, authentication, and storage behavior used by jobs |
+| SeaweedFS S3-compatible storage | Amazon S3 | Verify APIs, authentication, and storage behavior used by jobs |
 | Kafka-compatible broker | Amazon MSK | Evaluate cost and operational fit before selecting |
 | Spark processing | Amazon EMR or AWS Glue | Check runtime, library, and connector compatibility |
 | PostgreSQL | Amazon RDS for PostgreSQL | Provision only if the validation requires serving state |

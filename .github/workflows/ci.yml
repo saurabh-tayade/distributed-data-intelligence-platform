@@ -31,16 +31,16 @@ jobs:
         run: npm run check:hygiene
 
   ingestion:
-    name: Java 21 ingestion contract
+    name: Java 21 ingestion and Bronze storage
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: Run offline ingestion tests with runner JDK 21
+      - name: Run Maven unit tests with runner JDK 21
         run: |
           export JAVA_HOME="$JAVA_HOME_21_X64"
           export PATH="$JAVA_HOME/bin:$PATH"
-          bash scripts/test-ingestion.sh
+          mvn -B -ntp -f ingestion/pom.xml verify

@@ -12,8 +12,13 @@ import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/** Dependency-free contract tests; assertions are always active. */
+/** Original Day 2 assertions, now discovered by JUnit; assertions are always active. */
 public final class HttpFeedFetcherTest {
+    @org.junit.jupiter.api.Test
+    void existingContractRegressions() throws Exception {
+        main(new String[0]);
+    }
+
     public static void main(String[] args) throws Exception {
         invalidSources();
         subscriberBounds();
