@@ -103,3 +103,7 @@ Local integration validation **PASSED on 2026-10-12** on macOS ARM64 using Docke
 The existing SLF4J no-provider warning did not affect test results. These checks validate the exercised operations on this local release and configuration, not every S3 operation, crash recovery, or production durability. **Amazon S3 compatibility has not been tested.**
 
 Single-node storage has no high availability or off-host backup. Local HTTP/static credentials are development settings. Optional SDK checksums and AWS chunked encoding are disabled for this local client; the metadata SHA-256 is the application integrity check. Amazon S3 requires separately approved configuration and compatibility validation, not SeaweedFS-specific application code. See [Bronze architecture](architecture/bronze-storage.md) for publication and failure semantics.
+
+## Day 4 batch workflow
+
+The [batch ingestion guide](architecture/batch-ingestion.md) documents the executable CLI, public catalog, separate opt-in live profile, object inspection and verified two-run results. It uses this same bucket and persistent volume; no additional container or data store is introduced.

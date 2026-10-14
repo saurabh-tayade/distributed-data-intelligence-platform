@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <id>https://example.com/science</id><title>Imaginary Science Notes</title>
+  <updated>2026-10-12T12:00:00Z</updated><author><name>Fictional Research Desk</name></author>
+  <entry><id>https://example.com/science/1</id><title>Étoile experiment</title>
+    <updated>2026-10-12T12:00:00Z</updated><published>2026-10-11T09:00:00Z</published>
+    <link href="https://example.com/science/1"/><category term="astronomy"/>
+    <summary>An invented observation of a paper star.</summary></entry>
+  <entry><id>https://example.com/science/2</id><title>水 and light</title>
+    <updated>2026-10-12T11:00:00Z</updated><summary>A fictional tabletop experiment.</summary></entry>
+</feed>

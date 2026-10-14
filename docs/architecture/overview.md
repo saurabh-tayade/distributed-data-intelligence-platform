@@ -1,6 +1,6 @@
 # Architecture overview
 
-**Status: proposed platform architecture, with the first RSS/Atom retrieval contract implemented.** See the [raw ingestion contract](rss-ingestion.md). The [Bronze storage contract](bronze-storage.md) is implemented with a local SeaweedFS deployment definition; SeaweedFS 4.48 local integration and restart persistence have passed validation, while Amazon S3 remains untested. Processing remains unimplemented.
+**Status: proposed platform architecture, with RSS/Atom retrieval, Bronze storage and the first batch CLI implemented.** See the [raw ingestion contract](rss-ingestion.md). The [Bronze storage contract](bronze-storage.md) is implemented with a local SeaweedFS deployment definition; SeaweedFS 4.48 local integration and restart persistence have passed validation, while Amazon S3 remains untested. Processing remains unimplemented.
 
 ## Sources and ingestion
 
@@ -12,7 +12,7 @@ Batch adapters will land inputs with source identifiers, ingestion timestamps, a
 
 | Layer | Planned responsibility | Candidate representation |
 | --- | --- | --- |
-| Bronze | Preserve raw payloads and provenance for audit and replay | Original feed bytes plus metadata for RSS/Atom; JSON for appropriate sources; local SeaweedFS proposed in ADR 0002 |
+| Bronze | Preserve raw payloads and provenance for audit and replay | Original feed bytes plus metadata for RSS/Atom; JSON for appropriate sources; local SeaweedFS accepted in ADR 0002 |
 | Silver | Validate schemas, normalize types, deduplicate by defined keys, and isolate rejected records | Parquet with documented schemas |
 | Gold | Publish curated content and engagement aggregates with explicit grains and metric definitions | Parquet consumed through SQL or serving projections |
 
@@ -54,3 +54,5 @@ No AWS infrastructure may be introduced without explicit approval. See the [char
 ## Decisions and open choices
 
 The foundation establishes local-first development, incremental delivery, a layered analytical architecture, and an honest distinction between plans and working features. Broker selection, concrete source feeds, processing runtime versions, orchestration details, and cloud services remain open. The ingestion contract targets Java 21. Record consequential implementation decisions using the [ADR process](../adr/README.md).
+
+The [M1 Day 4 batch workflow](batch-ingestion.md) connects the existing boundaries, with a public source catalog, synthetic tests and verified local publisher snapshots.

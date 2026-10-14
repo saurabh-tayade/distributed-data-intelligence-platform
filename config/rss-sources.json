@@ -1,0 +1,5 @@
+[
+  {"sourceId": "nasa-technology", "feedUri": "https://www.nasa.gov/technology/feed/", "enabled": true},
+  {"sourceId": "guardian-world", "feedUri": "https://www.theguardian.com/world/rss", "enabled": true},
+  {"sourceId": "xkcd", "feedUri": "https://xkcd.com/atom.xml", "enabled": true}
+]

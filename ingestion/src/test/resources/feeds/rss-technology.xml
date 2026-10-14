@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+  <title>Fictional Technology Gazette</title><link>https://example.com/technology</link>
+  <description>Original synthetic development fixture</description>
+  <item><guid isPermaLink="false">technology-001</guid><title>Café workshop opens</title>
+    <link>https://example.com/technology/1</link><description>Neighbors explore imaginary ideas &amp; prototypes.</description>
+    <pubDate>Mon, 12 Oct 2026 10:00:00 GMT</pubDate><category>technology</category></item>
+  <item><title>A quieter afternoon</title><description>A fictional report without optional date or category.</description></item>
+</channel></rss>
