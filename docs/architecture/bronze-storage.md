@@ -16,7 +16,7 @@ RssSource -> HttpFeedFetcher -> RawFeed -> BronzeStorage -> S3BronzeStorage
 
 `BronzeStorage.write(RssSource, RawFeed)` validates matching identities, preserves bytes, and returns a `BronzeReceipt` containing bucket, payload/metadata keys, ingestion UUID, actual length, and SHA-256. The adapter takes an already configured `S3Client`; the caller owns its lifecycle. No bucket creation, polling, fetching, parsing, or batch orchestration occurs inside storage. Already fetched data may be archived even if its source is now disabled or its HTTP status is non-2xx. The storage caller decides whether to archive fetch-error responses.
 
-Day 2 production contracts are unchanged. [ADR 0001](../adr/0001-rss-raw-ingestion-contract.md) remains the historical accepted retrieval decision. [ADR 0002](../adr/0002-bronze-object-storage.md) proposes this storage contract and the Maven migration; owner acceptance is pending.
+Day 2 production contracts are unchanged. [ADR 0001](../adr/0001-rss-raw-ingestion-contract.md) remains the historical accepted retrieval decision. [ADR 0002](../adr/0002-bronze-object-storage.md) records the accepted storage contract and Maven migration.
 
 ## Object names and metadata
 
@@ -89,3 +89,5 @@ A RawFeed snapshot and metadata are buffered; the SDK receives a repeatable stre
 JUnit discovers the existing Day 2 regression suite through one wrapper test; every existing assertion remains. Bronze tests cover schema, optional values, checksum, byte preservation, UTC keys, Unicode encoding, input validation, receipts, retries, conflicts, partial writes, uncertain outcomes, and error causes. A real-SDK loopback stub checks S3 HTTP requests but is **not** a SeaweedFS compatibility test.
 
 The opt-in `seaweedfs-it` Failsafe profile performs real object upload/read-back and identical retries, with a unique source/UUID prefix and no deletions. A read-only mode verifies the same objects after manual container restart. SeaweedFS 4.48 integration and read-only verification after container restart **PASSED** on 2026-10-12, including payload byte equality, metadata, SHA-256, and identical retries. All 23 unit tests also passed on both runs. See [local validation evidence](../local-seaweedfs.md#execution-status-and-portability). Amazon S3 compatibility has not been tested.
+
+The [Day 4 batch workflow](batch-ingestion.md) now connects retrieval to this boundary and records verified live publisher observations. Each new fetch keeps its own UUID; the runner writes only successful retrievals.

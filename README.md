@@ -2,7 +2,7 @@
 
 An MSN-inspired Content Intelligence & Analytics Platform exploring how heterogeneous content metadata and engagement events can become reliable analytical data products.
 
-**Current status: M1 RSS retrieval and Bronze storage contracts implemented.** The Java 21 Maven module includes bounded raw retrieval, S3 persistence, and offline tests. A pinned local SeaweedFS Compose configuration and opt-in integration tests are provided; SeaweedFS 4.48 upload/read-back, integrity, retries, and restart persistence have passed local integration validation. Parsing, scheduled jobs, and downstream processing remain planned.
+**Current status: M1 Day 4 end-to-end RSS/Atom batch ingestion implemented.** The Java 21 Maven module includes a strict JSON source catalog, sequential batch runner, executable CLI, bounded raw retrieval, S3 persistence, and synthetic offline tests. Two live batches across NASA, Guardian and xkcd passed local Bronze read-back verification. A pinned local SeaweedFS Compose configuration and opt-in integration tests are provided; SeaweedFS 4.48 upload/read-back, integrity, retries, and restart persistence have passed local integration validation. Parsing, scheduled jobs, and downstream processing remain planned.
 
 ## Engineering objectives
 
@@ -21,7 +21,7 @@ An MSN-inspired Content Intelligence & Analytics Platform exploring how heteroge
 | Distributed processing | Apache Spark, PySpark, Spark SQL |
 | Operational storage | PostgreSQL |
 | Event transport | Kafka or Redpanda (selection deferred) |
-| Object storage | SeaweedFS locally (ADR 0002 proposed); Amazon S3 for approved cloud validation |
+| Object storage | SeaweedFS locally (ADR 0002 accepted); Amazon S3 for approved cloud validation |
 | Data formats | JSON, Parquet; Iceberg deferred |
 | SQL analytics | DuckDB locally; Athena as a cloud candidate |
 | Frontend | React, TypeScript |
@@ -52,8 +52,9 @@ Batch processing comes first; streaming is introduced incrementally. Consumers m
 
 | Path | Purpose |
 | --- | --- |
+| `config/` | Public RSS/Atom source catalog |
 | `docs/` | Charter, architecture, decision records, and future benchmarks |
-| `ingestion/` | Java 21 Maven module: RSS retrieval and Bronze S3 storage |
+| `ingestion/` | Java 21 Maven module: RSS retrieval, batch CLI and Bronze S3 storage |
 | `processing/` | Future Spark transformations and data quality checks |
 | `services/` | Future APIs and application services |
 | `frontend/` | Future analytics UI |
@@ -79,11 +80,22 @@ Empty directories contain `.gitkeep` placeholders so the layout survives a futur
 | M8 | Reproducible benchmarks and optimization |
 | M9 | Optional, approved temporary AWS validation and teardown |
 
-M0.1 and M0.3 are implemented. M1 includes RSS/Atom and Bronze storage contracts; M2–M9 are not started; M9 is outside the local MVP.
+M0.1 and M0.3 are implemented. M1 includes RSS/Atom retrieval, Bronze storage, and the first executable batch workflow. The broader M2–M9 roadmap remains planned; M9 is outside the local MVP.
 
 ## Getting started
 
 Start with the [charter](docs/charter.md), [architecture proposal](docs/architecture/overview.md), and [agent guidelines](AGENTS.md). The ingestion library requires JDK 21 and Maven 3.9.16 or compatible Maven 3.9+. Run `mvn -B -ntp -f ingestion/pom.xml verify` or `bash scripts/test-ingestion.sh`. See the [RSS/Atom contract](docs/architecture/rss-ingestion.md), [Bronze contract](docs/architecture/bronze-storage.md), and [local SeaweedFS setup](docs/local-seaweedfs.md). `.env.example` documents required local-only configuration; credentials stay in ignored `.env`. No application service or scheduler is introduced.
+
+Run the first batch after exporting the local `.env` settings:
+
+```sh
+set -a
+. ./.env
+set +a
+bash scripts/run-batch.sh config/rss-sources.json
+```
+
+See [batch architecture, data policy, CLI and live results](docs/architecture/batch-ingestion.md). GitHub contains code, public configuration, synthetic fixtures, tests and documentation; SeaweedFS contains actual publisher snapshots and ingestion metadata. Bronze preserves raw bytes; article parsing and normalization remain future Silver work.
 
 Record consequential choices using the [ADR process](docs/adr/README.md). This project is inspired by a content portal domain and is not affiliated with MSN or Microsoft.
 

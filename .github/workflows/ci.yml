@@ -44,3 +44,5 @@ jobs:
           export JAVA_HOME="$JAVA_HOME_21_X64"
           export PATH="$JAVA_HOME/bin:$PATH"
           mvn -B -ntp -f ingestion/pom.xml verify
+      - name: Check batch launch script arguments without ingestion
+        run: bash scripts/test-run-batch.sh
