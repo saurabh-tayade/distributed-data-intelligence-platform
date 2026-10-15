@@ -46,3 +46,35 @@ jobs:
           mvn -B -ntp -f ingestion/pom.xml verify
       - name: Check batch launch script arguments without ingestion
         run: bash scripts/test-run-batch.sh
+
+  processing:
+    name: Python 3.12 and local Spark processing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      SPARK_LOCAL_IP: 127.0.0.1
+      TZ: UTC
+      PYTHONPATH: processing
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12.15'
+          cache: pip
+          cache-dependency-path: |
+            processing/requirements.txt
+            processing/requirements-bronze.txt
+      - name: Install pinned processing dependencies
+        run: python -m pip install -r processing/requirements-bronze.txt
+      - name: Run all processing tests with runner JDK 21
+        run: |
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          export PYSPARK_PYTHON="$(command -v python)"
+          python --version
+          java -version
+          python -m unittest discover -s processing/tests -v

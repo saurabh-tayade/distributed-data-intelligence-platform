@@ -4,7 +4,7 @@
 
 Build a public, portfolio-quality, local-first Content Intelligence & Analytics Platform inspired by a large content portal. Demonstrate heterogeneous ingestion, distributed transformations, trustworthy analytical layers, SQL exploration, and multiple consumers with reproducible evidence.
 
-Foundation documentation and the first Java 21 RSS/Atom retrieval contract are implemented. The complete pipeline capabilities in this charter remain planned.
+M1 delivered Java 21 local RSS/Atom batch ingestion, SeaweedFS Bronze persistence, Spark Silver normalization and verified Bronze-to-Silver integration with local Parquet. The full batch/streaming, Gold and consumer objectives below remain the long-term MVP direction. See the [M1 closeout record](m1-closeout.md).
 
 ## MVP scope
 
@@ -29,9 +29,9 @@ Develop locally first; add services only when justified. Prefer small, understan
 | Milestone | Deliverable and exit evidence |
 | --- | --- |
 | M0 — Foundation | M0.1: repository layout, charter, architecture proposal, conventions, and Git on main; later setup work is tracked separately |
-| M1 — Local environment and contracts | Select initial sources, schemas, broker, and compatible versions; document local startup and resource needs |
-| M2 — Batch Bronze | Repeatable ingestion with provenance, failure reporting, and replay/idempotency tests |
-| M3 — Silver processing | Spark validation, normalization, deduplication, and handling of rejected records with tests |
+| M1 — Local environment and contracts | Complete: sources/contracts, local batch ingestion, Bronze storage, Spark Silver processing and integration; broker selection and resource benchmarking deferred |
+| M2 — Scope pending planning | Original batch Bronze objective delivered early in M1; no new M2 requirements approved |
+| M3 — Silver processing | Original local validation/normalization and rejection-handling objective delivered early in M1; accepted semantics preserve repeated observations rather than deduplicating articles |
 | M4 — Gold and SQL | Defined aggregate grains and metrics; SQL results reconciled against known test inputs |
 | M5 — Streaming | Events reach analytical layers; late events, checkpoints, restarts, and duplicate handling are demonstrated |
 | M6 — Consumers | Read API and dashboard consume documented analytical outputs alongside SQL exploration |
@@ -39,7 +39,7 @@ Develop locally first; add services only when justified. Prefer small, understan
 | M8 — Benchmarks | Reproducible workload, hardware/configuration details, correctness checks, and measured results |
 | M9 — Optional AWS validation | Explicitly approved bounded experiment, local/cloud comparison, cost report, and verified teardown |
 
-M0.1 is complete; M1 has begun with the RSS/Atom contract; M2–M9 are not started. Milestones express intended sequencing, not delivery dates.
+M0.1 and M0.3 are implemented, and M1 is complete. The original M2 Bronze and M3 Silver objectives were delivered early during M1. Future M2 scope is pending planning; M4–M9 remain planned. Broker selection and resource benchmarking remain deferred. Milestones express intended sequencing, not delivery dates.
 
 ## Success criteria
 
@@ -51,10 +51,10 @@ M0.1 is complete; M1 has begun with the RSS/Atom contract; M2–M9 are not start
 - Automated checks and a benchmark provide repeatable evidence; measured limitations are published.
 - Repository documentation accurately separates implemented functionality from plans.
 
-These are future MVP exit criteria; M0.1 alone does not satisfy them.
+These are full MVP exit criteria; completing M1 does not satisfy the remaining streaming, Gold, consumer and benchmarking goals.
 
 ## Cost constraints
 
-The local MVP must have no required paid services or AWS usage. Development uses existing hardware and free tooling; local CPU, memory, disk, and retention bounds will be documented at M1 and refined from measurements. No hardware capacity is assumed yet.
+The local MVP must have no required paid services or AWS usage. Development uses existing hardware and free tooling. Per-object read bounds and local setup are documented. Aggregate CPU, memory, disk, retention sizing and resource benchmarking remain deferred; no measured hardware capacity is claimed.
 
 AWS spend is not authorized. Before M9, agree on a numeric budget, region, service scope, experiment lifetime, resource tags, and teardown verification. Use budget alerts while recognizing that alerts do not impose a hard spending cap. Avoid persistent cloud resources and paid subscriptions by default.
