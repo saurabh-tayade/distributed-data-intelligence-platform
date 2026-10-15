@@ -186,3 +186,7 @@ measurements wherever practical.
 
 This project represents an ongoing engineering learning process
 rather than a production-ready commercial platform.
+
+## Local Silver prototype
+
+The [M1 Day 5 Silver guide](docs/architecture/silver-processing.md) documents the proposed article observation contract, isolated PySpark setup, offline tests and local Parquet demonstration. It processes only the existing fictional fixtures; SeaweedFS Silver integration remains future work.

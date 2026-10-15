@@ -16,3 +16,5 @@ A proposed decision is not an implemented feature. Accepted records describe an 
 [ADR 0001](0001-rss-raw-ingestion-contract.md) records the accepted RSS/Atom raw ingestion boundary and bounded buffering design. The [charter](../charter.md) establishes project constraints; the [architecture overview](../architecture/overview.md) describes the planned design and open choices.
 
 [ADR 0002](0002-bronze-object-storage.md) proposes Bronze S3 persistence, local SeaweedFS, and the Maven build introduced for external Java dependencies.
+
+[ADR 0003](0003-silver-observation-contract.md) proposes source-scoped Silver article identity and repeated-observation semantics, exercised by the fixture-only prototype. It awaits owner approval.
