@@ -1,8 +1,8 @@
-# M1 Day 5: Silver contract and local Spark prototype
+# Silver contract and local Spark processing
 
 ## Scope and acceptance criteria
 
-This is an implemented **fixture-only prototype**, not the operational Bronze-to-Silver pipeline or a persisted SeaweedFS Silver lake. The proposed contract below is exercised locally; durable identity choices await review in [ADR 0003](../adr/0003-silver-observation-contract.md). Accepted ADRs and Java ingestion contracts are unchanged.
+The accepted [ADR 0003](../adr/0003-silver-observation-contract.md) defines the Silver observation contract. The fixture prototype and the [local Bronze-to-Silver integration](bronze-to-silver.md) both use this normalizer. Silver output remains local Parquet, not a persisted SeaweedFS Silver lake. Java ingestion contracts are unchanged.
 
 Acceptance criteria: map the existing fictional RSS/Atom fixtures using explicit schemas; retain provenance and repeated observations; normalize supported dates to UTC; report missing required fields and malformed documents; write and read local Parquet; verify field mapping, identity, rejection, SQL and schema behavior through offline tests. No publishers, Bronze objects, cloud credentials, clusters or new Docker services are involved.
 
@@ -18,7 +18,7 @@ Existing synthetic XML fixtures + explicit synthetic observation envelope
 
 The [implementation](../../processing/silver.py) is isolated from Maven. Standard-library Expat validates document completeness and the expected root, and forbids DTD/entity declarations before Spark parses it. This prevents a row-oriented XML scan from overlooking a broken feed wrapper or trailing malformed input. It is a validation guard, not an article extractor or custom general-purpose XML parser. Native Spark `from_xml` performs field extraction with a corrupt-record field and permissive mode; a mapping failure rejects affected rows rather than silently dropping them. All per-article transformations use built-in Spark SQL functions, with no Python UDFs.
 
-## Proposed schema version 1
+## Accepted schema version 1
 
 Grain: **one occurrence of an article in one ingestion payload**. Schema definitions are explicit `StructType` constants: `SILVER_SCHEMA`, `REJECTION_SCHEMA`, `RSS`, and `ATOM`. No production schema inference is used. All physical fields are nullable to support rejected candidates and consistent Parquet read-back; requiredness below is enforced before acceptance. Spark/Parquet nullability is not a substitute for validation.
 
@@ -30,12 +30,12 @@ Grain: **one occurrence of an article in one ingestion payload**. Schema definit
 | `source_uri` | string | Required, nonblank; configured source URI, not article URL |
 | `ingestion_id` | string | Required; canonical original ingestion UUID |
 | `ingested_at` | timestamp | Required; timezone-aware envelope instant, UTC in Spark |
-| `input_uri` | string | Required; exact local fixture URI in this prototype |
+| `input_uri` | string | Required; local fixture URI or original S3 payload URI |
 | `payload_sha256` | string | Required; lowercase SHA-256 of exact input bytes |
 | `payload_byte_length` | long | Required; actual input byte count |
-| `bronze_bucket` | string | Null for fixtures; required for future Bronze-backed inputs |
-| `bronze_payload_key` | string | Null for fixtures; required for future Bronze-backed inputs |
-| `bronze_metadata_key` | string | Null for fixtures; required for future Bronze-backed inputs |
+| `bronze_bucket` | string | Null for fixtures; populated for Bronze-backed inputs |
+| `bronze_payload_key` | string | Null for fixtures; populated for Bronze-backed inputs |
+| `bronze_metadata_key` | string | Null for fixtures; populated for Bronze-backed inputs |
 | `feed_format` | string | Required; `rss` or `atom` |
 | `entry_index` | integer | Required; zero-based ordinal within payload |
 | `identifier_kind` | string | Required; `rss_guid`, `rss_link`, `atom_id`, or `atom_link` |
@@ -47,7 +47,7 @@ Grain: **one occurrence of an article in one ingestion payload**. Schema definit
 | `updated_at` | timestamp | Optional; valid supplied Atom update timestamp |
 | `quality_warnings` | array of string | Always populated; empty array or deterministic warning codes, publication before update |
 
-`bronze_payload_key` corresponds to the initially proposed `payload_key` in Issue #9; the more explicit name is retained. This updates the still-Proposed version-1 prototype contract before acceptance; it is not a production schema migration. Existing prototype Parquet should be regenerated into a fresh directory to obtain the added warning field.
+`bronze_payload_key` corresponds to the initially proposed `payload_key` in Issue #9; the more explicit name is retained. This updates the version-1 prototype contract before its acceptance; it is not a production schema migration. Existing prototype Parquet should be regenerated into a fresh directory to obtain the added warning field.
 
 Rejections carry the same nullable candidate/provenance columns plus `rejection_reasons: array<string>`. Warnings and rejection reasons are distinct: warnings alone never reject an observation. Rejected candidates can carry warnings as well as required-field rejection reasons. Whole-document rejections have null article fields and ordinal and an empty warning array. Record rejections retain their candidate values and ordinal. Original unsupported date strings and exact XML remain recoverable from the referenced immutable input; they are not duplicated into the output schema. No raw document content is printed in diagnostics.
 
@@ -133,11 +133,9 @@ ORDER BY source_id;
 
 Expected: **4 accepted records and 2 rejected records**, with `atom-science=2`, `rss-business=1`, `rss-technology=1`. The second item in each RSS fixture lacks both GUID and link; those fixtures are reused unchanged. Tests additionally read back rejection Parquet and compare rows. To tear down, stop the process and remove only the generated virtual environment/output directories when no longer wanted; no persistent service or Bronze data needs teardown.
 
-## Bronze provenance and future SeaweedFS integration
+## Bronze provenance and local SeaweedFS integration
 
-A future input adapter must require both metadata and the referenced payload under the [accepted Bronze contract](bronze-storage.md). It must validate metadata `schemaVersion=1`, source identity, canonical UUID, ingestion instant, successful HTTP status policy, payload key, actual byte length and SHA-256 before parsing. Carry `sourceId`, `sourceUri`, `ingestionId`, `ingestedAt`, receipt bucket and payload/metadata keys unchanged. Preserve the original metadata object for HTTP status, content type and declared-length audit; these are not article attributes. Do not trust content type as XML validation or generate a new UUID during processing.
-
-Fixture paths and computed checksums are real local provenance, but null Bronze fields explicitly mean **not stored in Bronze**. The current module has no metadata reader, S3 client, SeaweedFS connection or Bronze mutation path. Future integration needs authenticated local object reads, verified publication completeness, rejection storage, replay coordination, schema evolution, partitioning, retention and crash recovery. Parquet does not supply these guarantees. Table formats, distributed execution and streaming are deferred; no performance/scalability claims are made from this tiny workload.
+The [Bronze-to-Silver adapter](bronze-to-silver.md) now validates completed metadata and payloads, verifies integrity, and passes exact bytes plus provenance into `normalize_bytes`. It supplies the original source/ingestion identity, timestamp, bucket, payload/metadata keys, checksum and length. Fixture calls still use null Bronze references. No Bronze writes are performed. Local Parquet publication/replay and actual integration results are documented in that guide; Silver object-storage persistence, distributed execution and transactional table management remain future work.
 
 ## Original validation evidence (before contract corrections)
 

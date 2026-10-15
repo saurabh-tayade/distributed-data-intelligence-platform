@@ -2,7 +2,7 @@
 
 An MSN-inspired Content Intelligence & Analytics Platform exploring how heterogeneous content metadata and engagement events can become reliable analytical data products.
 
-**Current status: M1 Day 4 end-to-end RSS/Atom batch ingestion implemented.** The Java 21 Maven module includes a strict JSON source catalog, sequential batch runner, executable CLI, bounded raw retrieval, S3 persistence, and synthetic offline tests. Two live batches across NASA, Guardian and xkcd passed local Bronze read-back verification. A pinned local SeaweedFS Compose configuration and opt-in integration tests are provided; SeaweedFS 4.48 upload/read-back, integrity, retries, and restart persistence have passed local integration validation. Parsing, scheduled jobs, and downstream processing remain planned.
+**Current status: local Bronze-to-Silver integration implemented and verified.** Java 21 RSS/Atom batch ingestion preserves raw snapshots in SeaweedFS Bronze. Spark normalizes retained RSS/Atom snapshots into local Silver Parquet with explicit provenance, data-quality warnings and separate rejections. Six retained NASA, Guardian and xkcd snapshots passed integrity verification, Parquet read-back, SQL queries and replay checks: 118 accepted observations and no rejected records. Scheduled ingestion, streaming, Gold datasets, serving APIs, distributed execution and Silver object-storage persistence remain planned. See the [integration guide](docs/architecture/bronze-to-silver.md).
 
 ## Engineering objectives
 
@@ -55,7 +55,7 @@ Batch processing comes first; streaming is introduced incrementally. Consumers m
 | `config/` | Public RSS/Atom source catalog |
 | `docs/` | Charter, architecture, decision records, and future benchmarks |
 | `ingestion/` | Java 21 Maven module: RSS retrieval, batch CLI and Bronze S3 storage |
-| `processing/` | Future Spark transformations and data quality checks |
+| `processing/` | Local Spark normalization, Bronze discovery/integrity and Silver Parquet publication |
 | `services/` | Future APIs and application services |
 | `frontend/` | Future analytics UI |
 | `infrastructure/local/` | Pinned SeaweedFS Compose configuration |
@@ -189,4 +189,4 @@ rather than a production-ready commercial platform.
 
 ## Local Silver prototype
 
-The [M1 Day 5 Silver guide](docs/architecture/silver-processing.md) documents the proposed article observation contract, isolated PySpark setup, offline tests and local Parquet demonstration. It processes only the existing fictional fixtures; SeaweedFS Silver integration remains future work.
+The [M1 Day 5 Silver guide](docs/architecture/silver-processing.md) documents the proposed article observation contract, isolated PySpark setup, offline tests and local Parquet demonstration. The fixture workflow remains available. The [Bronze-to-Silver workflow](docs/architecture/bronze-to-silver.md) also processes retained SeaweedFS snapshots into local Parquet; Silver persistence to object storage remains future work.

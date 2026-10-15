@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 from silver import (Observation, ROOT, REJECTION_SCHEMA, SILVER_SCHEMA,
-                    normalize, session)
+                    normalize, normalize_bytes, session)
 
 
 class SilverTest(unittest.TestCase):
@@ -226,6 +226,33 @@ class SilverTest(unittest.TestCase):
             loaded.createOrReplaceTempView("warned_articles")
             self.assertEqual(self.spark.sql("SELECT count(*) AS n FROM warned_articles WHERE array_contains(quality_warnings, 'INVALID_PUBLISHED_AT')").first().n, 1)
             self.assertEqual(self.spark.sql("SELECT explode(quality_warnings) AS warning FROM warned_articles").count(), 2)
+
+    def test_bronze_references_preserve_validated_provenance(self):
+        payload = (ROOT / "ingestion/src/test/resources/feeds/rss-business.xml").read_bytes()
+        references = {"bronze_bucket": "local", "bronze_payload_key": "bronze/payload.xml",
+                      "bronze_metadata_key": "bronze/metadata.json"}
+        good, bad = normalize_bytes(self.spark, payload, self.observation,
+                                    "s3://local/bronze/payload.xml", references)
+        for row in good.collect() + bad.collect():
+            for field, value in references.items():
+                self.assertEqual(row[field], value)
+            self.assertEqual(row.source_id, self.observation.source_id)
+            self.assertEqual(row.ingestion_id, self.observation.ingestion_id)
+            self.assertEqual(row.payload_sha256, sha256(payload).hexdigest())
+            self.assertEqual(row.payload_byte_length, len(payload))
+            self.assertEqual(row.ingested_at, datetime(2026, 10, 12, 13))
+        baseline, _ = self.fixture("rss-business.xml")
+        self.assertEqual(good.first().article_id, baseline.first().article_id)
+
+    def test_bronze_references_reject_overrides(self):
+        # Reject before parsing or projecting, including fields used for identity.
+        for field in ("unexpected", "source_id", "source_uri", "ingestion_id",
+                      "payload_sha256", "payload_byte_length", "ingested_at", "article_id",
+                      "identifier_kind", "source_article_id", "contract_version", "feed_format"):
+            with self.subTest(field=field), self.assertRaisesRegex(
+                    ValueError, "UNEXPECTED_BRONZE_PROVENANCE_FIELDS"):
+                normalize_bytes(self.spark, b"<rss/>", self.observation, "fixture://test",
+                                {"bronze_bucket": "local", field: "override"})
 
     def test_invalid_provenance(self):
         for observation in [replace(self.observation, source_id=" "),
