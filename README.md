@@ -67,12 +67,12 @@ Empty directories contain `.gitkeep` placeholders so the layout survives a futur
 
 ## Milestone roadmap
 
-| Milestone | Planned outcome |
+| Milestone | Outcome / status |
 | --- | --- |
 | M0 | Repository foundation and development conventions (M0.1 and M0.3 implemented) |
-| M1 | Source contracts and reproducible local environment |
-| M2 | Batch ingestion into Bronze |
-| M3 | Spark transformations into Silver |
+| M1 | Complete: local RSS/Atom batch ingestion, SeaweedFS Bronze, Spark Silver and integration |
+| M2 | Original Bronze objective delivered in M1; future scope pending planning |
+| M3 | Original local Silver objective delivered in M1; broader processing remains deferred |
 | M4 | Gold models and SQL analytics |
 | M5 | Streaming ingestion and incremental processing |
 | M6 | Consumer APIs and analytics dashboard |
@@ -80,7 +80,7 @@ Empty directories contain `.gitkeep` placeholders so the layout survives a futur
 | M8 | Reproducible benchmarks and optimization |
 | M9 | Optional, approved temporary AWS validation and teardown |
 
-M0.1 and M0.3 are implemented. M1 includes RSS/Atom retrieval, Bronze storage, and the first executable batch workflow. The broader M2–M9 roadmap remains planned; M9 is outside the local MVP.
+M0.1 and M0.3 are implemented. M1 delivered the original M2 Bronze and M3 local Silver objectives early; see the [M1 closeout record](docs/m1-closeout.md). Future M2 scope is pending planning. M4–M9 remain planned; broker selection and resource benchmarking are deferred, and M9 is outside the local MVP.
 
 ## Getting started
 
@@ -95,13 +95,13 @@ set +a
 bash scripts/run-batch.sh config/rss-sources.json
 ```
 
-See [batch architecture, data policy, CLI and live results](docs/architecture/batch-ingestion.md). GitHub contains code, public configuration, synthetic fixtures, tests and documentation; SeaweedFS contains actual publisher snapshots and ingestion metadata. Bronze preserves raw bytes; article parsing and normalization remain future Silver work.
+See [batch architecture, data policy, CLI and live results](docs/architecture/batch-ingestion.md). GitHub contains code, public configuration, synthetic fixtures, tests and documentation; SeaweedFS contains actual publisher snapshots and ingestion metadata. Bronze preserves raw bytes; implemented Spark processing normalizes retained snapshots into local Silver Parquet.
 
 Record consequential choices using the [ADR process](docs/adr/README.md). This project is inspired by a content portal domain and is not affiliated with MSN or Microsoft.
 
-## Documentation checks (M0.3)
+## Automated checks
 
-[CI](.github/workflows/ci.yml) runs on pull requests targeting `main` and pushes to `main`, with read-only repository permissions. It checks Markdown formatting, local documentation links, repository hygiene, and Maven Java 21 tests. Default CI needs no storage service or AWS credentials.
+[CI](.github/workflows/ci.yml) runs on pull requests targeting `main` and pushes to `main`, with read-only repository permissions. It is configured to check Markdown formatting, local documentation links, repository hygiene, Maven Java 21 tests, shell regressions, and all Python/PySpark processing tests. The processing job uses Ubuntu 24.04, Python 3.12.15, Java 21 and Spark local mode with the existing pinned requirements. Tests need no storage service, AWS credentials or publisher requests; dependency installation needs network access. The newly added processing job awaits its first hosted execution.
 
 From the repository root, with Git, Bash, Node.js 24.x, and npm installed:
 
@@ -189,4 +189,4 @@ rather than a production-ready commercial platform.
 
 ## Local Silver prototype
 
-The [M1 Day 5 Silver guide](docs/architecture/silver-processing.md) documents the proposed article observation contract, isolated PySpark setup, offline tests and local Parquet demonstration. The fixture workflow remains available. The [Bronze-to-Silver workflow](docs/architecture/bronze-to-silver.md) also processes retained SeaweedFS snapshots into local Parquet; Silver persistence to object storage remains future work.
+The [Silver guide](docs/architecture/silver-processing.md) documents the accepted article observation contract, isolated PySpark setup, offline tests and local Parquet demonstration. The fixture workflow remains available. The [Bronze-to-Silver workflow](docs/architecture/bronze-to-silver.md) also processes retained SeaweedFS snapshots into local Parquet; Silver persistence to object storage remains future work.
