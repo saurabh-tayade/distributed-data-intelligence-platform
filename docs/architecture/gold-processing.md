@@ -1,6 +1,6 @@
 # Gold processing and publication design
 
-Status: **Proposed**, M2.1 documentation only. No Gold job, DuckDB installation, output or query verification is implemented by this milestone. See [contracts](gold-contracts.md), [ADR 0004](../adr/0004-gold-analytics-publication.md), and the [canonical roadmap](../charter.md#milestones-m0m9).
+Status: **Accepted** by the owner on October 15, 2026. M2.2 implements the [completed-Silver input boundary](silver-input-validation.md); Gold transformations, publication and DuckDB integration remain unimplemented. See [contracts](gold-contracts.md), [ADR 0004](../adr/0004-gold-analytics-publication.md), and the [canonical roadmap](../charter.md#milestones-m0m9).
 
 ## Boundaries
 
@@ -33,7 +33,7 @@ When duplicate publication copies exist, choose the lexicographically smallest m
 
 ## Versioned local publication
 
-Proposed layout, entirely under ignored `outputs/`:
+Accepted design for future publication, entirely under ignored `outputs/`:
 
 ```text
 outputs/gold/v1/processor_revision=1/input_set=<sha256>/
@@ -70,4 +70,4 @@ This is a local single-writer convention, **not a transactional lakehouse or pro
 
 ## Implementation acceptance criteria
 
-After owner acceptance of ADR 0004, implement and test selection, validation, deterministic transformations and publication in small slices. Synthetic tests must cover ties, repeated ordinals versus replays, conflicting rows/provenance, UTC midnight and offset timestamps, null optional metadata, two warnings on one observation, rejected-only publications, no inputs, late arrivals, duplicate selection/copies, changed input, incomplete output, tampered Parquet and safe repeat execution. Verify Spark read-back and later DuckDB SQL against known expected rows and metrics. Reconcile the retained M1 dataset separately without treating its counts as universal invariants. M2.1 itself requires only documentation lint, link and hygiene checks, schema/metric review and roadmap/ADR consistency review.
+Following owner acceptance of ADR 0004 on October 15, 2026, implement and test selection, validation, deterministic transformations and publication in small slices. Synthetic tests must cover ties, repeated ordinals versus replays, conflicting rows/provenance, UTC midnight and offset timestamps, null optional metadata, two warnings on one observation, rejected-only publications, no inputs, late arrivals, duplicate selection/copies, changed input, incomplete output, tampered Parquet and safe repeat execution. Verify Spark read-back and later DuckDB SQL against known expected rows and metrics. Reconcile the retained M1 dataset separately without treating its counts as universal invariants. M2.1 itself requires only documentation lint, link and hygiene checks, schema/metric review and roadmap/ADR consistency review.

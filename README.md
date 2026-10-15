@@ -67,7 +67,7 @@ Empty directories contain `.gitkeep` placeholders so the layout survives a futur
 
 ## Milestone roadmap
 
-The [canonical roadmap](docs/charter.md#milestones-m0m9) defines milestone scope and historical mappings. **M1 — Completed Bronze-to-Silver pipeline** is complete; see the [closeout](docs/m1-closeout.md). **M2 — Gold Analytics & Data Products** is next. M2.1 supplies proposed [Gold contracts](docs/architecture/gold-contracts.md), [architecture and publication semantics](docs/architecture/gold-processing.md), and [ADR 0004](docs/adr/0004-gold-analytics-publication.md); Gold processing and DuckDB analytics remain unimplemented.
+The [canonical roadmap](docs/charter.md#milestones-m0m9) defines milestone scope and historical mappings. **M1 — Completed Bronze-to-Silver pipeline** is complete; see the [closeout](docs/m1-closeout.md). **M2 — Gold Analytics & Data Products** is underway. M2.1 supplies accepted [Gold contracts](docs/architecture/gold-contracts.md), [architecture and publication semantics](docs/architecture/gold-processing.md), and [ADR 0004](docs/adr/0004-gold-analytics-publication.md); M2.2 implements [completed-Silver discovery and validation](docs/architecture/silver-input-validation.md). Gold transformations, publication and DuckDB analytics remain unimplemented.
 
 The original M2 Bronze and M3 Silver work landed in M1; the former M4 Gold/SQL scope now belongs to M2. M3/M4 are retired roadmap slots, while M5–M9 retain their planned scope. This avoids duplicate Gold milestones and does not imply future functionality has shipped.
 

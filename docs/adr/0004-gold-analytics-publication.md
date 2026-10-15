@@ -1,20 +1,21 @@
 # 0004: Local Gold analytics contracts and immutable publication
 
 - Date: 2026-10-15
-- Status: Proposed
-- Implementation: M2.1 documentation only; no Gold processing or DuckDB integration implemented.
+- Status: Accepted
+- Acceptance date: 2026-10-15
+- Implementation: M2.1 design; M2.2 completed-Silver discovery and validation implemented. Gold transformations, publication and DuckDB integration remain unimplemented.
 
 ## Context
 
 M1 completed local Bronze-to-Silver processing while preserving repeated article observations. Analytics needs explicit article selection, source/day metrics and a reproducible publication boundary. The retained six-ingestion baseline is evidence about that dataset, not a fixed processing invariant. Existing accepted ADRs [0001](0001-rss-raw-ingestion-contract.md), [0002](0002-bronze-object-storage.md) and [0003](0003-silver-observation-contract.md) remain unchanged.
 
-## Proposed decision
+## Decision
 
 Adopt the version-1 [Gold data contracts](../architecture/gold-contracts.md) and [processing/publication design](../architecture/gold-processing.md). Publish `gold_articles` at article-ID grain and `gold_source_daily` at source/UTC-ingestion-date grain. Preserve source-scoped identity; select entire latest observations by `ingested_at DESC, ingestion_id DESC, entry_index DESC`. Count warning codes, not merely warning-bearing observations. Collapse identical replay keys and fail conflicting inputs before aggregation.
 
 Consume only validated completed M1 Silver publications from one explicitly selected local root. Use Spark for deterministic full-set transformations and local Parquet publication; use DuckDB subsequently for read-only SQL over a pinned completed snapshot. Fingerprint canonical input inventories including actual Parquet bytes. Publish both products in an immutable version/revision/fingerprint directory, verify read-back and write completion metadata last. Retry verifies existing output before skipping. Changed inputs yield a separate snapshot. Incomplete outputs require explicit operator recovery.
 
-Keep this ADR Proposed until owner review. M2.1 defines design and acceptance criteria; it does not authorize dependencies, application implementation, infrastructure or cloud provisioning.
+The repository owner explicitly accepted this ADR on October 15, 2026. M2.1 defined the design and acceptance criteria; implementation status is tracked separately. No infrastructure or cloud provisioning is authorized.
 
 ## Alternatives and tradeoffs
 
@@ -39,4 +40,4 @@ Full input hashing, transformation and output verification cost I/O; retained im
 
 ## Validation and follow-up
 
-M2.1 acceptance is documentation consistency: complete typed schemas, unambiguous metric/null/tie semantics, publication/failure rules, roadmap reconciliation, working local links and repository hygiene. The [implementation acceptance criteria](../architecture/gold-processing.md#implementation-acceptance-criteria) define required synthetic cases before claiming working Gold behavior. Owner acceptance is still required; then implement the Silver selection/validation boundary and pure Spark transformations, followed by immutable publication and DuckDB reconciliation. Pin and validate any later DuckDB dependency in that implementation slice; no runtime version changes are made here.
+M2.1 acceptance is documentation consistency: complete typed schemas, unambiguous metric/null/tie semantics, publication/failure rules, roadmap reconciliation, working local links and repository hygiene. The [implementation acceptance criteria](../architecture/gold-processing.md#implementation-acceptance-criteria) define required synthetic cases before claiming working Gold behavior. Owner acceptance is recorded above; implement the Silver selection/validation boundary and pure Spark transformations, followed by immutable publication and DuckDB reconciliation. Pin and validate any later DuckDB dependency in that implementation slice; no runtime version changes are made here.

@@ -30,7 +30,7 @@ Develop locally first; add services only when justified. Prefer small, understan
 | --- | --- |
 | M0 — Foundation | M0.1: repository layout, charter, architecture proposal, conventions, and Git on main; later setup work is tracked separately |
 | M1 — Completed Bronze-to-Silver pipeline | Complete: local batch ingestion, Bronze storage, Spark Silver normalization and verified integration |
-| M2 — Gold Analytics & Data Products | M2.1: proposed contracts, architecture and publication design (documentation only); later implementation must reconcile Spark Gold and DuckDB SQL against known inputs |
+| M2 — Gold Analytics & Data Products | M2.1: accepted contracts and design; M2.2: completed-Silver input validation implemented; later implementation must reconcile Spark Gold and DuckDB SQL against known inputs |
 | M3 — Retired milestone slot | Original local Silver scope delivered in M1; no separate active deliverable |
 | M4 — Retired milestone slot | Original Gold/SQL scope moved to M2; no duplicate active deliverable |
 | M5 — Streaming | Planned: events reach analytical layers; demonstrate late events, checkpoints, restarts and duplicate handling |
@@ -39,7 +39,7 @@ Develop locally first; add services only when justified. Prefer small, understan
 | M8 — Benchmarks | Planned: reproducible workloads, environment details, correctness checks and measured results |
 | M9 — Optional AWS validation | Planned only with explicit approval: bounded experiment, cost report and verified teardown |
 
-This is the canonical milestone roadmap; other documents link here rather than maintaining separate milestone tables. M0.1 and M0.3 are implemented, and M1 is complete. The original M2 Bronze and M3 Silver objectives were delivered in M1. M2 now covers Gold Analytics & Data Products, moving the former M4 Gold/SQL scope forward. M3 and M4 identifiers are retained as retired historical slots to avoid renumbering M5–M9. Broker selection and resource benchmarking remain deferred. Milestones express intended sequencing, not delivery dates. Gold architecture remains Proposed under [ADR 0004](adr/0004-gold-analytics-publication.md); M2.1 documentation does not mark M2 implementation complete.
+This is the canonical milestone roadmap; other documents link here rather than maintaining separate milestone tables. M0.1 and M0.3 are implemented, and M1 is complete. The original M2 Bronze and M3 Silver objectives were delivered in M1. M2 now covers Gold Analytics & Data Products, moving the former M4 Gold/SQL scope forward. M3 and M4 identifiers are retained as retired historical slots to avoid renumbering M5–M9. Broker selection and resource benchmarking remain deferred. Milestones express intended sequencing, not delivery dates. Gold architecture is Accepted under [ADR 0004](adr/0004-gold-analytics-publication.md); M2.1 documentation does not mark M2 implementation complete.
 
 ## Success criteria
 
