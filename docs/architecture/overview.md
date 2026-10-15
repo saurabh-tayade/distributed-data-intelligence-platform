@@ -1,6 +1,6 @@
 # Architecture overview
 
-**Status: proposed platform architecture, with RSS/Atom retrieval, Bronze storage and the first batch CLI implemented.** See the [raw ingestion contract](rss-ingestion.md). The [Bronze storage contract](bronze-storage.md) is implemented with a local SeaweedFS deployment definition; SeaweedFS 4.48 local integration and restart persistence have passed validation, while Amazon S3 remains untested. A [fixture-only local Silver prototype](silver-processing.md) now exercises RSS/Atom normalization and Parquet; the operational Bronze-to-Silver pipeline remains unimplemented.
+**Status: proposed platform architecture, with RSS/Atom retrieval, Bronze storage and the first batch CLI implemented.** See the [raw ingestion contract](rss-ingestion.md). The [Bronze storage contract](bronze-storage.md) is implemented with a local SeaweedFS deployment definition; SeaweedFS 4.48 local integration and restart persistence have passed validation, while Amazon S3 remains untested. The [local Bronze-to-Silver integration](bronze-to-silver.md) now processes retained snapshots into local Parquet with integrity checks, warnings, rejections and verified replay; distributed execution and Silver object-storage persistence remain planned.
 
 ## Sources and ingestion
 

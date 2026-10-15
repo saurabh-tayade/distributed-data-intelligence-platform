@@ -145,13 +145,26 @@ def normalize(spark, path, observation):
         payload = stream.read(MAX_BYTES + 1)
     if len(payload) > MAX_BYTES:
         raise ValueError("PAYLOAD_TOO_LARGE: fixture exceeds 5 MiB; no output written")
+    return normalize_bytes(spark, payload, observation, path.as_uri())
+
+
+def normalize_bytes(spark, payload, observation, input_uri, bronze=None):
+    """Normalize verified bytes; bronze accepts only the three object references."""
+    allowed = {"bronze_bucket", "bronze_payload_key", "bronze_metadata_key"}
+    if bronze is not None and set(bronze) - allowed:
+        raise ValueError("UNEXPECTED_BRONZE_PROVENANCE_FIELDS")
+    observation.validate()
+    spark.conf.set("spark.sql.session.timeZone", "UTC")
+    if len(payload) > MAX_BYTES:
+        raise ValueError("PAYLOAD_TOO_LARGE")
     metadata = {
         "contract_version": 1, "source_id": observation.source_id,
         "source_uri": observation.source_uri, "ingestion_id": observation.ingestion_id,
         "ingested_at": observation.ingested_at.astimezone(timezone.utc),
-        "input_uri": path.as_uri(), "payload_sha256": sha256(payload).hexdigest(),
+        "input_uri": input_uri, "payload_sha256": sha256(payload).hexdigest(),
         "payload_byte_length": len(payload), "feed_format": observation.feed_format,
     }
+    metadata.update(bronze or {})
     failure = preflight(payload, observation.feed_format)
     if failure:
         rejection = dict(metadata, quality_warnings=[], rejection_reasons=[failure])
@@ -191,7 +204,7 @@ def normalize(spark, path, observation):
     for name, value in metadata.items():
         rows = rows.withColumn(name, F.lit(value))
     for name in ("bronze_bucket", "bronze_payload_key", "bronze_metadata_key"):
-        rows = rows.withColumn(name, F.lit(None).cast("string"))
+        rows = rows.withColumn(name, F.lit((bronze or {}).get(name)).cast("string"))
     rows = rows.withColumn("published_at", timestamp(F.col("published_raw"), observation.feed_format))
     rows = rows.withColumn("updated_at", timestamp(F.col("updated_raw"), observation.feed_format))
     # JSON array framing avoids delimiter collisions; no ingestion UUID in article identity.
