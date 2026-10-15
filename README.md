@@ -67,20 +67,9 @@ Empty directories contain `.gitkeep` placeholders so the layout survives a futur
 
 ## Milestone roadmap
 
-| Milestone | Outcome / status |
-| --- | --- |
-| M0 | Repository foundation and development conventions (M0.1 and M0.3 implemented) |
-| M1 | Complete: local RSS/Atom batch ingestion, SeaweedFS Bronze, Spark Silver and integration |
-| M2 | Original Bronze objective delivered in M1; future scope pending planning |
-| M3 | Original local Silver objective delivered in M1; broader processing remains deferred |
-| M4 | Gold models and SQL analytics |
-| M5 | Streaming ingestion and incremental processing |
-| M6 | Consumer APIs and analytics dashboard |
-| M7 | Reliability, observability, and automated validation |
-| M8 | Reproducible benchmarks and optimization |
-| M9 | Optional, approved temporary AWS validation and teardown |
+The [canonical roadmap](docs/charter.md#milestones-m0m9) defines milestone scope and historical mappings. **M1 — Completed Bronze-to-Silver pipeline** is complete; see the [closeout](docs/m1-closeout.md). **M2 — Gold Analytics & Data Products** is next. M2.1 supplies proposed [Gold contracts](docs/architecture/gold-contracts.md), [architecture and publication semantics](docs/architecture/gold-processing.md), and [ADR 0004](docs/adr/0004-gold-analytics-publication.md); Gold processing and DuckDB analytics remain unimplemented.
 
-M0.1 and M0.3 are implemented. M1 delivered the original M2 Bronze and M3 local Silver objectives early; see the [M1 closeout record](docs/m1-closeout.md). Future M2 scope is pending planning. M4–M9 remain planned; broker selection and resource benchmarking are deferred, and M9 is outside the local MVP.
+The original M2 Bronze and M3 Silver work landed in M1; the former M4 Gold/SQL scope now belongs to M2. M3/M4 are retired roadmap slots, while M5–M9 retain their planned scope. This avoids duplicate Gold milestones and does not imply future functionality has shipped.
 
 ## Getting started
 
@@ -101,7 +90,7 @@ Record consequential choices using the [ADR process](docs/adr/README.md). This p
 
 ## Automated checks
 
-[CI](.github/workflows/ci.yml) runs on pull requests targeting `main` and pushes to `main`, with read-only repository permissions. It is configured to check Markdown formatting, local documentation links, repository hygiene, Maven Java 21 tests, shell regressions, and all Python/PySpark processing tests. The processing job uses Ubuntu 24.04, Python 3.12.15, Java 21 and Spark local mode with the existing pinned requirements. Tests need no storage service, AWS credentials or publisher requests; dependency installation needs network access. The newly added processing job awaits its first hosted execution.
+[CI](.github/workflows/ci.yml) runs on pull requests targeting `main` and pushes to `main`, with read-only repository permissions. It is configured to check Markdown formatting, local documentation links, repository hygiene, Maven Java 21 tests, shell regressions, and all Python/PySpark processing tests. The processing job uses Ubuntu 24.04, Python 3.12.15, Java 21 and Spark local mode with the existing pinned requirements. Tests need no storage service, AWS credentials or publisher requests; dependency installation needs network access. The processing job passed in the [owner-provided hosted CI run](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/38685046971); see the [closeout evidence](docs/m1-closeout.md#ci-and-closeout-validation), separately from retained-data integration.
 
 From the repository root, with Git, Bash, Node.js 24.x, and npm installed:
 
