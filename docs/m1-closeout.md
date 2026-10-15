@@ -1,6 +1,6 @@
 # M1 closeout
 
-M1 implementation is complete and merged. This closeout reconciles the roadmap and adds processing tests to the CI workflow; it adds no application functionality. Future M2 scope is pending planning. The original M2 Bronze and M3 local Silver objectives were delivered early during M1; this does not imply that the full platform MVP is complete.
+M1 implementation is complete and merged. This closeout reconciles the roadmap and adds processing tests to the CI workflow; it adds no application functionality. M2 is now Gold Analytics & Data Products; see the [canonical roadmap](charter.md#milestones-m0m9). The original M2 Bronze and M3 local Silver objectives were delivered early during M1; this does not imply that the full platform MVP is complete.
 
 ## Delivered capabilities and merged work
 
@@ -26,7 +26,9 @@ The [storage record](local-seaweedfs.md#execution-status-and-portability) separa
 
 The [workflow](../.github/workflows/ci.yml) preserves documentation/hygiene and Java/shell jobs and adds a separate Ubuntu 24.04 processing job with a 15-minute timeout. It selects Python 3.12.15 and runner Java 21, installs the existing pinned Bronze requirements (including PySpark 4.0.2), and discovers all `processing/tests` tests. Spark uses `local[2]`, `SPARK_LOCAL_IP=127.0.0.1` and `TZ=UTC`. No SeaweedFS service, AWS credentials or publisher HTTP requests are required. Package installation uses the network; the tests themselves use synthetic data and local test doubles.
 
-The updated hosted workflow has **not yet executed**. Local validation results are recorded below; they do not establish GitHub-hosted CI success.
+The processing job successfully executed in the [GitHub-hosted CI run 38685046971](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/38685046971), per owner-provided evidence recorded during M2.1. This closes the earlier pending hosted-execution item. The run page was not independently retrievable during this documentation update; no additional job counts or timings are inferred.
+
+Hosted CI verifies synthetic processing tests on the configured GitHub runner. It is separate from both the local closeout regression checks below and the earlier retained-data SeaweedFS integration; it does not rerun or independently verify the six-snapshot baseline.
 
 Local closeout validation on October 15, 2026, using macOS ARM64, Python 3.12.15, Java 21.0.7 and PySpark 4.0.2:
 
@@ -38,13 +40,13 @@ Local closeout validation on October 15, 2026, using macOS ARM64, Python 3.12.15
 | npm run check | PASSED: Markdown, links and repository hygiene |
 | git diff --check | PASSED |
 | Workflow inspection | PASSED: YAML parsed; original jobs preserved; runtime selection, pinned dependency installation, cache inputs, test command and timeout reviewed |
-| Updated GitHub-hosted workflow | NOT EXECUTED; first run remains pending |
+| GitHub-hosted processing CI (subsequent evidence) | PASSED per owner-provided run linked above; separate from local closeout checks |
 | Live publishers / SeaweedFS integration during closeout | NOT EXECUTED; earlier verified evidence retained |
 
-No local validation failure or implementation blocker remains. Hosted execution of the newly configured processing job is the remaining CI verification step after owner-managed publication. No accepted ADR or application code was changed.
+No local validation failure or implementation blocker remains. The subsequent hosted processing execution closes the CI verification step. No accepted ADR or application code was changed.
 
 ## Limitations and deferred capabilities
 
 S3 discovery and bounded object reads occur on the driver. Silver Parquet is local, not stored in SeaweedFS. Publication assumes one writer; completion markers do not provide production-grade exactly-once processing, transactional table semantics or power-loss durability. Repeated article observations are intentionally preserved. XML dialect coverage and timestamp precision remain bounded by the accepted contract.
 
-Broker selection and resource benchmarking are deferred. Streaming, scheduling, Gold datasets, APIs/dashboard, distributed cluster execution, Silver object-storage persistence, Iceberg and AWS validation remain future work. No scalability benchmark or distributed performance claim is made. Future M2 requirements have not been defined or approved.
+Broker selection and resource benchmarking are deferred. Streaming, scheduling, Gold datasets, APIs/dashboard, distributed cluster execution, Silver object-storage persistence, Iceberg and AWS validation remain future work. No scalability benchmark or distributed performance claim is made. M2.1 now defines proposed Gold contracts and architecture in [ADR 0004](adr/0004-gold-analytics-publication.md); acceptance and implementation remain pending.

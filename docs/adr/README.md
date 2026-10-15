@@ -18,3 +18,5 @@ A proposed decision is not an implemented feature. Accepted records describe an 
 [ADR 0002](0002-bronze-object-storage.md) is **Accepted** and records Bronze S3 persistence, local SeaweedFS, and the Maven build introduced for external Java dependencies.
 
 [ADR 0003](0003-silver-observation-contract.md) is **Accepted** and records source-scoped Silver article identity and repeated-observation semantics, exercised by both the fixture prototype and local Bronze-to-Silver integration.
+
+[ADR 0004](0004-gold-analytics-publication.md) is **Proposed** and defines M2 Gold contracts, Spark-to-Parquet-to-DuckDB boundaries and immutable local snapshot publication. M2.1 is documentation only; owner acceptance and implementation remain pending.

@@ -18,6 +18,12 @@ The Java RSS/Atom batch adapter lands inputs with source identifiers, ingestion 
 
 The RSS Bronze adapter defines deterministic keys and metadata-last publication under a single-writer precondition. Schema evolution, retention, downstream partitions, and broader replay semantics still require design. Parquet alone does not provide transactions or upserts. Iceberg is deferred; it may be reconsidered if table-management requirements justify it.
 
+## M2 — Gold Analytics & Data Products
+
+M1 is the completed Bronze-to-Silver pipeline. The [canonical roadmap](../charter.md#milestones-m0m9) moves the former M4 Gold/SQL scope into M2 and retires the duplicated M3/M4 slots. M2.1 is documentation only: [Gold v1 contracts](gold-contracts.md) define article and source/day grains, and the [Gold processing design](gold-processing.md) proposes completed Silver → Spark → immutable local Gold Parquet → DuckDB SQL. [ADR 0004](../adr/0004-gold-analytics-publication.md) remains Proposed. No Gold transformation, publication or DuckDB integration is yet implemented.
+
+Gold reads a validated fixed input inventory, collapses identical replay keys, rejects conflicting inputs and publishes both products behind a completion marker after read-back. Article selection uses ingestion ordering; daily metrics use UTC ingestion dates and count individual warning codes. Consumers pin a completed fingerprint directory. This extends the existing single-writer local convention without claiming transactional or exactly-once behavior.
+
 ## Distributed processing
 
 Apache Spark 4.0.2, with PySpark and Spark SQL, is the implemented local transformation engine. Start with small local workloads and introduce multiple workers only when a milestone needs distributed execution evidence. Spark support does not itself prove that a workload has run across workers or scales effectively. Java 21 and Python 3.12.15 are locally verified with Spark 4.0.2; future runtime and connector changes require separate validation.
@@ -30,7 +36,7 @@ Batch delivery precedes streaming. No exactly-once guarantee is claimed: source 
 - Spring Boot services may expose stable read contracts, using PostgreSQL for operational metadata or selected serving projections where justified.
 - A React/TypeScript dashboard will consume service APIs for content and engagement metrics.
 
-Object storage is the analytical system of record. PostgreSQL is not intended to duplicate every data layer. Consumer refresh, freshness, and ownership contracts remain to be defined.
+Bronze object storage preserves the original inputs; implemented Silver and proposed M2 Gold publications are local Parquet. Object storage for later analytical layers remains a longer-term direction. PostgreSQL is not intended to duplicate every data layer. Consumer refresh, freshness, and ownership contracts remain to be defined.
 
 ## Local-first deployment direction
 
