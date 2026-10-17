@@ -1,6 +1,6 @@
 # Completed-Silver input boundary (M2.2)
 
-[ADR 0004](../adr/0004-gold-analytics-publication.md) was explicitly accepted by the repository owner on October 15, 2026. [silver_inputs.py](../../processing/silver_inputs.py) implements the read-only input boundary for future Gold processing. It does not implement Gold transformations, publication, DuckDB, or a CLI. Existing M1 producers and schemas are unchanged.
+[ADR 0004](../adr/0004-gold-analytics-publication.md) was explicitly accepted by the repository owner on October 15, 2026. [silver_inputs.py](../../processing/silver_inputs.py) implements the read-only input boundary used by the [M2.3 Gold transformations](gold-transformations.md). It does not implement Gold publication, DuckDB, or a CLI. Existing M1 producers and schemas are unchanged.
 
 ## Acceptance criteria and selection
 
@@ -71,7 +71,7 @@ git diff --check
 
 Tests use synthetic M1 publications and temporary directories. They cover marker/path/schema/value errors, conflicts, copies, replay counts, UTC boundaries, rejected-only inputs, file mutations, selection equivalence, root relocation and fixed canonical fingerprint bytes/digest. Existing M1 tests remain unchanged and are included by normal test discovery and the existing processing CI job.
 
-Completed inputs must remain immutable through downstream actions. Returned Spark DataFrames have lazy file lineage; `verify_unchanged()` must be called after downstream actions and before any future publication. No caching, transactional snapshot, concurrent mutation protection, locks or exactly-once guarantee is provided. Hash checks cannot detect changes that are reverted between checks. Original Bronze integrity and Silver authenticity are not re-established; empty datasets supply no row provenance. File inventories live on the driver and each footer is inspected separately; full input hashing and Spark validation cost I/O and jobs. Article datasets are not collected to Python, but this is a bounded local implementation, not evidence of distributed scalability. Gold transformations, publication and DuckDB reconciliation remain later work.
+Completed inputs must remain immutable through downstream actions. Returned Spark DataFrames have lazy file lineage; `verify_unchanged()` must be called after downstream actions and before any future publication. No caching, transactional snapshot, concurrent mutation protection, locks or exactly-once guarantee is provided. Hash checks cannot detect changes that are reverted between checks. Original Bronze integrity and Silver authenticity are not re-established; empty datasets supply no row provenance. File inventories live on the driver and each footer is inspected separately; full input hashing and Spark validation cost I/O and jobs. Article datasets are not collected to Python, but this is a bounded local implementation, not evidence of distributed scalability. Gold transformations are implemented in M2.3; publication and DuckDB reconciliation remain later work.
 
 ## Local validation evidence
 

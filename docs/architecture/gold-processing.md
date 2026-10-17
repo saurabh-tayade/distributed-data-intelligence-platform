@@ -1,6 +1,6 @@
 # Gold processing and publication design
 
-Status: **Accepted** by the owner on October 15, 2026. M2.2 implements the [completed-Silver input boundary](silver-input-validation.md); Gold transformations, publication and DuckDB integration remain unimplemented. See [contracts](gold-contracts.md), [ADR 0004](../adr/0004-gold-analytics-publication.md), and the [canonical roadmap](../charter.md#milestones-m0m9).
+Status: **Accepted** by the owner on October 15, 2026. M2.2 implements the [completed-Silver input boundary](silver-input-validation.md), and M2.3 implements the [Spark transformations](gold-transformations.md). Gold publication and DuckDB integration remain unimplemented. See [contracts](gold-contracts.md), [ADR 0004](../adr/0004-gold-analytics-publication.md), and the [canonical roadmap](../charter.md#milestones-m0m9).
 
 ## Boundaries
 
