@@ -1,6 +1,6 @@
 # Gold data contracts
 
-Status: **Accepted**, version 1; documentation only for M2.1. [ADR 0004](../adr/0004-gold-analytics-publication.md) was explicitly accepted by the owner on October 15, 2026. The [processing design](gold-processing.md) defines the validated input set and publication boundary. These contracts inherit [Silver v1](silver-processing.md#accepted-schema-version-1); they do not change accepted ADRs 0001–0003.
+Status: **Accepted**, version 1. [ADR 0004](../adr/0004-gold-analytics-publication.md) was explicitly accepted by the owner on October 15, 2026. M2.3 implements the [Spark transformations](gold-transformations.md); the [processing design](gold-processing.md) defines the validated input set and future publication boundary. These contracts inherit [Silver v1](silver-processing.md#accepted-schema-version-1); they do not change accepted ADRs 0001–0003.
 
 ## Shared rules
 
