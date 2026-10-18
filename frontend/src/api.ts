@@ -1,4 +1,4 @@
-/** The M6.2 publisher REST contract. Counters stay decimal strings at this boundary. */
+/** The M6.2/M6.4 REST contracts. Counters stay decimal strings at this boundary. */
 export interface Publisher {
   sourceId: string;
   articleCount: string;
@@ -13,6 +13,30 @@ export interface PublishersResponse {
   data: Publisher[];
   meta: { returned: number; limit: number };
 }
+
+export interface Article {
+  articleId: string; sourceId: string; title: string; url: string | null; summary: string | null;
+  publishedAt: string | null; updatedAt: string | null; firstObservedAt: string; lastObservedAt: string;
+  observationCount: string; distinctIngestionCount: string; qualityWarnings: string[];
+}
+export interface DailyRow {
+  sourceId: string; ingestionDate: string; observationCount: string; distinctArticleCount: string;
+  distinctIngestionCount: string; qualityWarningCount: string; latestIngestedAt: string;
+}
+export interface QualityRow {
+  sourceId: string; observationCount: string; qualityWarningCount: string; warningCodesPerObservation: number;
+}
+export interface ArticlesResponse {
+  publication: string; data: Article[];
+  meta: { returned: number; limit: number; offset: number; hasMore: boolean };
+}
+export interface DailyResponse { publication: string; data: DailyRow[]; meta: { returned: number; limit: number } }
+export interface QualityResponse { publication: string; data: QualityRow[]; meta: { returned: number; limit: number } }
+export type View = 'publishers' | 'daily' | 'quality' | 'articles';
+export interface DateFilters { from: string; to: string }
+export const EMPTY_DATES: DateFilters = { from: '', to: '' };
+export const ARTICLE_LIMIT = 10;
+export const MAX_OFFSET = 1_000_000;
 
 export const PUBLISHER_LIMIT = 100;
 export const MAX_COUNTER = 9223372036854775807n;
@@ -33,8 +57,9 @@ const messages: Record<ErrorKind, string> = {
 };
 
 export class DashboardError extends Error {
-  constructor(public readonly kind: ErrorKind) {
-    super(messages[kind]);
+  constructor(public readonly kind: ErrorKind, report: View = 'publishers') {
+    super(report === 'publishers' ? messages[kind] : messages[kind].replace(/publisher/gi,
+      report === 'articles' ? 'article' : report));
     this.name = 'DashboardError';
   }
 }
@@ -68,20 +93,29 @@ function timestamp(value: unknown): string | null {
   return value;
 }
 
-export function parsePublishers(value: unknown, limit: number, sourceId = ''): PublishersResponse {
+function envelope(value: unknown, limit: number, extraMeta: string[] = []) {
+  requireValid(Number.isInteger(limit) && limit >= 1 && limit <= 1000);
   record(value);
   fields(value, ['publication', 'data', 'meta']);
   requireValid(typeof value.publication === 'string' && /^[0-9a-f]{64}$/.test(value.publication));
   record(value.meta);
-  fields(value.meta, ['returned', 'limit']);
+  fields(value.meta, ['returned', 'limit', ...extraMeta]);
   requireValid(value.meta.limit === limit && Number.isInteger(value.meta.returned));
   requireValid(Array.isArray(value.data) && value.data.length <= limit && value.meta.returned === value.data.length);
+  return { publication: value.publication, rows: value.data as unknown[], meta: value.meta };
+}
+
+export function parsePublishers(value: unknown, limit: number, sourceId = ''): PublishersResponse {
+  const { publication, rows } = envelope(value, limit);
   const seen = new Set<string>();
-  const data = value.data.map((item: unknown): Publisher => {
+  let previous: string | null = null;
+  const data = rows.map((item: unknown): Publisher => {
     record(item);
     fields(item, ['sourceId', 'articleCount', 'observationCount', 'firstObservedAt', 'lastObservedAt', 'articlesWithoutPublishedAt']);
     requireValid(typeof item.sourceId === 'string' && item.sourceId.trim().length > 0);
     requireValid(!seen.has(item.sourceId) && (!sourceId || item.sourceId === sourceId));
+    requireValid(previous === null || compareSourceIds(previous, item.sourceId) < 0);
+    previous = item.sourceId;
     seen.add(item.sourceId);
     return {
       sourceId: item.sourceId,
@@ -92,23 +126,167 @@ export function parsePublishers(value: unknown, limit: number, sourceId = ''): P
       lastObservedAt: timestamp(item.lastObservedAt),
     };
   });
-  return { publication: value.publication, data, meta: { returned: data.length, limit } };
+  return { publication, data, meta: { returned: data.length, limit } };
 }
 
-export async function fetchPublishers(sourceId: string, signal: AbortSignal, limit = PUBLISHER_LIMIT): Promise<PublishersResponse> {
+/** DuckDB's source ordering is binary UTF-8, not locale-dependent sorting. */
+export function compareSourceIds(left: string, right: string): number {
+  const encoder = new TextEncoder();
+  const a = encoder.encode(left), b = encoder.encode(right);
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    if (a[i] !== b[i]) return a[i]! - b[i]!;
+  }
+  return a.length - b.length;
+}
+
+export function isUtcDate(value: string): boolean {
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(value) || value.startsWith('0000')) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+export function dateFilterError({ from, to }: DateFilters): string | null {
+  if ((from !== '' && !isUtcDate(from)) || (to !== '' && !isUtcDate(to))) return 'Use valid UTC dates in YYYY-MM-DD format.';
+  if (from && to && from > to) return 'From date must be on or before To date.';
+  return null;
+}
+function source(value: unknown, filter: string): string {
+  requireValid(typeof value === 'string' && value.trim().length > 0 && (!filter || value === filter));
+  return value;
+}
+function positiveCounter(value: unknown): string {
+  const result = counter(value);
+  requireValid(BigInt(result) > 0n);
+  return result;
+}
+function requiredTimestamp(value: unknown): string {
+  const result = timestamp(value);
+  requireValid(result !== null);
+  return result;
+}
+function nullableText(value: unknown): string | null {
+  requireValid(value === null || typeof value === 'string');
+  return value;
+}
+
+export function parseArticles(value: unknown, limit: number, offset: number, sourceId = ''): ArticlesResponse {
+  const { publication, rows, meta } = envelope(value, limit, ['offset', 'hasMore']);
+  requireValid(Number.isInteger(meta.offset) && meta.offset === offset && offset >= 0 && offset <= MAX_OFFSET);
+  requireValid(typeof meta.hasMore === 'boolean' && (!meta.hasMore || rows.length === limit));
+  const ids = new Set<string>();
+  let previous: Article | null = null;
+  const data = rows.map((item): Article => {
+    record(item);
+    fields(item, ['articleId', 'sourceId', 'title', 'url', 'summary', 'publishedAt', 'updatedAt',
+      'firstObservedAt', 'lastObservedAt', 'observationCount', 'distinctIngestionCount', 'qualityWarnings']);
+    requireValid(typeof item.articleId === 'string' && /^[0-9a-f]{64}$/.test(item.articleId) && !ids.has(item.articleId));
+    requireValid(typeof item.title === 'string' && item.title.trim().length > 0);
+    const row: Article = {
+      articleId: item.articleId, sourceId: source(item.sourceId, sourceId), title: item.title,
+      url: nullableText(item.url), summary: nullableText(item.summary),
+      publishedAt: timestamp(item.publishedAt), updatedAt: timestamp(item.updatedAt),
+      firstObservedAt: requiredTimestamp(item.firstObservedAt), lastObservedAt: requiredTimestamp(item.lastObservedAt),
+      observationCount: positiveCounter(item.observationCount), distinctIngestionCount: positiveCounter(item.distinctIngestionCount),
+      qualityWarnings: [],
+    };
+    const warnings = item.qualityWarnings;
+    requireValid(Array.isArray(warnings));
+    requireValid([[], ['INVALID_PUBLISHED_AT'], ['INVALID_UPDATED_AT'],
+      ['INVALID_PUBLISHED_AT', 'INVALID_UPDATED_AT']].some((codes) =>
+      codes.length === warnings.length && codes.every((code, index) => code === warnings[index])));
+    row.qualityWarnings = [...warnings] as string[];
+    requireValid(row.firstObservedAt <= row.lastObservedAt && BigInt(row.distinctIngestionCount) <= BigInt(row.observationCount));
+    requireValid(previous === null || previous.lastObservedAt > row.lastObservedAt
+      || (previous.lastObservedAt === row.lastObservedAt && previous.articleId < row.articleId));
+    ids.add(row.articleId);
+    previous = row;
+    return row;
+  });
+  return { publication, data, meta: { returned: data.length, limit, offset, hasMore: meta.hasMore } };
+}
+
+export function parseDaily(value: unknown, limit: number, sourceId = '', dates = EMPTY_DATES): DailyResponse {
+  const { publication, rows } = envelope(value, limit);
+  let previous: DailyRow | null = null;
+  const data = rows.map((item): DailyRow => {
+    record(item);
+    fields(item, ['sourceId', 'ingestionDate', 'observationCount', 'distinctArticleCount', 'distinctIngestionCount',
+      'qualityWarningCount', 'latestIngestedAt']);
+    requireValid(typeof item.ingestionDate === 'string' && isUtcDate(item.ingestionDate));
+    requireValid((!dates.from || item.ingestionDate >= dates.from) && (!dates.to || item.ingestionDate <= dates.to));
+    const row: DailyRow = {
+      sourceId: source(item.sourceId, sourceId), ingestionDate: item.ingestionDate,
+      observationCount: positiveCounter(item.observationCount), distinctArticleCount: positiveCounter(item.distinctArticleCount),
+      distinctIngestionCount: positiveCounter(item.distinctIngestionCount), qualityWarningCount: counter(item.qualityWarningCount),
+      latestIngestedAt: requiredTimestamp(item.latestIngestedAt),
+    };
+    requireValid(row.latestIngestedAt.startsWith(`${row.ingestionDate}T`));
+    requireValid(BigInt(row.distinctArticleCount) <= BigInt(row.observationCount)
+      && BigInt(row.distinctIngestionCount) <= BigInt(row.observationCount));
+    requireValid(previous === null || compareSourceIds(previous.sourceId, row.sourceId) < 0
+      || (previous.sourceId === row.sourceId && previous.ingestionDate < row.ingestionDate));
+    previous = row;
+    return row;
+  });
+  return { publication, data, meta: { returned: data.length, limit } };
+}
+
+export function parseQuality(value: unknown, limit: number, sourceId = ''): QualityResponse {
+  const { publication, rows } = envelope(value, limit);
+  let previous: string | null = null;
+  const data = rows.map((item): QualityRow => {
+    record(item);
+    fields(item, ['sourceId', 'observationCount', 'qualityWarningCount', 'warningCodesPerObservation']);
+    const id = source(item.sourceId, sourceId);
+    requireValid(previous === null || compareSourceIds(previous, id) < 0);
+    requireValid(typeof item.warningCodesPerObservation === 'number' && Number.isFinite(item.warningCodesPerObservation)
+      && item.warningCodesPerObservation >= 0);
+    previous = id;
+    return { sourceId: id, observationCount: positiveCounter(item.observationCount),
+      qualityWarningCount: counter(item.qualityWarningCount), warningCodesPerObservation: item.warningCodesPerObservation };
+  });
+  return { publication, data, meta: { returned: data.length, limit } };
+}
+
+function queryParameters(sourceId: string, limit: number, report: View = 'publishers'): URLSearchParams {
   if (!Number.isInteger(limit) || limit < 1 || limit > 1000 || (sourceId !== '' && !isFilterableSource(sourceId))) {
-    throw new DashboardError('invalid-argument');
+    throw new DashboardError('invalid-argument', report);
   }
   const query = new URLSearchParams({ limit: String(limit) });
   if (sourceId) query.set('sourceId', sourceId);
+  return query;
+}
+function withDates(query: URLSearchParams, dates: DateFilters, report: 'daily' | 'quality'): URLSearchParams {
+  if (dateFilterError(dates)) throw new DashboardError('invalid-argument', report);
+  if (dates.from) query.set('from', dates.from);
+  if (dates.to) query.set('to', dates.to);
+  return query;
+}
+
+export async function fetchPublishers(sourceId: string, signal: AbortSignal, limit = PUBLISHER_LIMIT): Promise<PublishersResponse> {
+  return request('publishers', queryParameters(sourceId, limit), signal, (value) => parsePublishers(value, limit, sourceId));
+}
+export async function fetchArticles(sourceId: string, signal: AbortSignal, offset = 0, limit = ARTICLE_LIMIT): Promise<ArticlesResponse> {
+  const query = queryParameters(sourceId, limit, 'articles');
+  if (!Number.isInteger(offset) || offset < 0 || offset > MAX_OFFSET) throw new DashboardError('invalid-argument', 'articles');
+  query.set('offset', String(offset));
+  return request('articles', query, signal, (value) => parseArticles(value, limit, offset, sourceId));
+}
+export async function fetchDaily(sourceId: string, signal: AbortSignal, dates = EMPTY_DATES, limit = PUBLISHER_LIMIT): Promise<DailyResponse> {
+  return request('daily', withDates(queryParameters(sourceId, limit, 'daily'), dates, 'daily'), signal, (value) => parseDaily(value, limit, sourceId, dates));
+}
+export async function fetchQuality(sourceId: string, signal: AbortSignal, dates = EMPTY_DATES, limit = PUBLISHER_LIMIT): Promise<QualityResponse> {
+  return request('quality', withDates(queryParameters(sourceId, limit, 'quality'), dates, 'quality'), signal, (value) => parseQuality(value, limit, sourceId));
+}
+
+async function request<T>(report: View, query: URLSearchParams, signal: AbortSignal, parse: (value: unknown) => T): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`/api/v1/publishers?${query}`, {
+    response = await fetch(`/api/v1/${report}?${query}`, {
       signal, cache: 'no-store', credentials: 'omit', headers: { Accept: 'application/json' },
     });
   } catch (error) {
     if (signal.aborted) throw error;
-    throw new DashboardError('network');
+    throw new DashboardError('network', report);
   }
   if (response.status !== 200) {
     // Only this fixed code affects presentation. Never render server messages, paths or raw bodies.
@@ -116,16 +294,16 @@ export async function fetchPublishers(sourceId: string, signal: AbortSignal, lim
       let body: unknown;
       try { body = await response.json(); } catch { /* Proxy errors can be non-JSON. */ }
       if (body && typeof body === 'object' && 'code' in body && body.code === 'ANALYTICS_CAPACITY_EXCEEDED') {
-        throw new DashboardError('capacity');
+        throw new DashboardError('capacity', report);
       }
-      throw new DashboardError('unavailable');
+      throw new DashboardError('unavailable', report);
     }
-    throw new DashboardError(response.status === 400 ? 'invalid-argument' : response.status === 504 ? 'timeout' : 'execution');
+    throw new DashboardError(response.status === 400 ? 'invalid-argument' : response.status === 504 ? 'timeout' : 'execution', report);
   }
   try {
     requireValid(response.headers.get('content-type')?.includes('application/json'));
-    return parsePublishers(await response.json(), limit, sourceId);
+    return parse(await response.json());
   } catch {
-    throw new DashboardError('invalid-response');
+    throw new DashboardError('invalid-response', report);
   }
 }

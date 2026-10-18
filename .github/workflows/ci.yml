@@ -93,7 +93,7 @@ jobs:
           mvn -B -ntp -f services/content-api/pom.xml verify -Pintegration -Danalytics.python="$(command -v python)"
 
   frontend:
-    name: React publisher dashboard
+    name: React analytics dashboard
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
