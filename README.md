@@ -56,7 +56,7 @@ Batch processing comes first; streaming is introduced incrementally. Consumers m
 | `docs/` | Charter, architecture, decision records, and future benchmarks |
 | `ingestion/` | Java 21 Maven module: RSS retrieval, batch CLI and Bronze S3 storage |
 | `processing/` | Spark Silver/Gold processing, immutable Parquet publication and standalone DuckDB reports |
-| `services/` | Future APIs and application services |
+| `services/` | M6.1 isolated JDBC feasibility POC; production APIs remain future work |
 | `frontend/` | Future analytics UI |
 | `infrastructure/local/` | Pinned SeaweedFS Compose configuration |
 | `infrastructure/aws/` | Reserved for explicitly approved cloud validation |
@@ -69,7 +69,7 @@ Empty directories contain `.gitkeep` placeholders so the layout survives a futur
 
 The [canonical roadmap](docs/charter.md#milestones-m0m9) defines milestone scope and historical mappings. **M1 — Completed Bronze-to-Silver pipeline** is complete; see the [closeout](docs/m1-closeout.md). **M2 — Gold Analytics & Data Products** is complete; see the [closeout evidence](docs/m2-closeout.md). M2.1 supplies accepted [Gold contracts](docs/architecture/gold-contracts.md), [architecture and publication semantics](docs/architecture/gold-processing.md), and [ADR 0004](docs/adr/0004-gold-analytics-publication.md); M2.2 implements [completed-Silver discovery and validation](docs/architecture/silver-input-validation.md); M2.3 implements [Gold Spark transformations](docs/architecture/gold-transformations.md). M2.4 implements [immutable Gold publication and replay](docs/architecture/gold-publication.md). M2.5 implements [standalone DuckDB analytics](docs/architecture/duckdb-analytics.md). M2.6 verified retained publisher-data reconciliation and unchanged replay through [the local integration procedure](docs/architecture/m2-retained-validation.md).
 
-The original M2 Bronze and M3 Silver work landed in M1; the former M4 Gold/SQL scope now belongs to M2. M3/M4 are retired roadmap slots, while M5–M9 retain their planned scope. **M6 — Consumer APIs & React Dashboard** is the next execution priority, ahead of **M5 — Streaming**, without renumbering either milestone. Future functionality has not shipped.
+The original M2 Bronze and M3 Silver work landed in M1; the former M4 Gold/SQL scope now belongs to M2. M3/M4 are retired roadmap slots, while M5–M9 retain their planned scope. **M6 — Consumer APIs & React Dashboard** is the next execution priority, ahead of **M5 — Streaming**, without renumbering either milestone. Future functionality has not shipped. M6.1 now includes a [tested Java/DuckDB JDBC experiment](docs/architecture/consumer-integration.md). [ADR 0005](docs/adr/0005-gold-consumer-integration.md) is **Proposed** and recommends preserving the Python analytics validation boundary for M6.2. The POC is not a production API or verified Gold consumer.
 
 ## Getting started
 
@@ -90,7 +90,7 @@ Record consequential choices using the [ADR process](docs/adr/README.md). This p
 
 ## Automated checks
 
-[CI](.github/workflows/ci.yml) runs on pull requests targeting `main` and pushes to `main`, with read-only repository permissions. It is configured to check Markdown formatting, local documentation links, repository hygiene, Maven Java 21 tests, shell regressions, and all Python/PySpark processing tests. The processing job uses Ubuntu 24.04, Python 3.12.15, Java 21, Spark local mode and pinned DuckDB analytics requirements. Tests need no storage service, AWS credentials or publisher requests; dependency installation needs network access. All three jobs passed in [M2.5 hosted CI run 39090685129](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/39090685129); the processing log records 78 passing tests. See the [M2 hosted evidence](docs/m2-closeout.md#hosted-ci-verification), which covers the merged implementation baseline separately from local retained-data integration and subsequent closeout documentation.
+[CI](.github/workflows/ci.yml) runs on pull requests targeting `main` and pushes to `main`, with read-only repository permissions. It is configured to check Markdown formatting, local documentation links, repository hygiene, Maven Java 21 tests, shell regressions, and all Python/PySpark processing tests. The processing job uses Ubuntu 24.04, Python 3.12.15, Java 21, Spark local mode and pinned DuckDB analytics requirements. An additional M6.1 step generates synthetic Gold fixtures and compares JDBC reports with the Python reference; hosted execution of that step is pending. Tests need no storage service, AWS credentials or publisher requests; dependency installation needs network access. All three jobs passed in [M2.5 hosted CI run 39090685129](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/39090685129); the processing log records 78 passing tests. See the [M2 hosted evidence](docs/m2-closeout.md#hosted-ci-verification), which covers the merged implementation baseline separately from local retained-data integration and subsequent closeout documentation.
 
 From the repository root, with Git, Bash, Node.js 24.x, and npm installed:
 

@@ -34,7 +34,7 @@ Develop locally first; add services only when justified. Prefer small, understan
 | M3 — Retired milestone slot | Original local Silver scope delivered in M1; no separate active deliverable |
 | M4 — Retired milestone slot | Original Gold/SQL scope moved to M2; no duplicate active deliverable |
 | M5 — Streaming | Deferred until after M6: events reach analytical layers; demonstrate late events, checkpoints, restarts and duplicate handling |
-| M6 — Consumer APIs & React Dashboard | Next execution priority, ahead of M5: read APIs and a React dashboard consume documented Gold outputs alongside SQL exploration |
+| M6 — Consumer APIs & React Dashboard | Current priority, ahead of M5: M6.1 JDBC feasibility tested; [ADR 0005](adr/0005-gold-consumer-integration.md) Proposed. M6.2 production APIs and the React dashboard remain unimplemented |
 | M7 — Reliability | Planned: end-to-end validation, operational signals, failure recovery and runbooks |
 | M8 — Benchmarks | Planned: reproducible workloads, environment details, correctness checks and measured results |
 | M9 — Optional AWS validation | Planned only with explicit approval: bounded experiment, cost report and verified teardown |
