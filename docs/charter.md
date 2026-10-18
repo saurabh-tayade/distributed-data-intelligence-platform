@@ -30,7 +30,7 @@ Develop locally first; add services only when justified. Prefer small, understan
 | --- | --- |
 | M0 — Foundation | M0.1: repository layout, charter, architecture proposal, conventions, and Git on main; later setup work is tracked separately |
 | M1 — Completed Bronze-to-Silver pipeline | Complete: local batch ingestion, Bronze storage, Spark Silver normalization and verified integration |
-| M2 — Gold Analytics & Data Products | M2.1: accepted contracts and design; M2.2: completed-Silver input validation; M2.3: Spark Gold transformations implemented; M2.4 publication, M2.5 DuckDB SQL and M2.6 retained-data reconciliation remain |
+| M2 — Gold Analytics & Data Products | M2.1: accepted contracts and design; M2.2: completed-Silver input validation; M2.3: Spark Gold transformations implemented; M2.4 immutable publication/replay implemented; M2.5 DuckDB SQL and M2.6 retained-data reconciliation remain |
 | M3 — Retired milestone slot | Original local Silver scope delivered in M1; no separate active deliverable |
 | M4 — Retired milestone slot | Original Gold/SQL scope moved to M2; no duplicate active deliverable |
 | M5 — Streaming | Planned: events reach analytical layers; demonstrate late events, checkpoints, restarts and duplicate handling |

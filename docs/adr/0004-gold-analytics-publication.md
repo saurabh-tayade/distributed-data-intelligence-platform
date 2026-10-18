@@ -3,7 +3,7 @@
 - Date: 2026-10-15
 - Status: Accepted
 - Acceptance date: 2026-10-15
-- Implementation: M2.1 design; M2.2 completed-Silver discovery and validation; M2.3 Spark Gold transformations implemented. Gold publication and DuckDB integration remain unimplemented.
+- Implementation: M2.1 design; M2.2 completed-Silver discovery and validation; M2.3 Spark Gold transformations implemented. M2.4 immutable Gold publication and replay implemented. DuckDB integration remains unimplemented.
 
 ## Context
 
