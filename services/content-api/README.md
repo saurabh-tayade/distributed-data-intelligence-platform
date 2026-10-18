@@ -1,6 +1,6 @@
 # M6.2 — Spring Boot API foundation and verified Gold consumer
 
-This Java 21 module implements `GET /api/v1/publishers` over one explicitly pinned Gold publication. The owner [accepted ADR 0005](../../docs/adr/0005-gold-consumer-integration.md) on October 18, 2026. The [JDBC POC](../api/README.md) remains isolated and is not a runtime dependency. React and `/articles`, `/daily`, `/quality`, and `/publication` endpoints are not implemented.
+This Java 21 module implements `GET /api/v1/publishers` over one explicitly pinned Gold publication. The owner [accepted ADR 0005](../../docs/adr/0005-gold-consumer-integration.md) on October 18, 2026. The [JDBC POC](../api/README.md) remains isolated and is not a runtime dependency. The separate [M6.3 React dashboard](../../frontend/README.md) consumes this publisher endpoint. `/articles`, `/daily`, `/quality`, and `/publication` endpoints are not implemented.
 
 ## Acceptance and structure
 
@@ -148,4 +148,4 @@ Optional retained-data validation is separate from synthetic tests. The packaged
 
 Hosted execution of these changes remains pending owner publication; local tests do not establish hosted CI success or production scalability.
 
-For M6.3, add the next analytical endpoint within its assigned scope using fixed report names and typed report-specific response validation. Preserve this adapter and Python verification boundary, define endpoint-specific filters and serialization, and extend the same synthetic parity tests. Article rendering, URL handling and pagination need explicit contracts before a React dashboard ships.
+M6.3 implements the React publisher dashboard against this existing API, without adding backend analytical capabilities. M6.4 and M6.5 remain planned. Later analytical endpoints should retain fixed reports and typed response validation, define endpoint-specific filters, and extend synthetic parity tests. Article rendering, URL handling and pagination need explicit contracts before those capabilities are added.
