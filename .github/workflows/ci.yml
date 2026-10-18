@@ -86,7 +86,7 @@ jobs:
           export PYSPARK_PYTHON="$(command -v python)"
           PYTHONPATH=processing:processing/tests python services/api/tests/generate_fixtures.py --output services/api/target/fixtures
           mvn -B -ntp -f services/api/pom.xml verify
-      - name: Verify Spring Boot publisher API against the same synthetic Gold fixtures
+      - name: Verify all Spring Boot analytics APIs against the same synthetic Gold fixtures
         run: |
           export JAVA_HOME="$JAVA_HOME_21_X64"
           export PATH="$JAVA_HOME/bin:$PATH"

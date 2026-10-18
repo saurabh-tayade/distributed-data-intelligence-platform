@@ -102,6 +102,62 @@ class AnalyticsTest(unittest.TestCase):
             for name in ('publishers', 'daily', 'articles', 'quality'):
                 self.assertEqual(analytics.report(name), [])
 
+    def test_article_pages_and_legacy_report_compatibility(self):
+        for snapshot in (self.full, self.first, self.empty):
+            with self.subTest(snapshot=snapshot), open_publication(self.root, snapshot) as analytics:
+                for source in (None, 'alpha', 'unknown', "alpha' OR 1=1 --"):
+                    expected = analytics.report('articles', source=source)
+                    actual = []
+                    for offset in range(len(expected) + 2):
+                        page = analytics.article_page(source=source, limit=1, offset=offset)
+                        self.assertEqual(page, dict(rows=expected[offset:offset + 1], offset=offset,
+                                                    has_more=offset + 1 < len(expected)))
+                        actual += page['rows']
+                    self.assertEqual(actual, expected)
+                    self.assertEqual(analytics.report('articles', source=source), expected)
+                    self.assertEqual(analytics.article_page(source=source, limit=1000)['rows'], expected)
+                self.assertEqual(analytics.article_page(offset=1_000_000),
+                                 dict(rows=[], offset=1_000_000, has_more=False))
+
+    def test_page_limits_offsets_and_mutation_detection(self):
+        with open_publication(self.root, self.full) as analytics:
+            for offset in (-1, 1_000_001, 2**100, 1.5, '1', True, None):
+                with self.subTest(offset=offset), self.assertRaisesRegex(AnalyticsFailure, 'INVALID_ARGUMENT'):
+                    analytics.article_page(offset=offset)
+            for limit in (0, -1, 1001, 2**100, 1.5, '1', True):
+                with self.subTest(limit=limit), self.assertRaisesRegex(AnalyticsFailure, 'INVALID_ARGUMENT'):
+                    analytics.article_page(limit=limit)
+            self.marker(lambda m: m['output_counts'].update(gold_articles=9))
+            with self.assertRaisesRegex(AnalyticsFailure, 'PUBLICATION_CHANGED'):
+                analytics.article_page()
+
+    def test_cli_opt_in_envelope_and_invalid_offsets(self):
+        for report in ('articles', 'publishers', 'daily', 'quality'):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(main(['--gold-root', str(self.root), '--publication', self.full,
+                                       '--report', report]), 0)
+            self.assertEqual(set(json.loads(output.getvalue())), {'status', 'publication', 'report', 'limit', 'rows'})
+        legacy = io.StringIO()
+        with redirect_stdout(legacy):
+            self.assertEqual(main(['--gold-root', str(self.root), '--publication', self.full,
+                                   '--report', 'articles', '--limit', '1']), 0)
+        paged = io.StringIO()
+        with redirect_stdout(paged):
+            self.assertEqual(main(['--gold-root', str(self.root), '--publication', self.full,
+                                   '--report', 'articles', '--limit', '1', '--offset', '0']), 0)
+        page = json.loads(paged.getvalue())
+        self.assertEqual(page.pop('offset'), 0)
+        self.assertTrue(page.pop('has_more'))
+        self.assertEqual(page, json.loads(legacy.getvalue()))
+        for report, offset in [('articles', value) for value in ('-1', '1000001', '999999999999999', '1.0',
+                               'bad', '', '+1', ' 1', '1_0')] + [(name, '0') for name in ('publishers', 'daily', 'quality')]:
+            output = io.StringIO()
+            with redirect_stdout(output):
+                code = main(['--publication', self.full, '--report', report, '--offset', offset])
+            self.assertEqual(code, 2)
+            self.assertEqual(json.loads(output.getvalue()), dict(status='FAILED', code='INVALID_ARGUMENT', path=''))
+
     def test_missing_marker_manifest_and_data(self):
         for relative, code in [('complete.json', 'INCOMPLETE_OUTPUT'), ('inputs.json', 'INVALID_LAYOUT')]:
             path = self.directory / relative

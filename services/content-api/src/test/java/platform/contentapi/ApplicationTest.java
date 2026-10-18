@@ -27,9 +27,11 @@ class ApplicationTest {
                 .andExpect(content().json("{\"code\":\"PUBLICATION_UNAVAILABLE\"}"));
         mvc.perform(get("/actuator/env")).andExpect(status().isNotFound());
         mvc.perform(get("/actuator/health/readiness")).andExpect(status().isNotFound());
-        for (String report : new String[]{"articles", "daily", "quality", "publication"}) {
-            mvc.perform(get("/api/v1/" + report)).andExpect(status().isNotFound());
+        for (String report : new String[]{"articles", "daily", "quality"}) {
+            mvc.perform(get("/api/v1/" + report)).andExpect(status().isServiceUnavailable())
+                    .andExpect(content().json("{\"code\":\"PUBLICATION_UNAVAILABLE\"}"));
         }
+        mvc.perform(get("/api/v1/publication")).andExpect(status().isNotFound());
     }
 
     @Configuration(proxyBeanMethods = false)

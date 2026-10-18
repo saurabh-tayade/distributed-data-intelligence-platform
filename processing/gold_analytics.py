@@ -2,6 +2,7 @@
 import argparse
 from datetime import date, datetime, timezone
 import json
+import re
 
 import duckdb
 
@@ -28,6 +29,7 @@ DAILY_SCHEMA = [('contract_version', 'INTEGER'), ('source_id', 'VARCHAR'), ('ing
                 ('latest_ingested_at', 'TIMESTAMP')]
 SCHEMAS = dict(zip(TABLES, (ARTICLE_SCHEMA, DAILY_SCHEMA), strict=True))
 MAX_LIMIT = 1000
+MAX_OFFSET = 1_000_000
 
 REPORTS = {
     'publishers': """
@@ -138,6 +140,18 @@ def _filters(report, source, start, end, limit):
     return values
 
 
+def _offset(value):
+    if type(value) is not int or not 0 <= value <= MAX_OFFSET:
+        raise AnalyticsFailure('INVALID_ARGUMENT')
+    return value
+
+
+def _cli_offset(raw):
+    if not re.fullmatch(r'[0-9]{1,7}', raw):
+        raise AnalyticsFailure('INVALID_ARGUMENT')
+    return _offset(int(raw))
+
+
 class GoldAnalytics:
     """Context-managed named reports. No unrestricted SQL interface is promised."""
     def __init__(self, metadata, connection):
@@ -146,9 +160,20 @@ class GoldAnalytics:
 
     def report(self, name, *, source=None, start=None, end=None, limit=100):
         values = _filters(name, source, start, end, limit)
+        return self._query(REPORTS[name], values)
+
+    def article_page(self, *, source=None, limit=100, offset=0):
+        """Opt-in page contract; legacy report() output and limits remain unchanged."""
+        values = _filters('articles', source, None, None, limit)
+        values['offset'] = _offset(offset)
+        values['limit'] = limit + 1  # One bounded lookahead row, including at MAX_LIMIT.
+        rows = self._query(REPORTS['articles'].rstrip() + ' OFFSET $offset', values)
+        return dict(rows=rows[:limit], offset=offset, has_more=len(rows) > limit)
+
+    def _query(self, sql, values):
         try:
             self._metadata.verify_unchanged()
-            cursor = self._connection.execute(REPORTS[name], values)
+            cursor = self._connection.execute(sql, values)
             columns = [d[0] for d in cursor.description]
             rows = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
             self._metadata.verify_unchanged()
@@ -219,14 +244,21 @@ def main(argv=None):
     parser.add_argument('--start-date')
     parser.add_argument('--end-date')
     parser.add_argument('--limit', type=int, default=100)
+    parser.add_argument('--offset', type=_cli_offset, help='articles only: opt into page metadata; range 0..1000000')
     try:
         args = parser.parse_args(argv)
         _filters(args.report, args.source, args.start_date, args.end_date, args.limit)
+        if args.offset is not None:
+            _offset(args.offset)
+            if args.report != 'articles':
+                raise AnalyticsFailure('INVALID_ARGUMENT')
         with open_publication(args.gold_root, args.publication) as analytics:
-            rows = analytics.report(args.report, source=args.source, start=args.start_date,
-                                    end=args.end_date, limit=args.limit)
-            result = dict(status='OK', publication=analytics.publication, report=args.report,
-                          limit=args.limit, rows=rows)
+            result = dict(status='OK', publication=analytics.publication, report=args.report, limit=args.limit)
+            if args.offset is None:
+                result['rows'] = analytics.report(args.report, source=args.source, start=args.start_date,
+                                                  end=args.end_date, limit=args.limit)
+            else:
+                result.update(analytics.article_page(source=args.source, limit=args.limit, offset=args.offset))
         print(json.dumps(result, default=_json_value, sort_keys=True, allow_nan=False))
         return 0
     except AnalyticsFailure as error:

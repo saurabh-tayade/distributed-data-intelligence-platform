@@ -1,6 +1,6 @@
 # M6.3 — React dashboard foundation and publisher analytics
 
-The first browser consumer of the platform displays publisher analytics from the existing [M6.2 content API](../services/content-api/README.md). It does not add backend reports, access Gold files directly, or weaken the Python verification boundary. [Accepted ADR 0005](../docs/adr/0005-gold-consumer-integration.md) remains unchanged. M6.4 and M6.5 remain planned; the full M6 milestone is not complete.
+The first browser consumer of the platform displays publisher analytics from the existing [M6.2 content API](../services/content-api/README.md). It does not add backend reports, access Gold files directly, or weaken the Python verification boundary. [Accepted ADR 0005](../docs/adr/0005-gold-consumer-integration.md) remains unchanged. M6.4 adds [backend analytical endpoints](../docs/architecture/analytics-api-contracts.md); this dashboard still consumes only publishers. M6.5 remains planned and the full M6 milestone is not complete.
 
 ## Acceptance and design
 
@@ -142,4 +142,4 @@ Local validation on October 18, 2026 used macOS ARM64, Node.js 24.19.0 and npm 1
 
 Hosted CI execution remains pending owner publication. Existing ingestion, processing and backend regression suites were not rerun for this frontend-only implementation; their workflow checks remain intact. Local validation artifacts are ignored under `outputs/m6-3/` and are not repository inputs. Production hosting and same-origin API routing are not implemented.
 
-M6.4 should follow its assigned scope and build on the existing API/client boundary. Define any additional report/filter contracts before implementation and extend exact-integer, publication-consistency and mocked response tests. M6.5 remains planned. Do not infer unimplemented endpoints, engagement metrics, pagination, authentication or publication switching from this dashboard.
+M6.4 has defined and implemented the additional backend report/filter contracts. M6.5 remains planned; extend exact-integer, publication-consistency and mocked response tests when adding its frontend scope. This publisher dashboard does not expose the new article pagination or other analytical endpoints, engagement metrics, authentication or publication switching.

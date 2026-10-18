@@ -4,7 +4,7 @@
 
 Build a public, portfolio-quality, local-first Content Intelligence & Analytics Platform inspired by a large content portal. Demonstrate heterogeneous ingestion, distributed transformations, trustworthy analytical layers, SQL exploration, and multiple consumers with reproducible evidence.
 
-M1 delivered Java 21 local RSS/Atom batch ingestion, SeaweedFS Bronze persistence, Spark Silver normalization and verified Bronze-to-Silver integration with local Parquet. M2 delivered validated Silver selection, deterministic Spark Gold products, immutable publication/replay and standalone DuckDB reports, reconciled against the six retained snapshots. See the [M1](m1-closeout.md) and [M2 closeout records](m2-closeout.md). M6.2 adds a verified Spring Boot publisher API, and M6.3 adds its React/TypeScript dashboard. M6.4, M6.5, streaming and the remaining full-MVP objectives below remain planned.
+M1 delivered Java 21 local RSS/Atom batch ingestion, SeaweedFS Bronze persistence, Spark Silver normalization and verified Bronze-to-Silver integration with local Parquet. M2 delivered validated Silver selection, deterministic Spark Gold products, immutable publication/replay and standalone DuckDB reports, reconciled against the six retained snapshots. See the [M1](m1-closeout.md) and [M2 closeout records](m2-closeout.md). M6.2 adds a verified Spring Boot publisher API, and M6.3 adds its React/TypeScript dashboard. M6.4 adds article/daily/quality APIs and deterministic article pagination. M6.5, streaming and the remaining full-MVP objectives below remain planned.
 
 ## MVP scope
 
@@ -34,7 +34,7 @@ Develop locally first; add services only when justified. Prefer small, understan
 | M3 — Retired milestone slot | Original local Silver scope delivered in M1; no separate active deliverable |
 | M4 — Retired milestone slot | Original Gold/SQL scope moved to M2; no duplicate active deliverable |
 | M5 — Streaming | Deferred until after M6: events reach analytical layers; demonstrate late events, checkpoints, restarts and duplicate handling |
-| M6 — Consumer APIs & React Dashboard | Current priority, ahead of M5: M6.1 JDBC feasibility tested; [ADR 0005](adr/0005-gold-consumer-integration.md) Accepted October 18, 2026. [M6.2 publisher API foundation](../services/content-api/README.md) implemented with verified Python consumer integration. [M6.3 React publisher dashboard](../frontend/README.md) implemented using the existing API. M6.4 and M6.5 remain planned; M6 is not complete |
+| M6 — Consumer APIs & React Dashboard | Current priority, ahead of M5: M6.1 JDBC feasibility tested; [ADR 0005](adr/0005-gold-consumer-integration.md) Accepted October 18, 2026. [M6.2 publisher API foundation](../services/content-api/README.md) implemented with verified Python consumer integration. [M6.3 React publisher dashboard](../frontend/README.md) implemented using the existing API. [M6.4 analytics APIs and article pagination](architecture/analytics-api-contracts.md) implemented; M6.5 remains planned and M6 is not complete |
 | M7 — Reliability | Planned: end-to-end validation, operational signals, failure recovery and runbooks |
 | M8 — Benchmarks | Planned: reproducible workloads, environment details, correctness checks and measured results |
 | M9 — Optional AWS validation | Planned only with explicit approval: bounded experiment, cost report and verified teardown |
