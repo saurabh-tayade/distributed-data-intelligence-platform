@@ -28,7 +28,7 @@ Observations are not page views. Identities remain source-scoped. Warning totals
 
 Before recommending an integration architecture, demonstrate Java 21/JDBC loading, queries over M2.4-produced synthetic Parquet, full result parity with Python for all four reports and filters, null/date/microsecond/list mappings, deterministic cleanup, and safe failures. Explicitly test and document integrity gaps rather than counting them as Java protections. Test generation may use local Spark; the Java query process must need only the generated Gold directory. Keep retained-data evidence separate and all generated data ignored.
 
-The experiment below passed its compatibility acceptance checks. [ADR 0005](../adr/0005-gold-consumer-integration.md) remains **Proposed** and recommends the existing Python CLI boundary for M6.2; the JDBC POC remains unverified for production.
+The experiment below passed its compatibility acceptance checks. [ADR 0005](../adr/0005-gold-consumer-integration.md) was subsequently **Accepted** on October 18, 2026 for the existing Python CLI boundary used in [M6.2](../../services/content-api/README.md); the JDBC POC remains unverified for production.
 
 ## POC interfaces and runtime
 
@@ -171,4 +171,4 @@ git diff --check
 
 The existing [CI workflow](../../.github/workflows/ci.yml) retains its documentation, ingestion and processing checks. One step after the processing suite generates the synthetic fixtures and runs Maven JDBC tests with runner Java 21. The same pinned Python requirements/cache remain unchanged. Dependency bootstrap needs network access; fixtures/tests themselves stay deterministic and service-independent. A hosted result must be recorded after the owner publishes the changes.
 
-No production reader, API, frontend or new analytical metric shipped. The [Proposed ADR](../adr/0005-gold-consumer-integration.md) explains why M6.2 should initially preserve the Python boundary and lists process-adapter, API contract and deployment work still required.
+No production reader, API, frontend or new analytical metric shipped. This describes the historical M6.1 experiment. The owner subsequently [accepted ADR 0005](../adr/0005-gold-consumer-integration.md) on October 18, 2026. The separate [M6.2 API module](../../services/content-api/README.md) implements the bounded Python adapter and publisher endpoint, reusing these fixtures. It does not deploy this JDBC POC.

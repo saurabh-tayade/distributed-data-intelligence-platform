@@ -1,8 +1,9 @@
 # 0005: Gold consumer integration for M6
 
 - Date: 2026-10-18
-- Status: **Proposed**
-- Scope: M6.1 feasibility; owner acceptance is required before treating this recommendation as the M6.2 architecture.
+- Status: **Accepted**
+- Owner acceptance: October 18, 2026.
+- Scope: M6.1 feasibility findings and the accepted bounded Python CLI adapter architecture for M6.2. Acceptance authorizes implementation of the adapter, not deployment of the unverified Java JDBC POC.
 
 ## Context and requirements
 
@@ -54,18 +55,18 @@ On this macOS ARM64 machine, five fresh-process `publishers` calls over three ca
 
 These are preliminary local observations, not production benchmarks or a fair engine-speed comparison. They provide no evidence that a persistent worker or connection pool is necessary. See the [experiment guide](../architecture/consumer-integration.md#validation-evidence-and-measurement-limits) for method, regressions and separate retained-data results.
 
-## Recommendation and consequences
+## Accepted decision and consequences
 
-**Propose B for M6.2: a bounded Spring Boot adapter invoking the existing Python analytics CLI.** Retain its full validation/query boundary. Configure a fixed Python executable, module location and Gold root; accept only the explicit fingerprint, named report and validated filters/limit from API requests. Pass arguments with `ProcessBuilder` as an argument list, never through a shell. Do not expose filesystem roots or arbitrary SQL as request parameters.
+**Accept B for M6.2: a bounded Spring Boot adapter invoking the existing Python analytics CLI.** Retain its full validation/query boundary. Configure a fixed Python executable, module location and Gold root; pin the fingerprint in operator configuration and accept only validated filters/limit from API requests, selecting fixed report names in application code. Pass arguments with `ProcessBuilder` as an argument list, never through a shell. Do not expose filesystem roots or arbitrary SQL as request parameters.
 
-This recommendation minimizes new correctness logic and services at the cost of packaging Python alongside Java and paying process startup per request. It is not implemented or Accepted here. Keep the JDBC experiment isolated; do not route production requests through it. Reconsider A only with a fully tested verifier port and a concrete deployment need. Reconsider C only after measured request rates and latency show that process reuse justifies the added operations.
+This recommendation minimizes new correctness logic and services at the cost of packaging Python alongside Java and paying process startup per request. The owner accepted this architecture on October 18, 2026; the historical experiment findings above remain unchanged. Implementation and validation evidence are tracked in the [M6.2 API guide](../../services/content-api/README.md). Keep the JDBC experiment isolated; do not route production requests through it. Reconsider A only with a fully tested verifier port and a concrete deployment need. Reconsider C only after measured request rates and latency show that process reuse justifies the added operations.
 
 ## Required M6.2 follow-up
 
-1. Obtain owner review/acceptance of this Proposed ADR before implementing the integration architecture.
+1. Owner acceptance recorded October 18, 2026; implement the bounded Python CLI adapter, keeping the unverified JDBC POC isolated.
 2. Define API report DTOs, null/UTC/list serialization, bounded limits and publication selection; address JavaScript's safe integer range without changing analytical meanings.
 3. Build the process adapter with a fixed executable/environment/working directory, separate bounded stdout/stderr draining, JSON envelope validation, timeout, cancellation, child cleanup and bounded concurrency. Preserve structured error codes and redact internal diagnostics.
 4. Test argument injection, missing runtimes, malformed/oversized output, nonzero exit, timeout/cancellation, process startup failure and resource cleanup, alongside existing corruption tests. Never return partial output as successful analytics.
 5. Package only Python/DuckDB consumer dependencies for runtime; keep Spark and fixture-generation dependencies in development/CI. Validate macOS/Linux packaging and run hosted CI after owner publication.
 6. Define read-only filesystem permissions and operating limits; validate behavior under concurrent requests and input mutation while preserving existing checks. Do not add a latest pointer or weaken validation through unreviewed caching.
-7. Keep API/UI work scoped to later issues. Treat titles, summaries and URLs as untrusted publisher data; define rendering, URL policy and pagination before a dashboard ships.
+7. Limit M6.2 to the publisher API foundation; keep remaining endpoints and UI work scoped to later issues. Treat titles, summaries and URLs as untrusted publisher data; define rendering, URL policy and pagination before a dashboard ships.
