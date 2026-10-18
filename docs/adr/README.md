@@ -19,4 +19,6 @@ A proposed decision is not an implemented feature. Accepted records describe an 
 
 [ADR 0003](0003-silver-observation-contract.md) is **Accepted** and records source-scoped Silver article identity and repeated-observation semantics, exercised by both the fixture prototype and local Bronze-to-Silver integration.
 
-[ADR 0004](0004-gold-analytics-publication.md) is **Accepted** and defines M2 Gold contracts, Spark-to-Parquet-to-DuckDB boundaries and immutable local snapshot publication. Owner acceptance was recorded on October 15, 2026. M2.2 implements the [Silver input boundary](../architecture/silver-input-validation.md); Gold products and publication remain unimplemented.
+[ADR 0004](0004-gold-analytics-publication.md) is **Accepted** and defines M2 Gold contracts, Spark-to-Parquet-to-DuckDB boundaries and immutable local snapshot publication. Owner acceptance was recorded on October 15, 2026. M2.2 implements the [Silver input boundary](../architecture/silver-input-validation.md); Gold products, immutable publication and standalone Python/DuckDB analytics are implemented; retained-data reconciliation is recorded in the [M2 closeout](../m2-closeout.md).
+
+[ADR 0005](0005-gold-consumer-integration.md) is **Proposed**. M6.1 verifies Java/DuckDB JDBC feasibility and documents remaining integrity gaps; the recommendation for M6.2 is to retain the existing Python analytics CLI boundary through a bounded adapter. This recommendation is not an accepted architecture or an implemented API.

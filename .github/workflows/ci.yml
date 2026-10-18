@@ -79,3 +79,10 @@ jobs:
           python --version
           java -version
           python -m unittest discover -s processing/tests -v
+      - name: Compare Java JDBC POC with Python Gold reports
+        run: |
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          export PYSPARK_PYTHON="$(command -v python)"
+          PYTHONPATH=processing:processing/tests python services/api/tests/generate_fixtures.py --output services/api/target/fixtures
+          mvn -B -ntp -f services/api/pom.xml verify

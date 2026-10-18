@@ -62,3 +62,7 @@ No AWS infrastructure may be introduced without explicit approval. See the [char
 The foundation establishes local-first development, incremental delivery, a layered analytical architecture, and an honest distinction between plans and working features. RSS/Atom sources and local processing runtime versions are selected and verified. Broker selection, resource benchmarking, orchestration details and cloud services remain deferred. The ingestion contract targets Java 21. Record consequential implementation decisions using the [ADR process](../adr/README.md).
 
 The [M1 Day 4 batch workflow](batch-ingestion.md) connects the existing boundaries, with a public source catalog, synthetic tests and verified local publisher snapshots.
+
+## M6.1 consumer integration feasibility
+
+The [Java 21/DuckDB JDBC experiment](consumer-integration.md) demonstrates Gold v1 query/type compatibility against the Python reference on synthetic publications. It is explicitly an unverified POC: full metadata, hash, schema and reconciliation protections are not ported. [ADR 0005](../adr/0005-gold-consumer-integration.md) remains **Proposed** and recommends a bounded Spring Boot adapter invoking the existing Python analytics CLI to preserve those checks. No production API, frontend or persistent analytics worker is implemented; M6 remains in progress.
