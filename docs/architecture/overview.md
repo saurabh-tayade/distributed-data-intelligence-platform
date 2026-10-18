@@ -20,7 +20,7 @@ The RSS Bronze adapter defines deterministic keys and metadata-last publication 
 
 ## M2 — Gold Analytics & Data Products
 
-M1 is the completed Bronze-to-Silver pipeline. The [canonical roadmap](../charter.md#milestones-m0m9) moves the former M4 Gold/SQL scope into M2 and retires the duplicated M3/M4 slots. M2.1 defined [Gold v1 contracts](gold-contracts.md) and the accepted [Gold processing design](gold-processing.md). [ADR 0004](../adr/0004-gold-analytics-publication.md) is Accepted. M2.2 implements [completed-Silver discovery and validation](silver-input-validation.md); M2.3 implements [Gold Spark transformations](gold-transformations.md). M2.4 implements [immutable Gold publication and replay](gold-publication.md). DuckDB analytics and retained-data reconciliation remain M2.5 and M2.6 respectively.
+M1 is the completed Bronze-to-Silver pipeline. The [canonical roadmap](../charter.md#milestones-m0m9) moves the former M4 Gold/SQL scope into M2 and retires the duplicated M3/M4 slots. M2.1 defined [Gold v1 contracts](gold-contracts.md) and the accepted [Gold processing design](gold-processing.md). [ADR 0004](../adr/0004-gold-analytics-publication.md) is Accepted. M2.2 implements [completed-Silver discovery and validation](silver-input-validation.md); M2.3 implements [Gold Spark transformations](gold-transformations.md). M2.4 implements [immutable Gold publication and replay](gold-publication.md). M2.5 implements [standalone DuckDB analytics](duckdb-analytics.md). Retained-data reconciliation remains M2.6.
 
 Gold reads a validated fixed input inventory, collapses identical replay keys, rejects conflicting inputs and publishes both products behind a completion marker after read-back. Article selection uses ingestion ordering; daily metrics use UTC ingestion dates and count individual warning codes. Consumers pin a completed fingerprint directory. This extends the existing single-writer local convention without claiming transactional or exactly-once behavior.
 
@@ -32,7 +32,7 @@ Batch delivery precedes streaming. No exactly-once guarantee is claimed: source 
 
 ## Specialized consumers
 
-- DuckDB will support local SQL exploration of analytical Parquet outputs; it is not the distributed transformation engine.
+- DuckDB supports local SQL reports over verified Gold Parquet outputs; it is not the distributed transformation engine.
 - Spring Boot services may expose stable read contracts, using PostgreSQL for operational metadata or selected serving projections where justified.
 - A React/TypeScript dashboard will consume service APIs for content and engagement metrics.
 

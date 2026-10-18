@@ -11,6 +11,7 @@ from uuid import UUID
 
 from pyspark.sql import DataFrame, functions as F
 from silver import MAX_BYTES, REJECTION_SCHEMA, SILVER_SCHEMA
+from publication_metadata import canonical_bytes, fingerprint
 
 REPLAY_KEY = ['source_id', 'ingestion_id', 'entry_index', 'contract_version']
 SCHEMAS = {'accepted': SILVER_SCHEMA, 'rejected': REJECTION_SCHEMA}
@@ -29,15 +30,6 @@ class InputFailure(Exception):
     def __init__(self, code, path='', **details):
         self.code, self.path, self.details = code, str(path), details
         super().__init__(json.dumps(dict(code=code, path=self.path, **details), sort_keys=True))
-
-
-def canonical_bytes(manifest):
-    return json.dumps(manifest, sort_keys=True, separators=(',', ':'),
-                      ensure_ascii=False, allow_nan=False).encode('utf-8')
-
-
-def fingerprint(manifest):
-    return sha256(canonical_bytes(manifest)).hexdigest()
 
 
 def ordered(values):
