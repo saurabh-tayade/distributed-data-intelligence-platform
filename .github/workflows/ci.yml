@@ -48,7 +48,7 @@ jobs:
         run: bash scripts/test-run-batch.sh
 
   processing:
-    name: Python 3.12 and local Spark processing
+    name: Python 3.12, local Spark processing and DuckDB analytics
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
@@ -68,8 +68,9 @@ jobs:
           cache-dependency-path: |
             processing/requirements.txt
             processing/requirements-bronze.txt
+            processing/requirements-analytics.txt
       - name: Install pinned processing dependencies
-        run: python -m pip install -r processing/requirements-bronze.txt
+        run: python -m pip install -r processing/requirements-bronze.txt -r processing/requirements-analytics.txt
       - name: Run all processing tests with runner JDK 21
         run: |
           export JAVA_HOME="$JAVA_HOME_21_X64"

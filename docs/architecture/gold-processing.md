@@ -1,6 +1,6 @@
 # Gold processing and publication design
 
-Status: **Accepted** by the owner on October 15, 2026. M2.2 implements the [completed-Silver input boundary](silver-input-validation.md), and M2.3 implements the [Spark transformations](gold-transformations.md). M2.4 implements [immutable publication and replay](gold-publication.md); DuckDB integration remains M2.5. See [contracts](gold-contracts.md), [ADR 0004](../adr/0004-gold-analytics-publication.md), and the [canonical roadmap](../charter.md#milestones-m0m9).
+Status: **Accepted** by the owner on October 15, 2026. M2.2 implements the [completed-Silver input boundary](silver-input-validation.md), and M2.3 implements the [Spark transformations](gold-transformations.md). M2.4 implements [immutable publication and replay](gold-publication.md); [M2.5 implements standalone DuckDB analytics](duckdb-analytics.md). See [contracts](gold-contracts.md), [ADR 0004](../adr/0004-gold-analytics-publication.md), and the [canonical roadmap](../charter.md#milestones-m0m9).
 
 ## Boundaries
 
@@ -13,7 +13,7 @@ Completed Silver Parquet (accepted/ + rejected/ + complete.json)
   -> DuckDB SQL analytics pinned to that completed publication
 ```
 
-Silver owns normalization, source-scoped identities, warnings, rejections and Bronze provenance. Reuse the [M1 publication contract](bronze-to-silver.md#provenance-and-output-layout) and existing schemas without changing their producers. Gold validates Silver, selects article observations and calculates aggregates with Spark 4.0.2; it neither retrieves publishers nor re-parses Bronze. DuckDB is a planned local, read-only SQL consumer of Gold Parquet, not the transformation engine or authoritative storage. Its version/dependency and runnable query setup belong to a later implementation slice. No new service, cloud access, Iceberg or distributed lock is needed.
+Silver owns normalization, source-scoped identities, warnings, rejections and Bronze provenance. Reuse the [M1 publication contract](bronze-to-silver.md#provenance-and-output-layout) and existing schemas without changing their producers. Gold validates Silver, selects article observations and calculates aggregates with Spark 4.0.2; it neither retrieves publishers nor re-parses Bronze. DuckDB is the local, read-only SQL consumer of Gold Parquet. M2.5 pins DuckDB 1.4.5 and provides a [standalone reader and named reports](duckdb-analytics.md); Spark retains the transformation responsibility. No new service, cloud access, Iceberg or distributed lock is needed.
 
 ## Discovery and selection
 
