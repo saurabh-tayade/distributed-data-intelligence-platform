@@ -33,7 +33,7 @@ Batch delivery precedes streaming. No exactly-once guarantee is claimed: source 
 ## Specialized consumers
 
 - DuckDB supports local SQL reports over verified Gold Parquet outputs; it is not the distributed transformation engine.
-- Spring Boot services may expose stable read contracts, using PostgreSQL for operational metadata or selected serving projections where justified.
+- The [Spring Boot publisher API](../../services/content-api/README.md) invokes the verified Python consumer through a bounded process adapter. Additional analytical endpoints remain planned; no PostgreSQL serving projection is required.
 - A React/TypeScript dashboard will consume service APIs for content and engagement metrics.
 
 Bronze object storage preserves the original inputs; implemented Silver and Gold publications are local Parquet. Object storage for later analytical layers remains a longer-term direction. PostgreSQL is not intended to duplicate every data layer. Consumer refresh, freshness, and ownership contracts remain to be defined.
@@ -65,4 +65,4 @@ The [M1 Day 4 batch workflow](batch-ingestion.md) connects the existing boundari
 
 ## M6.1 consumer integration feasibility
 
-The [Java 21/DuckDB JDBC experiment](consumer-integration.md) demonstrates Gold v1 query/type compatibility against the Python reference on synthetic publications. It is explicitly an unverified POC: full metadata, hash, schema and reconciliation protections are not ported. [ADR 0005](../adr/0005-gold-consumer-integration.md) remains **Proposed** and recommends a bounded Spring Boot adapter invoking the existing Python analytics CLI to preserve those checks. No production API, frontend or persistent analytics worker is implemented; M6 remains in progress.
+The [Java 21/DuckDB JDBC experiment](consumer-integration.md) demonstrates Gold v1 query/type compatibility against the Python reference on synthetic publications. It is explicitly an unverified POC: full metadata, hash, schema and reconciliation protections are not ported. [ADR 0005](../adr/0005-gold-consumer-integration.md) was **Accepted** by the owner on October 18, 2026 for a bounded Spring Boot adapter invoking the existing Python analytics CLI. [M6.2](../../services/content-api/README.md) implements that adapter and the publisher endpoint in `services/content-api/`, preserving the full Python verification boundary. The JDBC POC stays isolated. Remaining analytical endpoints, React and any persistent analytics worker are unimplemented; M6 remains in progress.
