@@ -1,6 +1,6 @@
 # Immutable Gold publication and replay (M2.4)
 
-[gold_publication.py](../../processing/gold_publication.py) implements the publication portion of [ADR 0004](../adr/0004-gold-analytics-publication.md). It integrates the [M2.2 validated Silver boundary](silver-input-validation.md) and [M2.3 transformations](gold-transformations.md) with local Parquet writes, read-back verification and immutable replay. No dependency or infrastructure is added. [M2.5 implements standalone DuckDB analytics](duckdb-analytics.md); retained publisher-data reconciliation remains M2.6.
+[gold_publication.py](../../processing/gold_publication.py) implements the publication portion of [ADR 0004](../adr/0004-gold-analytics-publication.md). It integrates the [M2.2 validated Silver boundary](silver-input-validation.md) and [M2.3 transformations](gold-transformations.md) with local Parquet writes, read-back verification and immutable replay. No dependency or infrastructure is added. [M2.5 implements standalone DuckDB analytics](duckdb-analytics.md); [M2.6 retained-data validation and replay passed](../m2-closeout.md).
 
 ## Acceptance and execution
 

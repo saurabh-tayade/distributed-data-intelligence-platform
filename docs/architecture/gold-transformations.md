@@ -40,4 +40,4 @@ git diff --check
 
 Synthetic tests assert exact field order/types, keys, selected metadata/provenance, first/last timestamps, distinct counts, article and daily observation reconciliation, warning-code reconciliation, UTC offset boundaries, late arrivals, ordering independence and empty outputs. Completed synthetic Silver publications exercise the real M2.2 boundary, replay collapse and rejected-only output. This is local synthetic validation, not retained publisher-data reconciliation or a distributed benchmark.
 
-[M2.4 implements Gold publication and full Parquet read-back verification](gold-publication.md). [M2.5 implements standalone DuckDB analytics](duckdb-analytics.md). Retained publisher-data reconciliation remains M2.6.
+[M2.4 implements Gold publication and full Parquet read-back verification](gold-publication.md). [M2.5 implements standalone DuckDB analytics](duckdb-analytics.md). [M2.6 retained-data validation and replay passed](../m2-closeout.md).

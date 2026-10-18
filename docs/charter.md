@@ -4,7 +4,7 @@
 
 Build a public, portfolio-quality, local-first Content Intelligence & Analytics Platform inspired by a large content portal. Demonstrate heterogeneous ingestion, distributed transformations, trustworthy analytical layers, SQL exploration, and multiple consumers with reproducible evidence.
 
-M1 delivered Java 21 local RSS/Atom batch ingestion, SeaweedFS Bronze persistence, Spark Silver normalization and verified Bronze-to-Silver integration with local Parquet. The full batch/streaming, Gold and consumer objectives below remain the long-term MVP direction. See the [M1 closeout record](m1-closeout.md).
+M1 delivered Java 21 local RSS/Atom batch ingestion, SeaweedFS Bronze persistence, Spark Silver normalization and verified Bronze-to-Silver integration with local Parquet. M2 delivered validated Silver selection, deterministic Spark Gold products, immutable publication/replay and standalone DuckDB reports, reconciled against the six retained snapshots. See the [M1](m1-closeout.md) and [M2 closeout records](m2-closeout.md). Streaming, consumer APIs/dashboard and the remaining full-MVP objectives below are future work.
 
 ## MVP scope
 
@@ -30,16 +30,16 @@ Develop locally first; add services only when justified. Prefer small, understan
 | --- | --- |
 | M0 — Foundation | M0.1: repository layout, charter, architecture proposal, conventions, and Git on main; later setup work is tracked separately |
 | M1 — Completed Bronze-to-Silver pipeline | Complete: local batch ingestion, Bronze storage, Spark Silver normalization and verified integration |
-| M2 — Gold Analytics & Data Products | M2.1: accepted contracts and design; M2.2: completed-Silver input validation; M2.3: Spark Gold transformations implemented; M2.4 immutable publication/replay implemented; M2.5 standalone DuckDB SQL implemented; M2.6 retained-data reconciliation remains |
+| M2 — Gold Analytics & Data Products | Complete: accepted contracts, validated Silver inputs, Spark Gold transformations, immutable publication/replay, standalone DuckDB SQL and verified M2.6 retained-data reconciliation; see [closeout](m2-closeout.md) |
 | M3 — Retired milestone slot | Original local Silver scope delivered in M1; no separate active deliverable |
 | M4 — Retired milestone slot | Original Gold/SQL scope moved to M2; no duplicate active deliverable |
-| M5 — Streaming | Planned: events reach analytical layers; demonstrate late events, checkpoints, restarts and duplicate handling |
-| M6 — Consumers | Planned: read API and dashboard consume documented analytical outputs alongside SQL exploration |
+| M5 — Streaming | Deferred until after M6: events reach analytical layers; demonstrate late events, checkpoints, restarts and duplicate handling |
+| M6 — Consumer APIs & React Dashboard | Next execution priority, ahead of M5: read APIs and a React dashboard consume documented Gold outputs alongside SQL exploration |
 | M7 — Reliability | Planned: end-to-end validation, operational signals, failure recovery and runbooks |
 | M8 — Benchmarks | Planned: reproducible workloads, environment details, correctness checks and measured results |
 | M9 — Optional AWS validation | Planned only with explicit approval: bounded experiment, cost report and verified teardown |
 
-This is the canonical milestone roadmap; other documents link here rather than maintaining separate milestone tables. M0.1 and M0.3 are implemented, and M1 is complete. The original M2 Bronze and M3 Silver objectives were delivered in M1. M2 now covers Gold Analytics & Data Products, moving the former M4 Gold/SQL scope forward. M3 and M4 identifiers are retained as retired historical slots to avoid renumbering M5–M9. Broker selection and resource benchmarking remain deferred. Milestones express intended sequencing, not delivery dates. Gold architecture is Accepted under [ADR 0004](adr/0004-gold-analytics-publication.md); M2.1 documentation does not mark M2 implementation complete.
+This is the canonical milestone roadmap; other documents link here rather than maintaining separate milestone tables. M0.1 and M0.3 are implemented, and M1 and M2 are complete. The original M2 Bronze and M3 Silver objectives were delivered in M1. M2 now covers Gold Analytics & Data Products, moving the former M4 Gold/SQL scope forward. M3 and M4 identifiers are retained as retired historical slots to avoid renumbering M5–M9. Broker selection and resource benchmarking remain deferred. Execution priority after M2 is M6 before M5; existing identifiers are preserved and do not imply numerical execution order or delivery dates. Gold architecture remains Accepted under [ADR 0004](adr/0004-gold-analytics-publication.md); the M2 closeout records implementation, retained-data validation and synthetic/hosted evidence separately.
 
 ## Success criteria
 
@@ -51,7 +51,7 @@ This is the canonical milestone roadmap; other documents link here rather than m
 - Automated checks and a benchmark provide repeatable evidence; measured limitations are published.
 - Repository documentation accurately separates implemented functionality from plans.
 
-These are full MVP exit criteria; completing M1 does not satisfy the remaining streaming, Gold, consumer and benchmarking goals.
+These are full MVP exit criteria; completing M1 and M2 does not satisfy the remaining streaming, consumer, object-storage persistence and benchmarking goals.
 
 ## Cost constraints
 
