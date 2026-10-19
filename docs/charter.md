@@ -24,6 +24,16 @@ Production hosting, high availability, multi-region operation, enterprise identi
 
 Develop locally first; add services only when justified. Prefer small, understandable components, explicit contracts, repeatable runs, and incremental delivery. Define quality and failure behavior before claiming reliability. Preserve raw inputs for replay within documented retention limits. Never infer production scalability from a small local test. Document meaningful tradeoffs in ADRs and keep secrets and runtime data out of Git.
 
+## Proposed data product expansion
+
+The [product specification](product-specification.md) and its [Content Intelligence](data-products/content-intelligence.md) and [Application Reliability](data-products/application-reliability.md) contracts are **Proposed for owner review**, not additions already accepted into the MVP. Content adds snapshot publisher-reference enrichment and first-discovery aggregates while preserving source-scoped article identities and Gold v1. Reliability proposes batch JSONL request events, a service-reference CSV, equivalent Parquet inputs, and five-minute UTC request/error/latency aggregates. Neither product introduces engagement metrics or broad content interpretation.
+
+The [delivery slices](product-specification.md#delivery-slices-and-decision-gates) are separate from existing M6 acceptance and preserve all historical milestone identifiers below. Small correctness fixtures lead to a 100,000-event baseline and a hardware-preflight-gated 1,000,000-event target before the administrative feature sequence. This brings initial measurement forward without renaming M8 or claiming benchmarks have run. Local-thread and multi-worker evidence remain distinct; distributed storage/runtime choices require review first.
+
+Versioned configuration, approved storage profiles, durable asynchronous run controls, product-scoped authorization/selection, bounded exports and independent monitoring are future requirements. Orchestration, identity provider, metadata store, observability stack and streaming tools remain decision gates. Accepted ADRs 0001–0005 and today's operator-configured publication fingerprint remain unchanged. New contracts or substantive changes need owner-reviewed ADRs; no cloud, generic workflow designer, arbitrary code execution, multitenancy or document-processing expansion is authorized.
+
+M6.5 code is merged in [PR #35](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/pull/35); its recorded local tests, remaining browser acceptance and final M6 closeout are distinct from merge/issue status. The [dated baseline review](product-specification.md#evidence-and-compatibility-baseline) records the available evidence without treating unverified acceptance as complete.
+
 ## Milestones M0–M9
 
 | Milestone | Deliverable and exit evidence |
