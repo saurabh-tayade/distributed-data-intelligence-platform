@@ -24,7 +24,7 @@ Propose a separate enriched publication derived from one fully verified Gold v1 
 
 ## Publisher-reference CSV v1
 
-E1a Stage A proposes the precise validation, vocabulary, identity and local snapshot boundary in [ADR 0006](../adr/0006-publisher-reference-snapshots.md) and its [detailed contract](../architecture/publisher-reference-snapshots.md). Both remain Proposed pending owner approval before Stage B; they do not implement the enrichment described below.
+The owner accepted the scoped E1a validation, vocabulary, identity and local snapshot boundary in [ADR 0006](../adr/0006-publisher-reference-snapshots.md) and its [detailed contract](../architecture/publisher-reference-snapshots.md) on October 19, 2026. That approval covers the local reference implementation and focused tests/documentation only. This wider product specification remains Proposed; E1a does not implement the enrichment described below.
 
 One row describes one configured feed source, which may be narrower than a publishing organization. Primary key: `source_id`, unique within a reference version. Multiple feeds from one organization remain separate keys; matching display names do not merge their articles.
 
