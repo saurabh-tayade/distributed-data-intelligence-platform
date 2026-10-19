@@ -1,14 +1,16 @@
-# M6.3 — React dashboard foundation and publisher analytics
+# Content Intelligence dashboard — M6.3 and M6.5
 
-The first browser consumer of the platform displays publisher analytics from the existing [M6.2 content API](../services/content-api/README.md). It does not add backend reports, access Gold files directly, or weaken the Python verification boundary. [Accepted ADR 0005](../docs/adr/0005-gold-consumer-integration.md) remains unchanged. M6.4 adds [backend analytical endpoints](../docs/architecture/analytics-api-contracts.md); this dashboard still consumes only publishers. M6.5 remains planned and the full M6 milestone is not complete.
+The React/TypeScript application provides Publisher Overview, Daily Activity, Data Quality and Article Explorer over the existing [M6.2/M6.4 Content API](../services/content-api/README.md). M6.5 adds the three analytical views without backend capabilities, direct Gold access or changes to the Python verification boundary. [Accepted ADR 0005](../docs/adr/0005-gold-consumer-integration.md) and the [analytical contracts](../docs/architecture/analytics-api-contracts.md) remain unchanged. The implementation is ready for the remaining browser acceptance and final M6 end-to-end closeout; M6 is not marked complete.
 
 ## Acceptance and design
+
+M6.5 acceptance, recorded before implementation: preserve all publisher tests and functionality; load only the active analytical view; pin one publication across views and permanently block results after a current-response identity mismatch until explicit reload. Daily/quality must use exact source and inclusive UTC ingestion-date filters. Article pages must come from the server, preserve order, reset on source changes and obey `hasMore` and offset bounds. Counters remain exact, distinct daily counts are never aggregated as global identities, and quality rates are never presented as percentages. Untrusted article metadata is rendered as text with explicit HTTP(S)-only navigation. Synthetic automated coverage and retained-data/browser evidence are recorded separately; M6 closeout remains a separate review.
 
 Acceptance requires exact publisher counts and scoped totals, stable publication identity across filter changes, strict API validation, clear loading/error/empty states, accessible controls and an exact text alternative to the chart. Tests must run without Python, Spark, SeaweedFS, AWS, a backend or retained Gold data. Live browser/API checks are recorded separately from isolated tests.
 
 The dashboard uses a navy, teal and warm-neutral palette with system fonts, a full publication fingerprint, exact publisher selector, four summary cards, grouped comparison bars, metric definitions and a detail table. It adapts to smaller screens with two-column cards, a stacked chart/guide and a keyboard-focusable horizontally scrollable table. Focus styles, a skip link, semantic table headers, labeled controls, live status messages, non-color chart labels and reduced-motion styling are included. A table remains the authoritative textual alternative to the visualization.
 
-Observations mean **accepted content observations**, not views, clicks or engagement. Articles without a publication timestamp are not warning counts. No trends, rates or global totals are invented.
+Observations mean **accepted content observations**, not views, clicks or engagement. Articles without a publication timestamp are not warning counts. No trends or global totals are invented. The quality view displays only the supplied warning-codes-per-observation rate.
 
 ## Runtime and dependencies
 
@@ -17,7 +19,7 @@ Use **Node.js 24.15+ within major 24**; local checks used **24.19.0**, pinned in
 | Dependency | Version | Purpose |
 | --- | --- | --- |
 | React / React DOM | 19.3.1 | Rendering and local component state |
-| Recharts | 3.10.1 | Requested publisher comparison visualization |
+| Recharts | 3.10.1 | Publisher, daily and quality visualizations |
 | react-is | 19.3.1 | Required Recharts peer, aligned with React |
 | TypeScript | 6.0.3 | Strict static checking |
 | Vite / React plugin | 8.3.4 / 6.1.2 | Local proxy, development server and static production build |
@@ -46,16 +48,16 @@ export ANALYTICS_PUBLICATION='<exact-completed-publication-fingerprint>'
 java -jar services/content-api/target/content-api-0.1.0-SNAPSHOT.jar
 ```
 
-Replace the fingerprint placeholder; no latest-publication selection exists. The API defaults to `127.0.0.1:8080`, `processing/gold_analytics.py` and `outputs/gold`, with paths resolved from its startup directory. An unconfigured API can be live while publisher queries correctly return HTTP 503.
+Replace the fingerprint placeholder; no latest-publication selection exists. The API defaults to `127.0.0.1:8080`, `processing/gold_analytics.py` and `outputs/gold`, with paths resolved from its startup directory. An unconfigured API can be live while analytical queries correctly return HTTP 503.
 
 In another terminal, from the repository root:
 
 ```sh
-npm ci --prefix frontend --ignore-scripts --no-audit --no-fund
+npm ci --prefix frontend
 npm run dev --prefix frontend
 ```
 
-Open `http://127.0.0.1:5173`. The browser requests only relative `/api/v1/publishers` URLs. Vite forwards `/api/` to `http://127.0.0.1:8080`, retaining paths and query parameters. No backend CORS change is required. Development and preview bind to loopback and use strict ports.
+Open `http://127.0.0.1:5173`. The browser requests relative `/api/v1/publishers`, `/daily`, `/quality` and `/articles` URLs under the same `/api/v1/` prefix. Vite forwards `/api/` to `http://127.0.0.1:8080`, retaining paths and query parameters. No backend CORS change is required. Development and preview bind to loopback and use strict ports.
 
 To use another local API port, set a server-only proxy variable:
 
@@ -78,10 +80,18 @@ Open `http://127.0.0.1:4173`. Preview uses the same configurable proxy for local
 
 | File | Responsibility |
 | --- | --- |
-| `src/api.ts` | REST types, strict response validation, source/limit query construction and safe error classification |
-| `src/usePublishers.ts` | Selection/request state, abort and stale-response protection, session publication pinning |
-| `src/metrics.ts` | Exact BigInt aggregation, decimal formatting and chart safe-integer guard |
-| `src/App.tsx` | Compose the dashboard states and returned-scope sections |
+| `src/api.ts` | Four REST contracts, shared primitive/envelope validators, report-specific validation, supported query construction and safe errors |
+| `src/useAnalytics.ts` | Replaces the publisher-only hook with one active request, source/date/page state, stale protection and one latched publication identity |
+| `src/metrics.ts` | Exact BigInt aggregation/formatting, additive daily grouping and chart conversion guards |
+| `src/App.tsx` | Compose shared shell/navigation, source filter and on-demand views |
+| `src/views/PublisherOverview.tsx` | Preserved publisher content, chart, metrics and table |
+| `src/views/DailyActivity.tsx` | Date visualization, additive scoped totals and complete source/day table |
+| `src/views/DataQuality.tsx` | Exact counts, supplied per-source rates, comparison bars and table |
+| `src/views/ArticleExplorer.tsx` | Server page navigation, safe article list and native expandable details |
+| `src/articleLinks.ts` | Strict explicit HTTP(S) navigation check; no fetching or URL rewriting |
+| `components/DateFilters.tsx` | Draft date form, validation, explicit apply/clear and applied-range display |
+| `components/ReportParts.tsx` | Shared bounded notices, scoped summaries, overflow tables and chart fallback |
+| `components/Timestamp.tsx` | Shared UTC microsecond and null display |
 | `components/AppShell.tsx` | Header, main landmark, skip link and footer |
 | `components/PublicationIndicator.tsx` | Full pinned fingerprint and initial waiting state |
 | `components/PublisherFilter.tsx` | Exact source selector and reset control |
@@ -92,34 +102,63 @@ Open `http://127.0.0.1:4173`. Preview uses the same configurable proxy for local
 | `src/styles.css` | Responsive layout, typography, focus and reduced-motion rules |
 | `src/test/` and `src/*.test.*` | Deterministic synthetic fixtures and isolated tests |
 
-Plain `fetch` and a custom hook fit one endpoint without introducing cache invalidation or a global store. The chart is limited to the first 12 returned publishers for readable comparison, with an explicit notice when shortened. The table includes every returned row. There is no client-side wildcard search, polling, automatic retry, snapshot switch or persistence across page reloads.
+Plain `fetch` and one app-owned hook cover these four fixed reports without a global store or query framework. New views are lazy-loaded with React `lazy`/`Suspense`; only the active view issues an analytical request. Navigation uses ordinary keyboard-operable buttons with `aria-current`, without a routing dependency. Source selection is shared across views. Dates are shared only between Daily Activity and Data Quality; article offset is reset whenever source selection changes. Navigating away aborts the active request and unmounts its view. Returning requests fresh data; there is no result cache, hidden prefetch, polling, automatic retry or persistence across reloads.
 
-## REST contract and data integrity
+## Views and API integration
 
-Only `GET /api/v1/publishers` is used, with `limit=100` and optional exact `sourceId`. The source selector is seeded by the first successful unfiltered response and retained across filter requests. Selecting a publisher issues a new backend request; resetting issues another unfiltered request. API source syntax is `[a-z0-9][a-z0-9_-]{0,127}`. Response identifiers outside that syntax are displayed safely as text but cannot be selected as filters.
+| View | Request | Behavior |
+| --- | --- | --- |
+| Publisher Overview | `GET /api/v1/publishers?limit=100[&sourceId=...]` | Existing four KPIs, comparison chart and exact publisher table |
+| Daily Activity | `GET /api/v1/daily?limit=100[&sourceId=...][&from=...][&to=...]` | Returned-source observations by UTC ingestion date, additive totals and all source/day metrics |
+| Data Quality | `GET /api/v1/quality?limit=100[&sourceId=...][&from=...][&to=...]` | Exact observation/code totals, per-source codes-per-observation chart and table |
+| Article Explorer | `GET /api/v1/articles?limit=10&offset=0[&sourceId=...]` | Server-side pages, selected article metadata, exact counts and expandable details |
 
-The successful envelope is `{ publication, data, meta: { returned, limit } }`. Every row contains `sourceId`, decimal-string `articleCount`, `observationCount`, `articlesWithoutPublishedAt`, and nullable UTC `firstObservedAt`/`lastObservedAt`. The client checks exact fields, fingerprint format, requested limit/source, returned length, unique nonblank identifiers, integer bounds and timestamp syntax/calendar validity. Wrong structures, non-JSON success, rounded numeric counters or mismatched filters fail closed. Rendering escapes strings; no raw HTML, arbitrary links or backend diagnostics are injected.
+The bracket notation describes optional parameters, not literal request syntax. Requests use `URLSearchParams`, `AbortSignal`, relative same-origin paths, `cache: no-store` and no credentials. API errors retain the established safe classifications. No publication, SQL or filesystem request parameters are introduced.
 
-Each analytical counter is a canonical nonnegative decimal string in the API's signed 64-bit range. Totals use `BigInt`, including sums beyond a single 64-bit value. `Intl.NumberFormat` formats BigInt directly. Chart numbers are created only after checking every plotted metric against `Number.MAX_SAFE_INTEGER`; otherwise an explanatory fallback replaces the chart while exact KPIs/table remain available. There is no floating-point conversion of unsafe counters.
+The selector prefers the first successful unfiltered publisher inventory and retains it across views/filters. If that initial request was cancelled before completion, returned source IDs from another unfiltered report provide a labeled temporary inventory. Visiting Publisher Overview supplies its normal bounded inventory. API source syntax is `[a-z0-9][a-z0-9_-]{0,127}`; IDs outside that syntax are displayed as text but not selectable. No wildcard search or extra catalog endpoint is invented. The selector cannot discover sources outside returned rows.
 
-UTC strings retain their six fractional digits. Calendar validation uses a temporary millisecond representation only to reject impossible dates; stored and displayed strings retain all six digits and UTC. Null timestamps display **Not available** and never become warnings.
+### Date filtering and daily meaning
 
-The first successful response pins the publication identity in memory. All later responses must match it. When a filter changes, old results disappear immediately, previous requests are aborted, and a stale-result guard ignores transports that resolve despite cancellation. A changed fingerprint clears displayed metrics and asks for an explicit reload; rows from two publications are never combined. Pinning detects API identity changes; it does not send a nonexistent publication parameter or replace server-side Gold verification.
+From/To are optional strict `YYYY-MM-DD` values, inclusive UTC **ingestion** dates. Either bound can stand alone. The form submits only on Apply dates; invalid calendar dates, year zero and reversed ranges are rejected before fetching. The displayed applied range stays explicit while the draft is edited. Clear dates removes both bounds. Neither publisher nor article requests receive dates.
 
-The API supplies no global publisher total. KPIs are explicitly labeled as **returned-scope totals**. When `returned === limit`, a notice says additional publishers may exist. The selector also identifies its bounded inventory. A short response is reported as returned data without inventing a separate global total; pagination is not available.
+Daily rows retain API order (`sourceId`, then `ingestionDate`). Observations are additive across returned source/day groups and grouped exactly with BigInt for the chart. No absent date is filled with a zero, and a one-date response is shown as one date. Daily distinct article/ingestion counts remain in their original groups; there is no global distinct sum. Chart text alternatives include exact per-date totals and the full source/day table.
+
+### Quality meaning
+
+`qualityWarningCount` counts codes on all accepted observations in the selected date scope. `warningCodesPerObservation` is the API's finite nonnegative numeric rate, may exceed 1.0, and is never formatted as a percentage. The UI sums only exact observation and code counters; it does not sum, average or invent a combined rate. Chart/table rates remain per source. A missing article publication time is not automatically a warning.
+
+### Article pagination and untrusted content
+
+The modest page size is 10. Next requests `meta.offset + meta.returned` only when `hasMore` is true and the next offset is at most 1,000,000. Previous requests the preceding page and is disabled at offset zero. Both controls are disabled while loading; Previous remains available after an empty/error page above zero. Source changes reset offset to zero atomically. The client validates matching limit/offset, returned length and boolean `hasMore`, including rejecting a short page that claims more rows. There is no local slicing, invented page count or global article total. `hasMore` is authoritative even for a full final page. Order remains `lastObservedAt DESC, articleId ASC`.
+
+Cards show title/source, article observation and distinct-ingestion counts, last-observed and publication times. Native `details`/`summary` reveals the unchanged identity, raw summary/URL text, update/first-observed times and selected-observation warning codes. These codes are not historical article warning totals. Nulls display **Not available** and empty values are not rewritten.
+
+Title and summary render only as normal React text. No HTML interpretation, embedded images, remote previews or automatic article fetches occur. Explicit new-tab navigation is allowed only for an absolute, parseable `http://` or `https://` URL with a hostname. Other schemes, relative/prefix-guessed URLs, malformed URLs, whitespace/control characters, backslashes and credentials in authority are rejected. Allowed href text is preserved; the browser applies its ordinary navigation parsing. Links use `target="_blank" rel="noopener noreferrer"`. Unsafe/null URLs leave a plain title. Long text wraps and full summaries remain available inside expandable details.
+
+## Runtime validation, precision and publication identity
+
+The client validates exact envelope/row fields, fingerprint format, requested limits/source, returned length, pagination metadata, required/nullable primitives, canonical counters, warning lists and timestamp/calendar validity. Publisher/quality rows must be in binary UTF-8 source order; daily rows must be in source/date order and within the requested date range; article rows must be unique and correctly ordered. Quality responses contain no date column, so their date filtering remains authoritative in Python; the client validates and transmits the requested bounds. Invalid or partial responses never render as successful data.
+
+Counters are decimal strings in the API's signed 64-bit range. BigInt sums remain exact beyond that range, and `Intl.NumberFormat` formats BigInt directly. Publisher/daily chart conversion happens only within `Number.MAX_SAFE_INTEGER`, including checking daily totals **after** grouping. Unsafe charts show a clear fallback while exact summaries/tables remain. Quality charts use the API's existing floating-point rates, never converted integer counters; extreme finite rates that would overflow chart calculations fall back to the table.
+
+UTC timestamps keep all six fractional digits and `Z`; temporary millisecond date parsing validates the calendar without replacing stored/displayed strings. Null timestamps are not warnings.
+
+The first successful **current** response from any report pins the in-memory browser application session. All later responses must match. Request keys hide old rows immediately on source/date/page/view changes; cleanup aborts requests and an active-request guard also ignores late success/failure when abort is disregarded. A current-response identity mismatch permanently hides analytical content and source options across every view, retaining the original fingerprint and requiring explicit Reload dashboard. Navigation or retry cannot adopt the new publication. No client publication selection, discovery, session persistence or server verifier replacement is added.
+
+Publisher/daily/quality responses have no global totals; cards explicitly describe returned scope and a limit-reaching response warns that more records may exist. Publisher/quality charts show at most 12 sources, daily charts at most 30 dates, with explicit notices; all returned rows remain in tables. Article pagination uses its supplied `hasMore` instead of guessing from page length.
 
 ## Loading, errors and accessibility
 
 No placeholder metrics are presented as actual data while loading or after failure. A valid empty result displays exact zero totals for that returned scope and an empty-state message. HTTP 400, 500, 503 and 504, network failures, invalid JSON/schema and publication changes have fixed user-facing explanations. Recognized capacity failures receive a busy message. Server error paths, raw bodies and exception text are never shown. Retry is manual; publication changes require explicit reload.
 
-The chart includes Recharts' accessibility layer, but the semantic table is the complete textual representation. Select/reset/retry controls are labeled and keyboard-accessible. The table overflow region intentionally has `tabIndex=0` so keyboard users can scroll it; the single accessibility lint exception is documented inline. Long fingerprints wrap, long source IDs remain complete in the table, chart labels may be abbreviated, and large totals wrap without dropping digits. Full screen-reader and cross-browser certification are not claimed.
+Charts include Recharts' accessibility layer plus semantic tables; daily charts additionally expose exact grouped date totals as accessible text. Select/reset/retry controls are labeled and keyboard-accessible. The table overflow region intentionally has `tabIndex=0` so keyboard users can scroll it; the intentional accessibility lint exceptions are documented inline. Long fingerprints wrap, long source IDs remain complete in the table, chart labels may be abbreviated, and large totals wrap without dropping digits. Full screen-reader and cross-browser certification are not claimed.
 
 ## Tests, build and CI
 
 From the repository root:
 
 ```sh
-npm ci --prefix frontend --ignore-scripts --no-audit --no-fund
+npm ci --prefix frontend
 npm run typecheck --prefix frontend
 npm run lint --prefix frontend
 npm test --prefix frontend
@@ -129,9 +168,9 @@ npm run check
 
 For watch mode, run `npm run test:watch --prefix frontend`. Vitest/React Testing Library tests mock `fetch`; they need no backend, retained files or external services. A deterministic `ResizeObserver` supplies jsdom layout dimensions so the real Recharts components can render. This does not prove visual responsiveness; native-browser layout evidence is separate.
 
-The independent [frontend CI job](../.github/workflows/ci.yml) uses Node.js 24 and the frontend lockfile cache, then runs clean installation, type checking, linting, tests and production build. Existing documentation/hygiene, ingestion, Python/Spark, JDBC POC and Spring Boot checks are intact. Dependency installation needs registry access; tests and production build run locally after installation. The lockfile is included in the working-tree changes for the owner to commit; this task performs no commit or push.
+The independent [frontend CI job](../.github/workflows/ci.yml) uses Node.js 24 and the frontend lockfile cache, then runs clean installation, type checking, linting, tests and production build. Existing documentation/hygiene, ingestion, Python/Spark, JDBC POC and Spring Boot checks are intact. Dependency installation needs registry access; tests and production build run locally after installation. M6.5 keeps the existing dependency versions and lockfile unchanged. CI uses the existing frontend job with an updated descriptive label; no pipeline is duplicated.
 
-## Validation evidence and limitations
+## Historical M6.3 validation
 
 Local validation on October 18, 2026 used macOS ARM64, Node.js 24.19.0 and npm 11.17.0:
 
@@ -142,4 +181,17 @@ Local validation on October 18, 2026 used macOS ARM64, Node.js 24.19.0 and npm 1
 
 Hosted CI execution remains pending owner publication. Existing ingestion, processing and backend regression suites were not rerun for this frontend-only implementation; their workflow checks remain intact. Local validation artifacts are ignored under `outputs/m6-3/` and are not repository inputs. Production hosting and same-origin API routing are not implemented.
 
-M6.4 has defined and implemented the additional backend report/filter contracts. M6.5 remains planned; extend exact-integer, publication-consistency and mocked response tests when adding its frontend scope. This publisher dashboard does not expose the new article pagination or other analytical endpoints, engagement metrics, authentication or publication switching.
+## M6.5 validation and remaining closeout
+
+Local checks on October 18, 2026 used the existing macOS ARM64/Node.js 24.19.0/npm 11.17.0 environment. Git safety checks confirmed `feature/m6-5-dashboard-analytics` with a clean starting tree. No commits, pushes, branch changes or GitHub operations were performed.
+
+- Clean `npm ci --prefix frontend`, type checking, linting, all **184 frontend tests** (including all original 72 unchanged), and production build passed. Tests use deterministic mocked reports, including multiple dates, rates above 1.0, unsafe counts, malicious/long metadata, pagination and cross-view publication changes. They require no backend. The existing ESLint deprecation warning remains; npm reported zero vulnerabilities and an unapproved optional fsevents install-script notice without failing installation.
+- The unchanged Content API passed **120 unit/component tests and 20 real HTTP/Python synthetic integration tests**. The existing fixture directory was reused. No backend source, verifier or accepted ADR was changed. Ingestion/full processing/JDBC suites were not rerun for this frontend-only change; their CI checks remain intact.
+- Actual TypeScript client code, transpiled with the existing compiler, executed through the Vite proxy against retained Gold. It confirmed **3 publishers, 59 articles, 118 observations, 3 daily rows, one actual ingestion date (`2026-10-13`), and 0 warning codes**. Six article pages had sizes **10, 10, 10, 10, 10, 9**; all 59 identities were distinct and matched Python reference order. Source/inclusive date filters and publication identity checks passed. Proxy responses matched direct API responses. All 59 supplied article URLs passed navigation validation; no external article was fetched. These are API/client checks, not browser traversal claims.
+- Native Chrome returned one accessibility snapshot showing the new navigation, pinned retained fingerprint and publisher totals. Further Chrome and Brave capture attempts repeatedly failed with macOS ScreenCaptureKit error `-3811`; no successful M6.5 screenshot or interaction traversal was obtained. Desktop/narrow visual acceptance of the new views, browser traversal of all pages, external-link attribute inspection in the browser and full screen-reader checks therefore remain pending. Prior M6.3 visual evidence above does not certify the new views.
+
+All **10 retained Gold files** have identical SHA-256 hashes, sizes and modification times after verification. Both temporary local servers were stopped. The main production JavaScript chunk is **607.02 kB minified / 181.19 kB gzip**; the three new view chunks are approximately 4.9–5.1 kB each. Vite retains its default 500 kB chunk warning. Documentation/link checks, repository hygiene and `git diff --check` passed. Local evidence stays ignored under `outputs/m6-5/`. Hosted CI has not run for these changes.
+
+Each analytical request starts and verifies a publication in Python. Only the active view fetches; browser abort does not guarantee immediate cancellation of already-running server work, so rapid navigation can still receive the existing capacity response. Retry is manual. Default process/output bounds may reject unusually large article metadata even at ten rows. There is no result cache, URL-based view/history state, engagement report, authentication, deployment routing or publication switching. The bounded source selector and chart limits are intentional, not global completeness guarantees.
+
+Before M6 closeout: restore browser automation or perform owner-led desktop/narrow checks for all views, traverse all article pages and inspect safe links without fetching publisher data, run hosted CI after owner publication, and review accessibility plus deployment/runtime operating limits. M6 remains in progress until that end-to-end acceptance and closeout review are recorded.

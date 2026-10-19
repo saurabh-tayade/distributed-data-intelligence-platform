@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-export function AppShell({ children }: { children: ReactNode }) {
+export function AppShell({ children, section = 'Publisher analytics' }: { children: ReactNode; section?: string }) {
   return <>
     <a className="skip-link" href="#main">Skip to analytics</a>
     <header className="site-header">
@@ -12,11 +12,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           </svg>
           <span>Content Intelligence<span className="brand-subtitle">DISTRIBUTED DATA PLATFORM</span></span>
         </div>
-        <span className="header-section"><span className="header-dot" />Publisher analytics</span>
+        <span className="header-section"><span className="header-dot" />{section}</span>
       </div>
     </header>
     <main id="main" tabIndex={-1}>{children}</main>
-    <footer className="site-footer"><span>Content Intelligence <span aria-hidden="true">/</span> Publisher analytics</span>
+    <footer className="site-footer"><span>Content Intelligence <span aria-hidden="true">/</span> Analytics workspace</span>
       <span>One publication. A consistent view.</span></footer>
   </>;
 }

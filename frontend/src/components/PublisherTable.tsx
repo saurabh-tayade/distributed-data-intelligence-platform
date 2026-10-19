@@ -1,10 +1,7 @@
 import type { Publisher } from '../api';
 import { formatCount } from '../metrics';
 
-function Timestamp({ value }: { value: string | null }) {
-  if (value === null) return <span className="missing-value">Not available</span>;
-  return <time dateTime={value}><span>{value.slice(0, 10)}</span><span className="time-detail">{value.slice(11, -1)} UTC</span></time>;
-}
+import { Timestamp } from './Timestamp';
 
 export function PublisherTable({ rows }: { rows: Publisher[] }) {
   return <section className="panel table-panel" id="publisher-details" aria-labelledby="details-title">
