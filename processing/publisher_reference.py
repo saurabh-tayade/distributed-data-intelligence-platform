@@ -291,22 +291,26 @@ def _stamp(info):
     return (*_identity(info), info.st_size, info.st_mtime_ns, info.st_mode, info.st_nlink)
 
 
-def _directory(path, missing):
+def _directory(path, missing, unavailable=None):
     try:
         info = path.lstat()
         _need(stat.S_ISDIR(info.st_mode), 'PATH_UNSAFE')
         return _identity(info)
-    except OSError:
+    except FileNotFoundError:
         raise ReferenceFailure(missing) from None
+    except OSError:
+        raise ReferenceFailure(unavailable or missing) from None
 
 
-def _file(path, missing):
+def _file(path, missing, unavailable=None):
     try:
         info = path.lstat()
         _need(stat.S_ISREG(info.st_mode) and info.st_nlink == 1, 'PATH_UNSAFE')
         return info
-    except OSError:
+    except FileNotFoundError:
         raise ReferenceFailure(missing) from None
+    except OSError:
+        raise ReferenceFailure(unavailable or missing) from None
 
 
 def _read_stream(stream, limit):
@@ -319,10 +323,14 @@ def _read_stream(stream, limit):
         data.extend(chunk)
 
 
-def _capture(path, limit, missing='INPUT_UNAVAILABLE', changed='INPUT_CHANGED'):
-    parent = _directory(path.parent, missing)
-    before = _file(path, missing)
+def _capture(path, limit, missing='INPUT_UNAVAILABLE', changed='INPUT_CHANGED', *, previous=None):
+    absent = changed if previous is not None else missing
+    parent = _directory(path.parent, absent, missing)
+    before = _file(path, absent, missing)
     _need(before.st_size <= limit, 'RESOURCE_LIMIT')
+    if previous is not None:
+        _need(_stamp(before) == previous.stamp and parent == previous.parent_identity, changed)
+    data = None
     try:
         # Nonblocking/no-follow also avoids blocking if a checked file is replaced
         # by a FIFO. The contract still requires a trusted, single-writer root.
@@ -332,19 +340,24 @@ def _capture(path, limit, missing='INPUT_UNAVAILABLE', changed='INPUT_CHANGED'):
             _need(stat.S_ISREG(opened.st_mode) and opened.st_nlink == 1, 'PATH_UNSAFE')
             _need(_stamp(opened) == _stamp(before), changed)
             data = _read_stream(stream, limit)
+            if previous is not None:
+                _need(data == previous.data, changed)
             _need(_stamp(os.fstat(stream.fileno())) == _stamp(before), changed)
-        _need(_stamp(_file(path, changed)) == _stamp(before) and
-              _directory(path.parent, changed) == parent, changed)
+        _need(_stamp(_file(path, changed, missing)) == _stamp(before) and
+              _directory(path.parent, changed, missing) == parent, changed)
         return _Capture(path, parent, _stamp(before), data, limit)
     except OSError:
         # A read/close failure is not, by itself, evidence of a mutation.
-        _need(_stamp(_file(path, changed)) == _stamp(before) and
-              _directory(path.parent, changed) == parent, changed)
+        if previous is not None and data is not None:
+            _need(data == previous.data, changed)
+        _need(_stamp(_file(path, changed, missing)) == _stamp(before) and
+              _directory(path.parent, changed, missing) == parent, changed)
         raise ReferenceFailure(missing) from None
 
 
-def _recheck(capture, changed):
-    current = _capture(capture.path, capture.limit, missing=changed, changed=changed)
+def _recheck(capture, changed, unavailable):
+    current = _capture(capture.path, capture.limit, missing=unavailable, changed=changed,
+                       previous=capture)
     _need(current.stamp == capture.stamp and current.parent_identity == capture.parent_identity
           and current.data == capture.data, changed)
 
@@ -369,8 +382,8 @@ def _candidate(csv_path, vocabulary_path, reference_id, revision, maintainer_id,
     data = canonical_bytes(manifest)
     _need(len(data) <= MANIFEST_LIMIT, 'RESOURCE_LIMIT')
     reference = Reference(reference_id, revision, sha256(data).hexdigest(), rows, _freeze(manifest))
-    _recheck(csv_input, 'INPUT_CHANGED')
-    _recheck(vocabulary, 'INPUT_CHANGED')
+    _recheck(csv_input, 'INPUT_CHANGED', 'INPUT_UNAVAILABLE')
+    _recheck(vocabulary, 'INPUT_CHANGED', 'INPUT_UNAVAILABLE')
     return _Candidate(reference, data, csv_input, vocabulary)
 
 
@@ -447,15 +460,18 @@ def _guards(root, destination):
 
 def _check_guards(guards):
     for path, identity in guards:
-        _need(_directory(path, 'SNAPSHOT_CHANGED') == identity, 'SNAPSHOT_CHANGED')
+        _need(_directory(path, 'SNAPSHOT_CHANGED', 'SNAPSHOT_INVALID') == identity,
+              'SNAPSHOT_CHANGED')
 
 
 def _directory_stamp(path):
     try:
         return _stamp(path.lstat())
-    except OSError:
+    except FileNotFoundError:
         # Called only after the directory has already been observed by guards.
         raise ReferenceFailure('SNAPSHOT_CHANGED') from None
+    except OSError:
+        raise ReferenceFailure('SNAPSHOT_INVALID') from None
 
 
 def _inventory(destination, expected, code='SNAPSHOT_INVALID'):
@@ -464,11 +480,13 @@ def _inventory(destination, expected, code='SNAPSHOT_INVALID'):
         with os.scandir(destination) as entries:
             for entry in entries:
                 _need(entry.name in expected and entry.name not in names, code)
-                _file(destination / entry.name, code)
+                _file(destination / entry.name, code, 'SNAPSHOT_INVALID')
                 names.add(entry.name)
         _need(names == expected, code)
-    except OSError:
+    except FileNotFoundError:
         raise ReferenceFailure(code) from None
+    except OSError:
+        raise ReferenceFailure('SNAPSHOT_INVALID') from None
 
 
 def _verify(root, destination, reference_id, revision, expected=None, *, pending=False, temporary=False):
@@ -511,7 +529,7 @@ def _verify(root, destination, reference_id, revision, expected=None, *, pending
         raise
     _need(manifest['csv']['row_count'] == len(rows), 'SNAPSHOT_INVALID')
     for capture in captures:
-        _recheck(capture, 'SNAPSHOT_CHANGED')
+        _recheck(capture, 'SNAPSHOT_CHANGED', 'SNAPSHOT_INVALID')
     _check_guards(guards)
     _inventory(destination, names, 'SNAPSHOT_CHANGED')
     _need(_directory_stamp(destination) == directory_stamp, 'SNAPSHOT_CHANGED')
@@ -529,7 +547,7 @@ def open_snapshot(root, reference_id, revision, expected_fingerprint):
         return _verify(root, _destination(root, reference_id, revision), reference_id,
                        revision, expected_fingerprint)[0]
     except OSError:
-        raise ReferenceFailure('SNAPSHOT_CHANGED') from None
+        raise ReferenceFailure('SNAPSHOT_INVALID') from None
 
 
 def _write(path, data):
@@ -553,7 +571,8 @@ def publish(root, csv_path, vocabulary_path, reference_id, revision, maintainer_
         _file(path, 'INPUT_UNAVAILABLE')
         _need(not path.resolve().is_relative_to(root.resolve()), 'PATH_UNSAFE')
     candidate = _candidate(csv_path, vocabulary_path, reference_id, revision, maintainer_id, note)
-    _need(_directory(root, 'SNAPSHOT_CHANGED') == root_identity, 'SNAPSHOT_CHANGED')
+    _need(_directory(root, 'SNAPSHOT_CHANGED', 'SNAPSHOT_INVALID') == root_identity,
+          'SNAPSHOT_CHANGED')
     reference = candidate.reference
     destination = _destination(root, reference_id, revision)
     if _exists(destination.parent):
@@ -562,14 +581,15 @@ def publish(root, csv_path, vocabulary_path, reference_id, revision, maintainer_
         # Verify the existing binding against itself, NOT the new candidate.
         existing, _ = _verify(root, destination, reference_id, revision)
         _need(existing.fingerprint == reference.fingerprint, 'REVISION_CONFLICT')
-        _recheck(candidate.csv, 'INPUT_CHANGED')
-        _recheck(candidate.vocabulary, 'INPUT_CHANGED')
+        _recheck(candidate.csv, 'INPUT_CHANGED', 'INPUT_UNAVAILABLE')
+        _recheck(candidate.vocabulary, 'INPUT_CHANGED', 'INPUT_UNAVAILABLE')
         return reference.summary('replayed')
     try:
-        _need(_directory(root, 'SNAPSHOT_CHANGED') == root_identity, 'SNAPSHOT_CHANGED')
+        _need(_directory(root, 'SNAPSHOT_CHANGED', 'PUBLICATION_FAILED') == root_identity,
+              'SNAPSHOT_CHANGED')
         if not _exists(destination.parent):
             destination.parent.mkdir()
-        _directory(destination.parent, 'SNAPSHOT_CHANGED')
+        _directory(destination.parent, 'SNAPSHOT_CHANGED', 'PUBLICATION_FAILED')
         destination.mkdir()
         guards = _guards(root, destination)
         for name, data in (('reference.csv', candidate.csv.data),
@@ -582,10 +602,10 @@ def publish(root, csv_path, vocabulary_path, reference_id, revision, maintainer_
 
         def recheck():
             _check_guards(guards)
-            _recheck(candidate.csv, 'INPUT_CHANGED')
-            _recheck(candidate.vocabulary, 'INPUT_CHANGED')
+            _recheck(candidate.csv, 'INPUT_CHANGED', 'INPUT_UNAVAILABLE')
+            _recheck(candidate.vocabulary, 'INPUT_CHANGED', 'INPUT_UNAVAILABLE')
             for capture in artifacts:
-                _recheck(capture, 'SNAPSHOT_CHANGED')
+                _recheck(capture, 'SNAPSHOT_CHANGED', 'PUBLICATION_FAILED')
 
         recheck()
         marker_bytes = canonical_bytes({'completion_version': 1, 'created_at': _now(),
@@ -600,7 +620,7 @@ def publish(root, csv_path, vocabulary_path, reference_id, revision, maintainer_
         _verify(root, destination, reference_id, revision, reference.fingerprint,
                 pending=True, temporary=True)
         recheck()
-        _recheck(temporary, 'SNAPSHOT_CHANGED')
+        _recheck(temporary, 'SNAPSHOT_CHANGED', 'PUBLICATION_FAILED')
         _inventory(destination, {'reference.csv', 'vocabulary.json', 'manifest.json', 'complete.tmp'},
                    'SNAPSHOT_CHANGED')
         _need(not _exists(destination / 'complete.json'), 'SNAPSHOT_CHANGED')
