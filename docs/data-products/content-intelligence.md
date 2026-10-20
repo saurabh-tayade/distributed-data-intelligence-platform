@@ -22,6 +22,8 @@ The [batch catalog](../architecture/batch-ingestion.md#source-catalog), [Silver 
 
 Propose a separate enriched publication derived from one fully verified Gold v1 publication and one fully validated reference snapshot. Existing outputs and APIs remain usable and unchanged. New consumer reports/filters require separately versioned API review; they are not silently added to `/api/v1/articles`.
 
+The scoped E1b backend design is accepted in [ADR 0007](../adr/0007-content-intelligence-publication.md) and its [publication/consumer contract](../architecture/content-intelligence-publication.md). That scoped decision resolves exact schemas, dependency retention, identity, local reports and acceptance fixtures, with the synchronous-consumer amendment. Its acceptance authorizes E1b implementation and does not approve this wider specification.
+
 ## Publisher-reference CSV v1
 
 The owner accepted the scoped E1a validation, vocabulary, identity and local snapshot boundary in [ADR 0006](../adr/0006-publisher-reference-snapshots.md) and its [detailed contract](../architecture/publisher-reference-snapshots.md) on October 19, 2026. That approval covers the local reference implementation and focused tests/documentation only. This wider product specification remains Proposed; E1a does not implement the enrichment described below.
