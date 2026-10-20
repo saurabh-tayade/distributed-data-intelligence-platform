@@ -118,6 +118,8 @@ Platform monitoring is independent of the Reliability product's request-event da
 
 This is an experiment plan, not a result. The [Reliability contract](data-products/application-reliability.md#percentile-accuracy-and-validation) defines the mathematical oracle and tolerance. Content uses small fictional RSS/Atom and reference fixtures; live feeds and the retained M2 dataset are not scale generators or automated test dependencies.
 
+The scoped [ADR 0009 proposal](adr/0009-reliability-format-equivalence-benchmarks.md) and [format/benchmark contract](architecture/reliability-format-benchmarks.md) refine E3/E4a without accepting this wider plan or authorizing workload execution.
+
 ### Workloads and independent expectations
 
 | Tier | Dataset and acceptance purpose |
