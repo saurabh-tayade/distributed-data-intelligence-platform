@@ -193,15 +193,21 @@ class GoldAnalytics:
         self.close()
 
 
-def open_publication(gold_root, publication):
+def open_publication(gold_root, publication, *, memory_limit=None):
     """Verify one exact publication and expose both views in an in-memory session."""
+    if memory_limit is not None and (type(memory_limit) is not str or
+                                    re.fullmatch(r'[1-9][0-9]{0,5}(?:KiB|MiB|GiB)', memory_limit) is None):
+        raise AnalyticsFailure('INVALID_ARGUMENT')
     metadata = verify_metadata(gold_root, publication)
     connection = None
     try:
-        connection = duckdb.connect(':memory:', config={
+        config = {
             'threads': 2, 'autoinstall_known_extensions': False,
             'autoload_known_extensions': False, 'temp_directory': '',
-        })
+        }
+        if memory_limit is not None:
+            config['memory_limit'] = memory_limit
+        connection = duckdb.connect(':memory:', config=config)
         connection.execute("SET TimeZone = 'UTC'")
         for table, schema in SCHEMAS.items():
             paths = metadata.paths(table)
@@ -219,6 +225,8 @@ def open_publication(gold_root, publication):
             connection.close()
         if isinstance(error, AnalyticsFailure):
             raise
+        if memory_limit is not None and isinstance(error, duckdb.OutOfMemoryException):
+            raise AnalyticsFailure('RESOURCE_LIMIT') from None
         raise AnalyticsFailure('PARQUET_VALIDATION_FAILED') from None
 
 
