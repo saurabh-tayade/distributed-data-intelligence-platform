@@ -2,7 +2,7 @@
 
 Status: **Proposed for owner review**, October 19, 2026. Part of the [bounded expansion plan](../product-specification.md). No request-event pipeline, service reference, new API or benchmark result is implemented by this specification.
 
-The scoped E2 backend proposal is [ADR 0008](../adr/0008-application-reliability-publication.md) and its [normative proposed contract](../architecture/application-reliability-publication.md). It remains Proposed and requires owner approval before implementation; it does not approve the broader platform or E3/E4 workloads.
+The scoped E2 backend architecture is recorded in [ADR 0008](../adr/0008-application-reliability-publication.md) and its [normative contract](../architecture/application-reliability-publication.md). The owner accepted that scoped architecture on October 20, 2026 with two amendments; implementation evidence is separate. This does not approve the broader platform or E3/E4 workloads.
 
 ## User value and limits
 

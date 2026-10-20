@@ -1,6 +1,6 @@
-# Application Reliability publication: E2 proposed contract
+# Application Reliability publication: E2 contract
 
-Status: **Proposed**, October 20, 2026, for [issue #44](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/issues/44) and [ADR 0008](../adr/0008-application-reliability-publication.md). **Stage A is documentation only. Owner acceptance is required before Stage B.** “Must” defines the proposed implementation contract, not an implemented capability. The [Reliability product specification](../data-products/application-reliability.md) and wider platform specification remain Proposed.
+Status: **Accepted by the owner on October 20, 2026**, with the two amendments in ADR 0008, for [issue #44](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/issues/44) and [ADR 0008](../adr/0008-application-reliability-publication.md). Stage B is authorized. Architecture acceptance and actual implementation/validation evidence are separate. The [Reliability product specification](../data-products/application-reliability.md) and wider platform specification remain Proposed.
 
 ## Scope, compatibility and inspected boundaries
 
@@ -23,7 +23,7 @@ Read-only baseline inspection found clean branch `feature/e2-reliability-batch-p
 | `gold_publication` / `gold_analytics` | Accepted Spark-to-Parquet-to-DuckDB boundary; no Gold or Silver dependency belongs in E2 |
 | Existing tests/tooling | unittest, temporary directories, literal synthetic fixtures, mock fault injection, separate import-blocking reader processes; Python 3.12.15, Java 21, PySpark 4.0.2, DuckDB 1.4.5; Node 24 documentation checks |
 
-Proposed modules are `reliability_metadata`, `reliability_inputs` (registration/indexing), `service_reference`, `reliability_processing` (Spark only), `reliability_publication` and `reliability_analytics`. Metadata, intake/reference and reader modules must not import Spark, Silver, Gold/Content producers or Boto3. No generic connector framework, registry service, scheduler, worker manager, HTTP/API/React/export work, dependency installation or infrastructure is authorized by this proposal. A need to change accepted domain modules requires separate approval.
+Implemented modules are `reliability_metadata`, `reliability_inputs` (registration/indexing), `service_reference`, `reliability_processing` (Spark only), `reliability_publication` and `reliability_analytics`. Metadata, intake/reference and reader modules must not import Spark, Silver, Gold/Content producers or Boto3. No generic connector framework, registry service, scheduler, worker manager, HTTP/API/React/export work, dependency installation or infrastructure is authorized by E2. A need to change accepted domain modules requires separate approval.
 
 ## Common scalar, metadata and filesystem rules
 
@@ -43,7 +43,7 @@ Capture file device/inode/type/mode/link count/size/nanosecond mtime before and 
 
 The operator reviews a local synthetic producer/profile and its approved raw location before registration. A source declaration alone does not anonymize real logs. Initial origin is exactly `synthetic` and source profile exactly `request-jsonl-v1`; reject operational/mixed/unapproved sources. Raw inputs are owner-retained restricted artifacts, never collected from live applications by E2.
 
-Proposed interface:
+Implemented interface:
 
 ~~~text
 reliability_inputs.register(batch_root, *, input_root, source_id, batch_id, files,
@@ -63,7 +63,7 @@ reliability_inputs.open_batch(batch_root, source_id, batch_id,
 | `synthetic_source_id` | Reviewed technical label, same syntax as source_id; must equal selected source_id |
 | `logical_dataset_id` | Null or reviewed synthetic benchmark label using batch-ID syntax; provenance only, no E3 equivalence claim |
 | `allowed_service_ids` | 1–128 distinct service IDs sorted by ASCII bytes |
-| `allowed_route_ids` | 1–128 curated opaque route IDs sorted by ASCII bytes, each `[a-z0-9][a-z0-9_-]{0,63}` |
+| `allowed_route_ids` | 1–256 curated opaque route IDs sorted by ASCII bytes, each `[a-z0-9][a-z0-9_-]{0,63}` |
 | `policy_revision` | Integer 1, fixed policies/limits in this document |
 
 Allowlisted tokens must be reviewed technical labels, not personal identifiers disguised by a regex. Source ID is delivery provenance; it is not the event service, environment or aggregate key. Configuration corrections use a new reviewed revision/processor support, not a hidden invocation override. Revision 1 has no adjustable rejection threshold: all representable row rejections are retained and reported. Adding stricter thresholds is a future identity-bearing policy change.
@@ -232,7 +232,7 @@ After successful admission/indexing, compute all conflicting recognized keys bef
 
 ## Immutable service-reference snapshot v1
 
-Proposed `service_reference.validate/publish/open_snapshot` is a separate standard-library-only boundary. The public forms follow E1a's argument/result shape but return service rows:
+Implemented `service_reference.validate/publish/open_snapshot` is a separate standard-library-only boundary. The public forms follow E1a's argument/result shape but return service rows:
 
 ~~~text
 validate(csv_path, vocabulary_path, reference_id, revision, maintainer_id, note=None)
@@ -251,7 +251,7 @@ Literal unquoted first record is `service_id,service_name,owner_team,service_tie
 | owner_team | Empty/null or exact captured token, 1–64 ASCII characters; reviewed organizational label, never a personal name/email |
 | service_tier | Empty/null or critical, standard, experimental |
 
-Proposed vocabulary v1 is exactly the following canonical UTF-8 JSON, no final newline. These are fictional team tokens for synthetic use, requiring owner approval; adding real teams requires a reviewed new vocabulary/version and supported validator definition.
+Approved vocabulary v1 is exactly the following canonical UTF-8 JSON, no final newline. These are fictional team tokens approved for synthetic use; adding real teams requires a reviewed new vocabulary/version and supported validator definition.
 
 ~~~json
 {"owner_team":["example-platform","example-service"],"schema_version":1,"service_tier":["critical","experimental","standard"],"version":1}
@@ -275,7 +275,7 @@ Types below are Spark types with DuckDB equivalents: integer/INTEGER, long/BIGIN
 
 Physical representation is INT32 for integer, INT64 for long, UTF-8 annotated BYTE_ARRAY for string, BOOLEAN for boolean, DOUBLE for double, 16-byte FIXED_LEN_BYTE_ARRAY with DECIMAL(38,0) for sums, and standard three-level LIST of UTF-8 strings for reason arrays. Every timestamp is INT64 with TIMESTAMP(MICROS,isAdjustedToUTC=true). Inspect nested array/schema structure too. E2 must use an isolated Spark SQL session with UTC, outputTimestampType=TIMESTAMP_MICROS, datetimeRebaseModeInRead=CORRECTED and datetimeRebaseModeInWrite=CORRECTED (all three latter keys prefixed spark.sql.parquet), ANSI arithmetic enabled and no legacy calendar rebasing. Do not change Gold/Content session defaults.
 
-This explicit timestamp choice is necessary because [Spark 4.0.2 defaults to INT96 and documents corrected calendar modes](https://spark.apache.org/docs/4.0.2/sql-data-sources-parquet.html#configuration). [DuckDB documents its UTC-aware microsecond timestamp type](https://duckdb.org/docs/current/sql/data_types/timestamp.html); its pinned 1.4.5 mapping and Python UTC serialization must be demonstrated in R07/R17, including years 0001/9999 and pre-epoch values. Do not copy Content's TIMESTAMP schema constants into this new reader or silently cast a timezone-naive physical file into compliance. Internal conversion to an epoch-microsecond comparison representation is allowed only after strict physical-type validation. No runtime compatibility test was executed in Stage A.
+This explicit timestamp choice is necessary because [Spark 4.0.2 defaults to INT96 and documents corrected calendar modes](https://spark.apache.org/docs/4.0.2/sql-data-sources-parquet.html#configuration). [DuckDB documents its UTC-aware microsecond timestamp type](https://duckdb.org/docs/current/sql/data_types/timestamp.html); its pinned 1.4.5 mapping and Python UTC serialization must be demonstrated in R07/R17, including years 0001/9999 and pre-epoch values. Do not copy Content's TIMESTAMP schema constants into this new reader or silently cast a timezone-naive physical file into compliance. Internal conversion to an epoch-microsecond comparison representation is allowed only after strict physical-type validation. Stage A executed no runtime compatibility test; Stage B evidence below verifies the physical representation and primitive UTC serialization.
 
 Dataset row/file order is not semantic. Strings compare binary without collation changes. All rows have contract_version exactly 1; no infinities/NaN. Schema/value/version failures abort the product.
 
@@ -364,13 +364,13 @@ Reference attributes/status/tuple must equal the selected reference for every ev
 
 ## Five-minute arithmetic and independent p95
 
-For event epoch microseconds t, window_start is `floor(t / 300000000) * 300000000`, using exact integer/decimal mathematical floor. Do not use float division, truncation toward zero, host timezone or Spark processing time. Pre-epoch t = −1 belongs to `1969-12-31T23:55:00.000000Z`; t = 0 starts `1970-01-01T00:00:00.000000Z`. Exactly `12:05:00.000000Z` is in the next half-open group, while `12:04:59.999999Z` is in the preceding group. Year 9999's final group can have a mathematical exclusive end in year 10000; only representable window_start is stored and query end bounds remain years 0001–9999.
+For event epoch microseconds t, window_start is `floor(t / 300000000) * 300000000`, using exact integer/decimal mathematical floor. Do not use float division, truncation toward zero, host timezone or Spark processing time. Pre-epoch t = −1 belongs to `1969-12-31T23:55:00.000000Z`; t = 0 starts `1970-01-01T00:00:00.000000Z`. Exactly `12:05:00.000000Z` is in the next half-open group, while `12:04:59.999999Z` is in the preceding group. Year 9999's final group starts at 9999-12-31T23:55:00.000000Z and includes the event instant 9999-12-31T23:59:59.999999Z. Only representable window_start is stored. The exact exclusive query-end sentinel 10000-01-01T00:00:00.000000Z makes that final group queryable, as specified below.
 
 Deduplicate first. Count 5xx only for 500–599, never 4xx or a missing event. Sum durations and reconciliation counts in DECIMAL(38,0), check decimal overflow explicitly with ANSI/error behavior, and check 0–2^63−1 before casting counts to long. The row cap further bounds valid maxima, but does not replace overflow guards/tests. duration_sum_ms remains decimal and is not narrowed to long. No zero-filled missing windows; no method/route/source inferred grouping.
 
 Independent counts/sums are exact. Rate and mean use the exact numerators/denominators converted to finite doubles; validate `abs(actual - expected) <= max(1e-12,abs(expected)*1e-12)`. With the event duration bound, means lie in [0,3,600,000], rates in [0,1]. Wider-scope rates/means are recomputed from summed numerators/denominators, never an unweighted average. No report combines or averages p95 values.
 
-Proposed Spark candidate is `percentile_approx(duration_ms, 0.95, 10000)` under Spark 4.0.2. This is a release candidate to prove against the contract, not an assertion that Spark promises this exact nearest-rank displacement. See the existing [product percentile decision](../data-products/application-reliability.md#percentile-accuracy-and-validation). Algorithm, probability, accuracy, engine and rank policy are identity-bearing. Operational partition counts/input order may vary and are recorded only in local validation evidence.
+The approved Spark candidate is `percentile_approx(duration_ms, 0.95, 10000)` under Spark 4.0.2. This is a release candidate to prove against the contract, not an assertion that Spark promises this exact nearest-rank displacement. See the existing [product percentile decision](../data-products/application-reliability.md#percentile-accuracy-and-validation). Algorithm, probability, accuracy, engine and rank policy are identity-bearing. Operational partition counts/input order may vary and are recorded only in local validation evidence.
 
 For N group events:
 
@@ -466,7 +466,7 @@ Completion time is outside product identity, not authenticated and not an articl
 
 ### Writer, full verification and replay
 
-Proposed public interface:
+Implemented public interface:
 
 ~~~text
 reliability_publication.publish(
@@ -509,7 +509,7 @@ One trusted local owner/writer per root; Spark task writers belong to that coord
 
 ## Standalone independent reader
 
-Proposed interface:
+Implemented interface:
 
 ~~~text
 reliability_analytics.open_publication(
@@ -523,7 +523,7 @@ Return a context-managed pinned session; only the three named reports below are 
 
 Opening performs bounded metadata/layout/fingerprint/inventory checks, independent service-reference opening and raw-batch admission/hash/identity checks, every physical output schema and all SQL value/key/provenance/coverage/count/rank tests. It requires neither Spark/Java nor Silver/Gold/Content. No producer imports; small shared strict intake primitives may be Spark-free, but aggregate verification must be independent SQL and literal fixtures.
 
-To verify raw correspondence without unbounded Python or a full duplicate raw table, stream-index registered files again into chunks of at most 1,024 safe records and 2 MiB. Parameter-bind each chunk into an in-memory expected-record table, compare every position/disposition/reason/provenance field against output occurrences, and compare every valid raw ten-field value to its matching stored event. Clear the chunk table before continuing. Verify exact per-file counts, unique keys, contiguous positions/offsets and total coverage so extra/missing output occurrences cannot hide outside chunks. Independently derive representative order, valid delivery counts, receipt min/max and conflict rules from the stored occurrence/event relations. Digest equality alone is insufficient. This is a serial reader verification pass, not a Spark workload.
+To verify raw correspondence without unbounded Python or a full duplicate raw table, stream-index registered files in canonical batch/artifact/line order and pair them with one ordered DuckDB cursor over occurrences left-joined to typed events. Fetch at most 1,024 safe rows and 2 MiB per chunk. The owner's Stage B efficiency gate permits this ordered strategy instead of the initially suggested per-chunk temporary table: it must not execute a full Parquet scan for each chunk. Validate string widths and schema/value rules in SQL before fetch; verify actual encoded chunk size too. Compare every position/disposition/reason/provenance field and every valid ten-field value, then require both streams end together. Exact per-file counts, unique keys, contiguous positions/offsets and total coverage prevent extra/missing occurrences from hiding. Independently derive representative order, delivery counts, receipt min/max and conflict rules with set-based SQL. Digest equality alone is insufficient. This serial pass is not distributed Spark processing. Full semantic verification uses a fixed set of SQL scans; raw comparison uses one join/sort/cursor, independent of chunk count.
 
 SQL derives expected five-minute keys/counts/errors/DECIMAL sums/context from verified typed events, compares complete key sets and exact fields in both directions, checks tolerance-based rates/means, and counts ranks against stored approximate values. No unrestricted SQL or duration collection into Python. Whole-publication admission/reconciliation is mandatory even for a one-row filtered report.
 
@@ -541,7 +541,9 @@ Every report is paged. All string ordering is binary. Bound every filter/LIMIT/O
 | input_coverage | source_id, batch_id, batch_fingerprint, ingestion_id, received_at, input_file_count, input_byte_length, physical_occurrence_count, valid_occurrence_count, accepted_representative_count, duplicate_occurrence_count, rejected_occurrence_count, first_event_time, last_event_time, future_occurrence_count, min_receipt_delay_us, max_receipt_delay_us, rejected_reason_counts | source_id ASC, batch_id ASC, batch_fingerprint ASC |
 | reference_coverage | service_id, reference_status, reference_usage, service_name, owner_team, service_tier, event_count, missing_reference_event_count, missing_optional_attributes | service_id ASC |
 
-`requests_5m` requires both start/end strict UTC timestamps aligned to five-minute boundaries, start < end and span at most 31 days (2,678,400 seconds). Filter window_start >= start and < end; no partial-window claim. Optional exact service_id/environment, unknown syntactically valid service returns no rows. Other filters fail. No method/route/status filtering after those dimensions were discarded; no cross-window percentile aggregation.
+`requests_5m` requires a strict representable UTC start and either a strict representable UTC end or exactly 10000-01-01T00:00:00.000000Z as the exclusive end. Both bounds are aligned to five-minute boundaries, start < end and span at most 31 days (2,678,400 seconds). Filter window_start >= start and < end; no partial-window claim. Optional exact service_id/environment, unknown syntactically valid service returns no rows. Other filters fail. No method/route/status filtering after those dimensions were discarded; no cross-window percentile aggregation.
+
+The sentinel is invalid as start, event_time or stored window_start; all other year-10000 strings and every larger year are invalid. Validate Gregorian day counts and microsecond spans with integer arithmetic; never construct Python datetime(year=10000). Its epoch value is exactly 253402300800000000 microseconds. Bind integer epoch-microsecond filter values and explicitly compare epoch_us(window_start) >= start_us and < end_us. Do not bind/cast/store the sentinel as a Spark or DuckDB timestamp. Ordinary bounds retain exact six-digit UTC spelling and calendar validation. R08/R15 must exercise the final window, sentinel role restrictions, invalid larger years and the exact/one-over 31-day span.
 
 `input_coverage` permits only optional exact source_id and batch_id, both syntactically validated. Batch_id alone selects that ID under any source. Rows cover complete registered batches, not event-window subsets; no service/environment/date filters. Counts include all physical deliveries and rejected lines. Event ranges/delays use valid occurrences including duplicates; no valid occurrences means null ranges/delays. Future count uses event_time > received_at. Receipt delay is signed exact integer microseconds received_at − event_time, not a lateness classification. Rejected_reason_counts is an object with exactly all ten fixed reason-code keys and nonnegative occurrence counts, including zeros.
 
@@ -561,7 +563,7 @@ All integral report values, including counters, duration sum, percentile, signed
 
 Before Python fetch, SQL sums UTF-8 bytes of all variable string cells (including array values and the entire lookahead page) and rejects above 64 KiB. Numeric/time/reason-key representation has a fixed bounded shape; after detached materialization enforce actual canonical JSON UTF-8 length plus final LF <= 1 MiB. JSON escaping and envelope overhead count. No string truncation or partial page success.
 
-Proposed CLI forms mirror library boundaries:
+Implemented CLI forms mirror library boundaries:
 
 ~~~text
 reliability_inputs.py register --root ROOT --input-root ROOT --source-id ID --batch-id ID
@@ -591,9 +593,9 @@ Privacy failure stops intake and prevents ordinary quarantine/analytical publica
 
 Registered raw batches, their metadata/configuration, service snapshots and complete product artifacts must be retained for every supported read/replay. No automatic expiry, history truncation, reference correction-in-place or garbage collection. Incomplete registered/staged/output artifacts require owner investigation with writers stopped. Staging is operational and may be manually cleaned after investigation; it cannot replace raw retained evidence. Quarantine access means controlled inspection of original file/line under restricted ownership, never an ordinary catalog/export.
 
-The following additional bounds are **proposed owner decisions**, not inherited acceptance from Content or measured capacities. The 16 KiB line and 256 MiB file budgets originate in the Proposed Reliability specification. All limits are inclusive and fixed by policy revision 1; exceeding any is failure, never sampling/coercion/truncation.
+The following additional bounds are **owner-approved E2 policies**, not inherited acceptance from Content or measured capacities. The 16 KiB line and 256 MiB file budgets originate in the Proposed Reliability specification. All limits are inclusive and fixed by policy revision 1; exceeding any is failure, never sampling/coercion/truncation.
 
-| Resource | Proposed bound / enforcement |
+| Resource | Accepted bound / enforcement |
 | --- | --- |
 | Raw line content | 16,384 bytes excluding LF/CRLF; bounded read before decode with only ending/excess sentinels |
 | Raw JSONL file | 256 MiB; 1 MiB maximum hash/I/O chunk, cumulative byte check as well as initial size |
@@ -614,7 +616,7 @@ The following additional bounds are **proposed owner decisions**, not inherited 
 
 Rationale: 2M occurrences leaves row headroom above the future 1.03M physical-event target while finite byte/file caps require split workloads. At max line length the 1 GiB budget permits far fewer rows; caps are intersecting ceilings, not simultaneous promises. Small technical event fields justify smaller overall row/byte/file limits than Content's large article history, while occurrence evidence and independent rank verification justify retaining more than aggregates. Metadata budgets derive from 32 batch descriptors and 1,024 output files. A 31-day native-window report limits its selected scope, not full verification.
 
-Spark starts with established local[2], UTC and reviewed existing runtime configuration; Stage B must record actual driver/executor heap, Python RSS and temporary-disk settings. Use an explicit local memory budget (proposed driver heap 1 GiB, executor setting 1 GiB; in local mode tasks share the driver JVM, not a second claimed heap). Leave at least 25% host RAM for other work and require free disk at least twice a conservative estimate of simultaneous raw-copy, staging, Parquet, Spark temporary and verification space. Record numeric preflight before workloads; no new runtime/install to make it fit. These settings and Spark/DuckDB memory limits are not a hard whole-process limit.
+Spark starts with established local[2], UTC and reviewed existing runtime configuration; Stage B must record actual driver/executor heap, Python RSS and temporary-disk settings. Use an explicit local memory budget (driver heap 1 GiB, executor setting 1 GiB; in local mode tasks share the driver JVM, not a second claimed heap). Leave at least 25% host RAM for other work and require free disk at least twice a conservative estimate of simultaneous raw-copy, staging, Parquet, Spark temporary and verification space. Record numeric preflight before workloads; no new runtime/install to make it fit. These settings and Spark/DuckDB memory limits are not a hard whole-process limit.
 
 Streaming input/stage budgets can stop before unbounded buffering. Parquet/output/Spark temporary growth is checked at write/action boundaries; it is not a disk reservation or atomic quota and can fail with disk exhaustion first. Full SQL grouping/hash joins can exhaust the no-spill budget even within row/byte ceilings. Fail closed and report unmeasured feasibility rather than promising 1M capacity, adding workers or silently lifting limits. A larger reviewed budget or alternative verifier would require a decision. No new deadline-only process management.
 
@@ -667,7 +669,7 @@ Once observed, mutation evidence survives a simultaneous ordinary I/O failure an
 
 ## Independent synthetic fixtures and expected results
 
-These are prescribed future tests, not executed pipelines or retained operational data. They require no live source. Fixture generation must not call the proposed normalization/aggregation functions to calculate its oracle.
+These are synthetic acceptance fixtures, exercised by Stage B tests and independently calculated expectations. They are not retained operational data and require no live source. Fixture generation must not call the normalization/aggregation functions to calculate its oracle.
 
 ### F1: literal 20-request group
 
@@ -807,18 +809,18 @@ These literal expected hashes must be checked independently in Stage B. Reorderi
 
 ## Stage B acceptance matrix
 
-Every group is required after owner acceptance. These are planned tests, not passed evidence. Use unittest, temporary fixtures and deterministic mock faults, with literal expected values independent of production expressions. No live publishers/logs or timing races.
+Every group is required. This matrix defines acceptance behavior; executed Stage B results and test mappings are recorded separately below. Use unittest, temporary fixtures and deterministic mock faults, with literal expected values independent of production expressions. No live publishers/logs or timing races.
 
 | Group | Behavior and concrete independent verification |
 | --- | --- |
-| R01 — batch identity/admission | Literal manifests/UUID/vector A; exact source/profile/receipt/origin, canonical metadata, sorted explicit inventories, repeated selection collapse, changed binding conflict; byte/line/file/batch/metadata boundaries via bounded fixtures |
+| R01 — batch identity/admission | Literal manifests/UUID/vector A; exact source/profile/receipt/origin, canonical metadata, sorted explicit inventories, repeated selection collapse, changed binding conflict; byte/line/file/batch/metadata boundaries and 256 maximum-length routes within unchanged profile budget via bounded fixtures |
 | R02 — stable physical provenance | Binary LF/CRLF/mixed/no-final-newline/blank/zero-byte fixtures; exact enumerated offsets/line lengths/numbers; shuffle Spark partitions and show positions unchanged; reject arbitrary row-number/monotonic-ID provenance |
 | R03 — structural failures | Invalid UTF-8/BOM/lone CR, overlong lines, unsupported schema, depth/member/token caps, read/close faults mid-file; no successful prefix, completed stage or product |
 | R04 — rejection/privacy precedence | Exact fixed codes and one rejection per physical line; malformed identity not salvaged; duplicate non-identity keys/nonfinite values; unknown sensitive keys on otherwise invalid rows fail intake, false origin/allowlist failure, no raw payload or exception leakage |
 | R05 — identity/conflicts | F1/F2 exact tuples, same ID across services, within/across-batch duplicates/conflicts, recognized invalid-valid/invalid-invalid conflicts, unrecognizable separate rejections; exact P/V/U/D/R and representative/receipt summaries |
 | R06 — service snapshots | Exact header/dialect/nulls/vocabulary/hash, duplicate key whole-file failure, header-only, immutable revision/replay, missing/corrupt/unsupported snapshots, detached rows, authoring/read/close/finalization faults; E1a unchanged |
 | R07 — typed events/lineage | Every 21/16-column physical schema, required values/types/order/versions, unchanged ten fields, exact raw-position bijection and typed comparisons, safe rejection projection, duplicate disposition/lineage order |
-| R08 — UTC/numeric metrics | F1/F2 exact groups/counts/sums; 4xx/5xx distinction, epoch −1/0 and boundary ±1 microsecond, all environment values, year limits, decimal/count overflow, rates/means tolerance and weighted recomputation |
+| R08 — UTC/numeric metrics | F1/F2 exact groups/counts/sums; 4xx/5xx distinction, epoch −1/0 and boundary ±1 microsecond, all environment values, year limits and exclusive-end sentinel role/span boundaries, decimal/count overflow, rates/means tolerance and weighted recomputation |
 | R09 — independent p95 | Exact nearest-rank/tie interval oracle, observed membership, fixed rank budget, singleton/all-equal/sparse/tied/heavy-tail/max/zero, >10K boundary; shuffled inputs/multiple partitions; reject refreshed-hash aggregate with invalid rank |
 | R10 — complete output equivalence | Bidirectional occurrence/event and exact metric key/value comparison; alter values while keeping totals/digests self-consistent and require rejection; expected p95 differs but independently qualifies -> replay allowed without overwrite |
 | R11 — immutable publication/replay | Exclusive namespace/metadata, Spark errorifexists, all three empty schemas, completion last, bytes+mtimes stable on replay, changed raw/reference/history selection creates new namespace, originals unchanged |
@@ -852,16 +854,16 @@ Stage B validation should use the established Python 3.12.15 / Java 21 / PySpark
 | --- | --- |
 | Existing baseline | PR #43 merged at 30153df; E1b modules/fixtures and Accepted ADRs reviewed. Historical E1b test results are not rerun or relabeled as E2 evidence |
 | Synthetic design arithmetic | F1/F2 hand counts/groups, canonical vectors and small standard-library calculations; no application/Spark execution |
-| Stage B correctness | Pending owner approval and implementation; all R01–R18 required, report counts/results and failures honestly |
+| Stage B correctness | Implementation and executed R01–R18 results are recorded below; the historical Stage A calculations are separate evidence |
 | Retained-data end-to-end | None for Reliability; no production/operational events invented, no publisher-data observations added |
-| Hosted CI | Not verified for this proposal; new hosted results must be reported only after an actual corresponding run |
+| Hosted CI | Not verified for this correction/delivery; report new hosted results only after an actual corresponding run |
 | Future E3/E4 | JSONL/Parquet logical equivalence, 100K/1M workloads, resource/format/scaling measurements remain future work; no workload or performance result claimed |
 
 Key engineering risks are the indexer's lexical privacy/duplicate-key precedence, repeated raw hashing/indexing costs, private staging disk and serial preparation, exact timestamp/Parquet logical compatibility, no-spill SQL memory under skew, and qualification of Spark's candidate rank behavior across execution layouts. The streaming design makes physical positions implementable with existing standard-library primitives; it does not prove a throughput target. Independent chunk/raw and rank checks add work but close a correctness gap that a marker-only reader would leave. No installed mature file-numbering reader or generic accepted domain module currently supplies this complete boundary.
 
-Before Stage B, owner approval must cover ADR 0008's eight decision groups, including all extra limits/vocabulary, privacy/rejection/conflict rules, three datasets, retained dependencies, p95 result-equivalence/replay, deferred lateness comparison and synchronous reporting without a hard deadline. Unresolved approval is the implementation gate, not a request to change the wider product/M6 status.
+The owner accepted ADR 0008's eight decision groups on October 20, 2026, with the year-10000 exclusive query-end sentinel and 256-route amendments. Wider product/M6 status remains unchanged. Actual implementation and validation are recorded below, separately from historical Stage A evidence.
 
-### Stage A executed validation
+### Historical Stage A executed validation (before acceptance)
 
 Executed locally on October 20, 2026:
 
@@ -874,4 +876,129 @@ Executed locally on October 20, 2026:
 | Independent fixture calculations | Passed: F1 20/2/210/10.5, rank-accepted values 18–20; F2 P/V/U/D/R=32/24/23/1/8, four exact groups, errors=3, duration sum=3,600,250; physical byte-span examples checked |
 | Scope/Git review | Only the proposed ADR, this contract, ADR index and minimal Reliability specification link changed; no staged changes, accepted ADR/runtime/dependency/CI files unchanged |
 
-The small calculations used only Python standard-library JSON, hashing, UUID, calendar/integer arithmetic and document inspection, without application imports. No application suites, Spark jobs, live intake, retained-data modification, 100K/1M workload, benchmark, dependency installation or infrastructure provisioning was executed. R01–R18 and implementation checkpoints A–E remain pending owner acceptance and Stage B. Hosted CI was not verified and no new hosted result is claimed. No Git/GitHub write operation was performed.
+The small calculations used only Python standard-library JSON, hashing, UUID, calendar/integer arithmetic and document inspection, without application imports. No application suites, Spark jobs, live intake, retained-data modification, 100K/1M workload, benchmark, dependency installation or infrastructure provisioning was executed. At that Stage A checkpoint, R01–R18 and implementation checkpoints A–E were pending owner acceptance and Stage B. Hosted CI was not verified and no new hosted result is claimed. No Git/GitHub write operation was performed.
+
+## Stage B implementation and local evidence — October 20, 2026
+
+Architecture: Accepted with the two owner amendments. Checkpoints A–E are implemented in six domain modules, with 58 new unittest cases and a shared fictional fixture helper. Existing Gold, Content, Silver, publisher-reference, canonical serializer, runtime dependencies and CI definitions are unchanged. Stage A was already committed at e434cfd on entry; its documents were preserved. No Git index or GitHub write was performed. The broader Reliability specification remains Proposed.
+
+### Implemented boundaries and recovery
+
+| Module | Public boundary / responsibility |
+| --- | --- |
+| [reliability_metadata.py](../../processing/reliability_metadata.py) | Strict canonical formats, versions, fixed diagnostics, integer Gregorian timestamps, evidence captures, limits and exact ordered schemas; Spark-free |
+| [reliability_inputs.py](../../processing/reliability_inputs.py) | register / open_batch, explicit selection, streaming physical indexer, safe private staging and dependency verification; Spark-free |
+| [service_reference.py](../../processing/service_reference.py) | validate / publish / open_snapshot, detached rows and immutable four-column service snapshots; publisher_reference.py is unchanged |
+| [reliability_processing.py](../../processing/reliability_processing.py) | Isolated Spark session, explicit tagged schema, full conflict scan, deterministic delivery disposition, 21-column events, 16-column occurrences and 17-column aggregates |
+| [reliability_publication.py](../../processing/reliability_publication.py) | publish(spark, *, batch_root, batches, reference_root, reference_id, revision, reference_fingerprint, staging_root, output_root); immutable summary with summary() |
+| [reliability_analytics.py](../../processing/reliability_analytics.py) | open_publication(reliability_root, product_fingerprint, *, batch_root, reference_root); context-managed report(name, **approved_filters) / close() |
+
+The exact signatures, CLI flags, schemas and layouts above are implemented. Run CLI modules with the existing Python executable and PYTHONPATH=processing, for example `python -m reliability_analytics --help`; corresponding module names are reliability_inputs, service_reference and reliability_publication. CLI help and invalid options do not start Spark. All three reader CLI reports were also executed successfully. Public reports are exactly requests_5m, input_coverage and reference_coverage.
+
+Registration freezes exact copied JSONL bytes, profile, receipt, deterministic UUID and inventory before completion. Staging is operator-private, tagged and hashed; original staging identities are retained through every check, including after stage.json creation, so a same-byte replacement cannot be hidden by a later capture. Trusted root ancestors are canonicalized before overlap checks; root/descendant symlinks, unsafe spellings, traversal and hard-linked artifacts fail admission. Spark reads only the explicit completed staging inventory. Full typed ten-field conflicts and recognizable-invalid conflicts precede product reservation; raw hashes alone do not decide semantic equality.
+
+Product identity is the exact SHA-256 of canonical inputs.json as specified above. Completion binds the actual files, counts and timestamp. Both Spark multiset comparisons and independent DuckDB/raw checks gate completion. Every physical Parquet file is inspected. Completion temporary bytes are read back and rechecked, then renamed last. Replay verifies retained dependencies, complete raw correspondence, exact values and stored rank qualification without recomputing percentile_approx or rewriting completed files. Fault tests cover pre-completion failures and lost response after rename: the latter may leave a valid completion, resolved only by explicit verification. Incomplete reservations remain for owner investigation; no repair, resume, overwrite or deletion occurs.
+
+Known observed changes remain INPUT_CHANGED, SNAPSHOT_CHANGED, DEPENDENCY_CHANGED or PUBLICATION_CHANGED at the corresponding boundary. Unchanged-file read/close/list/stat errors remain availability, integrity or publication-I/O failures. Tests establish unchanged bytes/stamps for injected ordinary I/O, and independently demonstrate replacement/disappearance/content/directory evidence for mutation cases. Failure envelopes expose only fixed messages and optional conflict counts.
+
+### Timestamp compatibility and amendments
+
+The early compatibility gate passed before full pipeline implementation, then ran again as R08. The existing Python 3.12.15, GraalVM Java 21.0.7, PySpark 4.0.2 and DuckDB 1.4.5 runtimes round-tripped nine instants: ordinary fractional microseconds, epoch −1 microsecond, epoch zero, year 0001, year 9999's last microsecond, midnight, five-minute boundary −1 microsecond, the exact next boundary and 9999-12-31T23:55:00.000000Z. Both output files were inspected physically:
+
+~~~text
+physical_type = INT64
+converted_type = TIMESTAMP_MICROS
+logical_type = TimestampType(isAdjustedToUTC=1,
+  unit=TimeUnit(MILLIS=<null>, MICROS=MicroSeconds(), NANOS=<null>))
+DuckDB type = TIMESTAMP WITH TIME ZONE
+~~~
+
+No INT96, millisecond/nanosecond conversion or loss of microseconds occurred. DuckDB epoch_us matched literal original integer instants under UTC, America/New_York and Asia/Kolkata; UTC string formatting retained six digits and years 0001/9999. The isolated Spark session uses TIMESTAMP_MICROS, UTC and corrected calendar rebasing. The base session's America/New_York/INT96 settings stayed unchanged. The early gate took 3.135 seconds, excluding runtime startup.
+
+The environment lacks optional pytz, so direct Python materialization of DuckDB timezone-aware datetime objects is unavailable. E2 does not require it: SQL epoch_us projections and standard-library UTC formatting implement the approved public representation. The separate-process reader tests forbid pytz as well as Spark/producer imports. No dependency or timestamp range was changed to accommodate this.
+
+Pre-epoch windows use `us - pmod(us, 300000000)` in Spark and the equivalent nonnegative-remainder integer expression independently in DuckDB. Epoch −1 maps to −300000000, not zero. The exact end sentinel is accepted only as an exclusive requests_5m end and compared as integer 253402300800000000; it is never constructed/stored as a timestamp. Tests cover the final year-9999 event/window, rejection as start/event, invalid larger/alternate years and exact/over 31-day spans. A fully populated maximum profile (128 maximum-length services, 256 maximum-length routes, maximum source/logical IDs) is 34,320 canonical bytes, below the unchanged 65,536-byte cap; 257 routes and unknown routes fail.
+
+### Independent literal and numerical results
+
+F1 independently expects 20 requests, two 5xx errors, duration sum 210 ms, rate 0.1, mean 10.5 ms and exact nearest-rank p95 19 ms. The observed Spark candidate was 19; qualification checked observed membership and the rank interval rather than asserting a required approximate value. F2 independently produced P/V/U/D/R = 32/24/23/1/8 and four exact groups (20, 1, 1, 1), three errors and total duration 3,600,250 ms. Its eight rejected physical lines had ordered singleton reasons JSON_SYNTAX, JSON_SYNTAX, JSON_DUPLICATE_KEY, JSON_NONFINITE, FIELD_VALUE, TIMESTAMP_INVALID, FIELD_NULL, FIELD_VALUE. The duplicate contributes lineage but no additional request. Reference coverage is 23 events: 22 matched, one missing; two used matched services, one matched service missing optional attributes and one unused reference service. Header-only/empty/rejected-only variants were independently verified.
+
+The literal batch fingerprint ad1ffe5f7a244dd8c27b832db8b728dc5e07e2e66858cb436d7f8e639c29b38d, header-only reference fingerprint 040ae62fb022e957480e9c67fbe4a01cced2dde84a9a32e16aa5b5a5b753119a and product fingerprint d0bfa671ea0a1726de7b7bb72e5e1e157e97f13138f7f85be8bba7e1cca25996 passed their literal byte/hash assertions. These fictional compatibility vectors are independent of invocation clocks.
+
+The numerical p95 oracle sorts bounded test values and independently calculates target rank, lower/upper tie interval, observed membership, displacement, budget and absolute millisecond error. Seven groups ran under shuffled inputs and one, two and three Spark partitions: singleton zero; all-equal sevens; repeated ties; sparse zero/3,600,000; heavy tail; literal durations 1–20; and 12,005 distinct durations 0–12,004. Small groups had displacement zero. For the large group, exact nearest-rank value was 11,404, candidate 11,403, displacement 1 within budget 2 and absolute error 1 ms, for each layout. These observations are not a proof for every possible input; every publication and reader independently enforce the same fixed budget. A self-consistent refreshed-hash p95 outside the rank budget is rejected; changing F1's stored candidate to qualifying 18 is accepted on read/replay without rewriting it.
+
+### Reader efficiency gate and measured observations
+
+The reader uses one ordered occurrence-to-event left join and one cursor, paired with a serial raw-file scan. SQL checks safe widths before fetch. Cursor chunks are at most 1,024 records and their actual encoded bytes are checked against 2 MiB. End-of-both-streams plus complete keys, positions, per-file counts and SQL reconciliation proves full coverage. No unbounded raw history is collected into Python and no per-chunk full Parquet scan occurs.
+
+EXPLAIN FORMAT JSON showed two PARQUET_SCAN nodes, HASH_JOIN and ORDER_BY for that ordered comparison. A recording connection asserted one execution of the comparison SELECT even when the number of chunks changed. Other full semantic SQL checks use a fixed set of set-based scans; the number of raw chunks does not multiply them. This trades a bounded no-spill DuckDB join/sort for avoidance of a duplicate full raw temporary table. Memory exhaustion fails closed.
+
+| Controlled reader gate | 2,051 rows | 6,149 rows |
+| --- | --- | --- |
+| Safe chunks | 3 | 7 |
+| Ordered comparison SELECT executions | 1 | 1 |
+| Parquet scan nodes in comparison plan | 2 | 2 |
+| Largest actual chunk | 500,737 bytes | 501,761 bytes |
+| Preparation (fixture/Parquet creation; final focused run) | 2.9009 s | 8.2297 s |
+| Raw correspondence verification | 0.0777 s | 0.2431 s |
+| Python process peak RSS (includes earlier test activity) | 132,907,008 bytes | 141,737,984 bytes |
+
+These samples are from the final 58-test focused run. They are controlled correctness/efficiency checks, not scale benchmarks or CI timing thresholds. DuckDB reported two threads, 512.0 MiB memory and an empty temp_directory; extension auto-install/autoload were disabled. Python RSS is not the configured SQL memory budget or isolated component memory.
+
+On this macOS arm64 host the operator preflight observed 16 GiB RAM, approximately 766.79 GiB free workspace/temporary disk and a conservative 512 MiB simultaneous small-fixture disk estimate (free disk must be at least twice that estimate). Each local Spark session used two threads, 1 GiB driver heap and the default 1 GiB executor setting; local tasks share the JVM. An active producer plus verifier budgets approximately 2 GiB including SQL/Python allowance; overlapping final validation processes remained below the 75% RAM ceiling. No OS RSS quota or scheduler was added. Spark used its existing local temporary directory configuration; private staging and test outputs were in temporary directories, cleaned only by their owning test fixtures.
+
+A separate F2 observation run (32 occurrences / 23 unique events) measured the following. Registration/reference times include the small helper's fictional input-authoring step; Spark startup is outside the publication timer, but first-action initialization/JIT is inside it.
+
+| Operation | Observed duration |
+| --- | --- |
+| Registered batch preparation/publication | 0.005357 s |
+| Service-reference preparation/publication | 0.006224 s |
+| Safe indexing/private staging | 0.001799 s |
+| Full Spark publication with read-back and independent verification | 11.557183 s |
+| Read-only replay with full verification | 0.079307 s |
+| Independent consumer open | 0.063870 s |
+| requests_5m (three rows, integrity rechecks included) | 0.007314 s |
+| input_coverage (one row and totals, rechecks included) | 0.012022 s |
+| reference_coverage (four rows and totals, rechecks included) | 0.009384 s |
+
+This observation process reported Python peak RSS 102,301,696 bytes, driver heap 1g, default executor setting 1g and runtime-default Spark temporary directories. The final focused run separately observed F2 normalization/aggregation 5.344 s and publication 5.8604 s. These runs overlapped other local regression activity and had uncontrolled warm-cache/startup effects; the variation is evidence against treating tiny-fixture timings as a latency or capacity promise. No 100K/1M capacity, production throughput or scale benchmark is established.
+
+### Executed Stage B acceptance and regression evidence
+
+All R01–R18 groups passed locally. The final focused and complete processing results are recorded below. The following maps each required group to concrete executable evidence; no group is waived or replaced by an implementation-versus-itself oracle.
+
+| Group | Local result | Evidence |
+| --- | --- | --- |
+| R01 | Passed | Inputs/Integrity: literal manifest/UUID/hash, selection/replay/conflict, metadata/file/batch/row budgets, 256 routes, canonical ancestor aliases and unsafe paths |
+| R02 | Passed | Inputs/Processing: literal LF/CRLF/no-final-newline/blank/empty offsets/lengths/lines, safe staging, unchanged physical positions after Spark |
+| R03 | Passed | Inputs/Integrity: UTF-8/framing/lexical caps, exact line cap, mid-file faults and no readable-prefix success |
+| R04 | Passed | Inputs/Integrity: literal reasons, duplicate-key/schema/privacy precedence, malformed identity, alternate JSON spelling, no unsafe output |
+| R05 | Passed | Processing/Publication: full semantic conflicts, invalid recognizable repeats, cross-service/native-ID and cross-batch delivery/scoped coverage |
+| R06 | Passed | Inputs/Integrity: service vocabulary/header/nulls/hash, detached rows, header-only/replay/conflict, corruption, limits, symlinks and finalization/I/O faults |
+| R07 | Passed | Processing/Publication/Verification: exact 21/16 schemas and all ten values, positions, dispositions and receipt/delivery reconciliation |
+| R08 | Passed | Processing/Integrity/Publication: literal groups, UTC physical round-trip, year limits/sentinel, exact arithmetic and overflow guards |
+| R09 | Passed | Processing/Verification: independent rank oracle across seven groups/three layouts and rejected refreshed-hash invalid ranks |
+| R10 | Passed | Processing/Publication/Verification: bidirectional comparisons, semantic corruption with fresh digests and accepted qualified approximate variation |
+| R11 | Passed | Publication: exclusive completion-last output, empty schemas, byte/mtime replay, reference/history changes and preserved originals |
+| R12 | Passed | Publication/Inputs: partial copy/stage-marker/write/read-back/temporary/rename faults, incomplete reservations and ambiguous post-rename response |
+| R13 | Passed | Publication/Integrity: metadata/inventory/physical-schema corruption, missing dependencies and observed file/parent/staging replacement |
+| R14 | Passed | Inputs/Integrity/Publication/Verification: ordinary I/O exact classifications, unchanged evidence, known mutation survives subsequent I/O/cleanup |
+| R15 | Passed | Publication: all three literal reports, coverage/scoped totals, filters/pages/order and final-year sentinel query |
+| R16 | Passed | Publication/Integrity: real configured constants and bounded patched-cap tests, prefetch/encoded size, OOM/no-spill, BUSY/close/fail-closed |
+| R17 | Passed | Publication: separate Spark/Java/producer/pytz-blocked reader process, successful named-report CLIs and safe help/invalid arguments |
+| R18 | Passed | Full processing, JDBC and Content API compatibility; documentation/hygiene, unchanged legacy modules/dependencies/CI |
+
+| Executed local check | Actual result |
+| --- | --- |
+| Focused Reliability discovery | 58 tests passed, 97.825 s |
+| Complete processing discovery | 222 tests passed, 293.564 s; includes all 164 existing M1/M2/E1a/E1b cases plus 58 Reliability cases |
+| Final literal schema oracle | One strengthened R07 test passed, 8.712 s, after the final test-only edit; ordered 21/16/17 columns/types are literal expectations independent of producer constants |
+| JDBC compatibility | 48 tests passed, zero failures/errors/skips; Maven verify BUILD SUCCESS, 2.794 s total |
+| Existing Content API compatibility/integration | 120 unit tests and 20 HTTP/Python integration tests passed, zero failures/errors/skips; Maven verify BUILD SUCCESS, 21.079 s total |
+| Documentation/hygiene | npm run check passed: 39 Markdown files, zero lint/link issues, repository hygiene passed |
+| Diff hygiene | git diff --check passed; new untracked Python files also checked against /dev/null |
+| CLI | Help and safe invalid-argument checks passed; requests_5m, input_coverage and reference_coverage reader CLI success responses passed |
+
+Focused/full processing used the verified repository executable outputs/silver-python312/.venv/bin/python with PYTHONPATH=processing, JAVA_HOME selected by /usr/libexec/java_home -v 21, PYSPARK_PYTHON pointing to that executable and SPARK_LOCAL_IP=127.0.0.1. Focused discovery used TZ=America/New_York and `-m unittest discover -s processing/tests -p 'test_reliability*.py' -v`; full discovery used TZ=UTC and `-m unittest discover -s processing/tests -v`. The stronger R07 oracle ran separately through unittest with processing/tests also on PYTHONPATH. Native Maven commands were `mvn -o -B -ntp -f services/api/pom.xml verify` and `mvn -o -B -ntp -f services/content-api/pom.xml verify -Pintegration` with analytics.python set to the same verified Python executable. Existing generated synthetic JDBC fixtures were reused read-only. Existing local Spark loopback binding is unavailable in the restricted sandbox; these tests use the authorized native execution environment with SPARK_LOCAL_IP=127.0.0.1. The approved runtime was verified before execution, without installing dependencies or weakening tests.
+
+Known local warnings include the existing incubator-vector/native-Hadoop notices and PySpark socket ResourceWarnings. They did not fail assertions. No warning was suppressed to obtain success. There is no hosted CI result for this delivery. No retained Reliability dataset or production logs were collected, and E3/E4 JSONL/Parquet equivalence, 100K/1M workloads and scalability benchmarks were not executed. Raw dependencies remain required; losing them prevents consumption. One-writer/trusted-filesystem, synchronous latency and no power-loss durability limitations remain as accepted.
