@@ -1,5 +1,5 @@
 """A01–A17: fictional, standalone E1a contracts; no producer/runtime imports."""
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import FrozenInstanceError
 from hashlib import sha256
 import io
@@ -58,6 +58,60 @@ class ReferenceTest(unittest.TestCase):
         return {str(p.relative_to(self.root)): (p.stat().st_mtime_ns,
                 p.read_bytes() if p.is_file() else None)
                 for p in [self.root, *self.root.rglob('*')]}
+
+    def evidence(self, path):
+        """Access times may change on reads; identity, metadata and bytes may not."""
+        return (pr._stamp(path.stat()), pr._identity(path.parent.stat()), path.read_bytes())
+
+    @contextmanager
+    def capture_fault(self, target, occurrence, fault):
+        """Fail actual I/O inside one selected capture, without changing its file."""
+        capture, fdopen = pr._capture, os.fdopen
+        count = 0
+        failures = []
+        message = f'{target}: secret credential read/close failure'
+
+        def fail(*args, **kwargs):
+            failures.append(fault)
+            raise OSError(message)
+
+        class Stream:
+            def __init__(self, stream):
+                self.stream = stream
+            def __enter__(self):
+                return self
+            def fileno(self):
+                return self.stream.fileno()
+            def read(self, size):
+                if fault == 'read':
+                    fail()
+                return self.stream.read(size)
+            def __exit__(self, *args):
+                self.stream.close()
+                if fault == 'close':
+                    fail()
+
+        def selected(path, *args, **kwargs):
+            nonlocal count
+            if path == target:
+                count += 1
+                if count == occurrence:
+                    if fault in ('read', 'close'):
+                        with patch.object(os, 'fdopen', side_effect=lambda *a, **k: Stream(fdopen(*a, **k))):
+                            return capture(path, *args, **kwargs)
+                    owner, name = (Path, 'lstat') if fault == 'stat' else (os, fault)
+                    with patch.object(owner, name, side_effect=fail):
+                        return capture(path, *args, **kwargs)
+            return capture(path, *args, **kwargs)
+
+        with patch.object(pr, '_capture', side_effect=selected):
+            yield
+        self.assertTrue(failures, 'The selected I/O fault was not reached')
+
+    def safe_error(self, code, function, *args, **kwargs):
+        error = self.error(code, function, *args, **kwargs)
+        self.assertEqual(error.diagnostic, {'code': code, 'message': pr.MESSAGES[code]})
+        self.assertEqual(str(error), pr.MESSAGES[code])
 
     def rewrite(self, name, transform):
         path = self.dest / name
@@ -476,6 +530,130 @@ class ReferenceTest(unittest.TestCase):
             self.error('PUBLICATION_FAILED', self.publish, revision='io-failure')
         self.assertEqual(self.open().fingerprint, VECTOR)
 
+    def test_a14_unchanged_input_initial_and_recheck_io_failures(self):
+        for path in (self.csv, self.vocab):
+            for occurrence in (1, 2):
+                for fault in ('read', 'close', 'stat', 'open', 'fstat'):
+                    with self.subTest(path=path.name, occurrence=occurrence, fault=fault):
+                        before = self.evidence(path)
+                        with self.capture_fault(path, occurrence, fault):
+                            self.safe_error('INPUT_UNAVAILABLE', pr.validate, **self.args)
+                        self.assertEqual(self.evidence(path), before)
+                        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_a14_unchanged_snapshot_recheck_io_failures(self):
+        self.publish()
+        before = self.state()
+        for path in sorted(self.dest.iterdir()):
+            for fault in ('read', 'close', 'stat', 'open', 'fstat'):
+                with self.subTest(path=path.name, fault=fault):
+                    evidence = self.evidence(path)
+                    with self.capture_fault(path, 2, fault):
+                        self.safe_error('SNAPSHOT_INVALID', self.open)
+                    self.assertEqual(self.evidence(path), evidence)
+                    self.assertEqual(self.state(), before)
+        self.assertEqual(self.open().fingerprint, VECTOR)
+
+    def test_a14_publication_readback_and_all_recheck_io_phases(self):
+        self.publish()
+        before = {p: self.evidence(p) for p in self.dest.iterdir()}
+        # Artifact captures: private verify/read/recheck, pre-marker recheck,
+        # post-marker recheck, temporary verify/read/recheck, final recheck.
+        targets = [(name, occurrence) for name in
+                   ('reference.csv', 'vocabulary.json', 'manifest.json')
+                   for occurrence in range(1, 8)]
+        # Temporary marker: read-back, temporary verify/read/recheck, final recheck.
+        targets += [('complete.tmp', occurrence) for occurrence in range(1, 5)]
+        # Candidate rechecks after reservation, before/after the temporary marker.
+        targets += [('input', occurrence) for occurrence in range(3, 6)]
+        for index, (name, occurrence) in enumerate(targets):
+            for fault in ('read', 'close'):
+                revision = f'io-{index}-{fault}'
+                dest = self.dest.parent / f'revision={revision}'
+                path = self.csv if name == 'input' else dest / name
+                with self.subTest(name=name, occurrence=occurrence, fault=fault):
+                    inputs = {p: self.evidence(p) for p in (self.csv, self.vocab)}
+                    observed = []
+                    capture = pr._capture
+                    def record(path, *args, **kwargs):
+                        observed.append((path, self.evidence(path)))
+                        return capture(path, *args, **kwargs)
+                    with patch.object(pr, '_capture', side_effect=record):
+                        with self.capture_fault(path, occurrence, fault):
+                            self.safe_error('PUBLICATION_FAILED', self.publish, revision=revision)
+                    self.assertFalse((dest / 'complete.json').exists())
+                    self.assertEqual({p: self.evidence(p) for p in inputs}, inputs)
+                    self.assertEqual({p: self.evidence(p) for p in before}, before)
+                    for observed_path, evidence in observed:
+                        self.assertEqual(self.evidence(observed_path), evidence)
+                    retained = {p: self.evidence(p) for p in dest.iterdir()}
+                    self.error('SNAPSHOT_INCOMPLETE', self.publish, revision=revision)
+                    self.assertEqual({p: self.evidence(p) for p in dest.iterdir()}, retained)
+
+    def test_a14_identical_replay_candidate_and_snapshot_recheck_io_failures(self):
+        self.publish()
+        before = self.state()
+        for path, occurrence, code in (
+                (self.csv, 3, 'INPUT_UNAVAILABLE'), (self.vocab, 3, 'INPUT_UNAVAILABLE'),
+                (self.dest / 'reference.csv', 2, 'SNAPSHOT_INVALID')):
+            for fault in ('read', 'close'):
+                with self.subTest(path=path.name, fault=fault):
+                    evidence = self.evidence(path)
+                    with self.capture_fault(path, occurrence, fault):
+                        self.safe_error(code, self.publish)
+                    self.assertEqual(self.evidence(path), evidence)
+                    self.assertEqual(self.state(), before)
+        self.assertEqual(self.publish()['status'], 'replayed')
+
+    def test_a14_metadata_failure_while_diagnosing_read_failure(self):
+        self.publish()
+        for path, operation, code in ((self.csv, lambda: pr.validate(**self.args), 'INPUT_UNAVAILABLE'),
+                                      (self.dest / 'reference.csv', self.open, 'SNAPSHOT_INVALID')):
+            before = self.evidence(path)
+            read, lstat = pr._read_stream, Path.lstat
+            failed = False
+            def fail_read(stream, limit):
+                nonlocal failed
+                if pr._identity(os.fstat(stream.fileno())) == pr._identity(path.stat()):
+                    failed = True
+                    raise OSError('secret read failure')
+                return read(stream, limit)
+            def fail_stat(selected, *args, **kwargs):
+                if failed and selected == path:
+                    raise OSError('secret metadata failure')
+                return lstat(selected, *args, **kwargs)
+            with patch.object(pr, '_read_stream', side_effect=fail_read), patch.object(Path, 'lstat', fail_stat):
+                self.safe_error(code, operation)
+            self.assertTrue(failed)
+            self.assertEqual(self.evidence(path), before)
+
+    def test_a14_directory_and_inventory_recheck_io_failures(self):
+        self.publish()
+        before = self.state()
+        # Fail only the final verification phase, after all artifact rechecks.
+        for phase in ('guards', 'inventory', 'directory-stamp'):
+            with self.subTest(phase=phase):
+                recheck = pr._recheck
+                armed = False
+                def arm(*args, **kwargs):
+                    nonlocal armed
+                    result = recheck(*args, **kwargs)
+                    armed = True
+                    return result
+                operation = {'guards': '_check_guards', 'inventory': '_inventory',
+                             'directory-stamp': '_directory_stamp'}[phase]
+                original = getattr(pr, operation)
+                def fail(*args, **kwargs):
+                    if armed:
+                        owner, name = (os, 'scandir') if phase == 'inventory' else (Path, 'lstat')
+                        with patch.object(owner, name, side_effect=OSError('secret directory failure')):
+                            return original(*args, **kwargs)
+                    return original(*args, **kwargs)
+                with patch.object(pr, '_recheck', side_effect=arm), patch.object(pr, operation, side_effect=fail):
+                    self.safe_error('SNAPSHOT_INVALID', self.open)
+                self.assertTrue(armed)
+                self.assertEqual(self.state(), before)
+
     def test_a14_exclusive_create_and_marker_corruption(self):
         write = pr._write
         def collision(path, data):
@@ -509,6 +687,84 @@ class ReferenceTest(unittest.TestCase):
             self.error('INPUT_CHANGED', self.publish)
         self.assertFalse((self.dest / 'complete.json').exists())
 
+    def test_a15_recheck_observes_bytes_identity_metadata_and_disappearance(self):
+        for kind in ('input', 'snapshot'):
+            for mutation in ('bytes', 'replacement', 'mtime', 'disappearance', 'parent'):
+                with self.subTest(kind=kind, mutation=mutation):
+                    work = self.base / f'{kind}-{mutation}'
+                    work.mkdir()
+                    root = work / 'snapshots'
+                    root.mkdir()
+                    inputs = work / 'inputs'
+                    inputs.mkdir()
+                    csv = inputs / 'source.csv'
+                    csv.write_bytes(HEADER + ROW)
+                    args = self.args | {'csv_path': csv}
+                    published = pr.publish(root, **args)
+                    dest = root / 'reference_id=fictional-publishers' / 'revision=r1'
+                    path = csv if kind == 'input' else dest / 'reference.csv'
+                    recheck = pr._recheck
+                    mutated = False
+                    def change(capture, changed, unavailable):
+                        nonlocal mutated
+                        if capture.path == path and not mutated:
+                            mutated = True
+                            original = path.stat()
+                            if mutation == 'bytes':
+                                path.write_bytes(path.read_bytes().replace(b'Example A', b'Example B'))
+                                os.utime(path, ns=(original.st_atime_ns, original.st_mtime_ns))
+                                self.assertEqual(pr._stamp(path.stat()), capture.stamp)
+                            elif mutation == 'replacement':
+                                data = path.read_bytes()
+                                path.rename(path.with_suffix('.old'))
+                                path.write_bytes(data)
+                                os.utime(path, ns=(original.st_atime_ns, original.st_mtime_ns))
+                                self.assertNotEqual(pr._identity(path.stat()), capture.stamp[:2])
+                            elif mutation == 'mtime':
+                                os.utime(path, ns=(original.st_atime_ns, original.st_mtime_ns + 1_000_000))
+                            elif mutation == 'disappearance':
+                                path.unlink()
+                            else:
+                                # Replace only this input's immediate parent or selected snapshot directory.
+                                parent = path.parent
+                                moved = parent.with_name(parent.name + '-moved')
+                                parent.rename(moved)
+                                parent.mkdir()
+                                for child in moved.iterdir():
+                                    child.rename(parent / child.name)
+                                self.assertNotEqual(pr._identity(parent.stat()), capture.parent_identity)
+                        return recheck(capture, changed, unavailable)
+                    with patch.object(pr, '_recheck', side_effect=change):
+                        if kind == 'input':
+                            self.error('INPUT_CHANGED', pr.validate, **args)
+                        else:
+                            self.error('SNAPSHOT_CHANGED', pr.open_snapshot, root,
+                                       'fictional-publishers', 'r1', published['snapshot_fingerprint'])
+                    self.assertTrue(mutated)
+
+    def test_a15_observed_mutation_is_preserved_when_io_also_fails(self):
+        for changed, unavailable in (('INPUT_CHANGED', 'INPUT_UNAVAILABLE'),
+                                     ('SNAPSHOT_CHANGED', 'SNAPSHOT_INVALID')):
+            for fault in ('read', 'close'):
+                with self.subTest(changed=changed, fault=fault):
+                    self.csv.write_bytes(HEADER + ROW)
+                    capture = pr._capture(self.csv, pr.CSV_LIMIT)
+                    if fault == 'close':
+                        # A byte-only mutation must survive the close exception.
+                        info = self.csv.stat()
+                        self.csv.write_bytes(HEADER + ROW.replace(b'Example A', b'Example B'))
+                        os.utime(self.csv, ns=(info.st_atime_ns, info.st_mtime_ns))
+                        self.assertEqual(pr._stamp(self.csv.stat()), capture.stamp)
+                        with self.capture_fault(self.csv, 1, 'close'):
+                            self.error(changed, pr._recheck, capture, changed, unavailable)
+                    else:
+                        def disappear(*args):
+                            self.csv.unlink()
+                            raise OSError('secret read failure after disappearance')
+                        with patch.object(pr, '_read_stream', side_effect=disappear):
+                            self.error(changed, pr._recheck, capture, changed, unavailable)
+                        self.assertFalse(self.csv.exists())
+
     def test_a15_replay_rechecks_candidate_inputs(self):
         self.publish()
         before = self.state()
@@ -532,8 +788,8 @@ class ReferenceTest(unittest.TestCase):
         self.csv.write_bytes(HEADER)
         self.publish()
         recheck = pr._recheck
-        def extra(capture, code):
-            result = recheck(capture, code)
+        def extra(capture, code, unavailable):
+            result = recheck(capture, code, unavailable)
             if code == 'SNAPSHOT_CHANGED':
                 (self.dest / 'extra').write_bytes(b'changed inventory')
             return result
@@ -569,12 +825,12 @@ class ReferenceTest(unittest.TestCase):
         self.publish()
         recheck = pr._recheck
         changed = False
-        def mutate(capture, code):
+        def mutate(capture, code, unavailable):
             nonlocal changed
             if code == 'SNAPSHOT_CHANGED' and not changed:
                 changed = True
                 (self.dest / 'reference.csv').write_bytes(HEADER + ROW)
-            return recheck(capture, code)
+            return recheck(capture, code, unavailable)
         with patch.object(pr, '_recheck', side_effect=mutate):
             self.error('SNAPSHOT_CHANGED', self.open)
         write = pr._write
@@ -679,6 +935,38 @@ class ReferenceTest(unittest.TestCase):
         self.assertEqual((code, out), (1, ''))
         self.assertEqual(json.loads(err)['code'], 'INPUT_UNAVAILABLE')
         self.assertNotIn(str(self.csv), err)
+
+    def test_a17_recheck_io_cli_exit_and_fixed_diagnostics(self):
+        self.publish()
+        before = self.state()
+        verify = ['verify', '--root', str(self.root), '--reference-id', 'fictional-publishers',
+                  '--revision', 'r1', '--expected-fingerprint', VECTOR]
+        cases = [
+            (self.options(), self.csv, 2, 'INPUT_UNAVAILABLE'),
+            (verify, self.dest / 'reference.csv', 2, 'SNAPSHOT_INVALID'),
+            (self.options('publish') + ['--root', str(self.root)],
+             self.vocab, 3, 'INPUT_UNAVAILABLE'),
+        ]
+        for options, path, occurrence, expected in cases:
+            for fault in ('read', 'close'):
+                with self.subTest(expected=expected, fault=fault):
+                    evidence = self.evidence(path)
+                    with self.capture_fault(path, occurrence, fault):
+                        code, out, err = self.cli(options)
+                    self.assertEqual((code, out), (1, ''))
+                    self.assertEqual(json.loads(err), {'code': expected, 'message': pr.MESSAGES[expected]})
+                    self.assertEqual(self.evidence(path), evidence)
+                    self.assertEqual(self.state(), before)
+        for fault in ('read', 'close'):
+            dest = self.dest.parent / f'revision=cli-{fault}'
+            options = self.options('publish')
+            options[options.index('--revision') + 1] = f'cli-{fault}'
+            with self.capture_fault(dest / 'manifest.json', 2, fault):
+                code, out, err = self.cli(options + ['--root', str(self.root)])
+            self.assertEqual((code, out), (1, ''))
+            self.assertEqual(json.loads(err), {'code': 'PUBLICATION_FAILED',
+                                              'message': pr.MESSAGES['PUBLICATION_FAILED']})
+            self.assertFalse((dest / 'complete.json').exists())
 
 
 if __name__ == '__main__':
