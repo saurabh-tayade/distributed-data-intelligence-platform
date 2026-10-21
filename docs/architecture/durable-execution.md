@@ -2,7 +2,7 @@
 
 Status: **Accepted — October 20, 2026**, with the Stage A.1 refinements, under [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md). The owner accepted additive [ADR 0011](../adr/0011-artifact-import-maintenance-ownership.md) on October 21 and authorized **B2b-1A import ownership foundation only**. B1/B2a and the ownership foundation are implemented; current coordination evidence is [recorded separately](#stage-b2b-1a-durable-import-ownership). Native qualification/functional imports (B2b-1B), submission (B2b-2) and C–F execution/control/UI require separate authorization. Acceptance alone passes no E5 test group. Accepted ADRs 0001–0010 and native data contracts are unchanged.
 
-Current authorization: the owner subsequently approved and committed B2b-1A, B2b-1B-A, B2b-1B-B and B2b-2A, then authorized **B2b-2B read-only history and inspection**. Its implementation and current evidence are [recorded below](#stage-b2b-2b-bounded-run-history-and-inspection). Earlier checkpoint status paragraphs are historical. Checkpoint C/worker execution remains unauthorized.
+Current authorization: B1 through B2b-2B are owner-committed. The owner now authorizes **C1 worker coordination and durable claiming only**. The [C1 implementation boundary](#c1-worker-coordination-acceptance-boundary) keeps production dispatch disabled. C2/native execution and later controls remain unauthorized. Earlier checkpoint status paragraphs and their test counts are historical.
 
 ## Boundary and invariants
 
@@ -961,3 +961,174 @@ Intermediate failures were test expectations/instrumentation: the first changed-
 - [services/content-api/src/test/java/platform/historyfixture/OversizedInspectionConfiguration.java](../../services/content-api/src/test/java/platform/historyfixture/OversizedInspectionConfiguration.java)
 
 The entry branch/index/working tree was verified clean. All changes remain for the owner; no staging, commits, branch changes or GitHub operations were performed.
+
+## C1 worker coordination acceptance boundary
+
+The owner authorizes C1 coordination only. Acceptance requires real PostgreSQL proof of
+atomic FIFO claims, source enablement gates, epoch/version fencing, rollback and exact
+claim lookup; process tests must prove cooperative guard exclusion. Worker startup must
+be non-web, validate the installation and pinned metadata, and retain the host guard.
+Heartbeats are indications of liveness, never leases. Shutdown or uncertain acknowledgment
+must preserve occupied ownership. Tests may inject a capability in isolated databases.
+**Production dispatch remains disabled until the fixed Reliability adapter is implemented
+and approved in C2.** C1 must leave production QUEUED runs untouched and create no native
+processes, stage invocations or publication-success evidence.
+
+### C1 implemented protocol and integration seam
+
+C1 reuses V1–V7, the existing singleton coordinator, worker/attempt/run rows,
+[InstallationHostGuard](../../services/content-api/src/main/java/platform/contentapi/execution/InstallationHostGuard.java)
+and immutable B2 selections. No migration, dependency, HTTP route or native contract changes.
+[WorkerRepository](../../services/content-api/src/main/java/platform/contentapi/execution/WorkerRepository.java)
+has no process-launch or publication-success method. Its production constructor fixes
+WorkerExecutionCapability.NONE; the test capability exists only under src/test. No property,
+Spring bean, request or catalog entry can supply an executor. The passive lifecycle never
+polls or claims queued work. The existing 20-unfinished-run admission bound therefore still
+fills without draining.
+
+Startup validates PostgreSQL 17/schema V7 without migrating, the current Java 21 JVM,
+configured executable/script availability, canonical immutable run-profile bytes/digest,
+the configured deployment digest, installation identity and associated storage descriptors.
+It acquires the existing private CONTROL guard before worker registration, retaining it
+through shutdown. Local roots reuse importStorageVersion=1 root/device/inode descriptors;
+TEMP/STAGING are private, writable and disjoint from native roots and each other/control.
+Bronze reuses the loopback-only importBronzeVersion=1 descriptor/private credentials validation,
+without contacting S3. Profile-required roles, product/installation membership and at most
+128 associated bindings are checked. All profiles must reuse the historical installation
+CONTROL binding: worker and import history digests cannot silently change. No directories,
+guard files, profiles or schema are created or repaired at startup.
+
+With READY and no unresolved owner/run/attempt/import, registration records READY. Occupied
+or RECOVERY_ONLY registration records a new RECOVERY_ONLY observer, retaining the old binding;
+it cannot adopt the old attempt. A live cooperative owner prevents guard acquisition first.
+STOPPING records/stops the new idle instance and starts no heartbeat loop. Invalid configuration
+or schema fails closed. Runtime version strings/deployment SHA are reviewed admission pins;
+C1 does **not** probe Python/PySpark, hash a packaged deployment or qualify a runnable adapter.
+Those C2 preflights must precede enabling the capability.
+
+A claim with a test-only available capability takes one short transaction in this order:
+
+1. Lock coordinator; compare installation, READY mode, exact session epoch/coordinator and
+   worker row versions, and absence of execution/recovery/import ownership or unresolved rows.
+2. Select the lowest QUEUED submission_seq. Lock its current source rows in product/source
+   order, then lock/recheck the run. No SKIP LOCKED or in-memory queue is used.
+3. Check live enablement while retaining the captured revision. Disabled sources produce
+   FAILED/SOURCE_DISABLED with SOURCE_DISABLED_AT_DISPATCH and no attempt. Incompatible/invalid
+   pinned metadata produces FAILED/RUNTIME_MISMATCH and RUN_FAILED, so an incompatible head is
+   observable rather than silently skipped. C1 uses an exact configured profile ID/digest match.
+4. Revalidate canonical request/selection digests, exact run_sources/run_inputs copies,
+   immutable source revisions, artifact metadata qualification shapes/native identities,
+   profile/binding associations and homogeneous Reliability source/batch correspondence.
+   [FrozenRunSelection](../../services/content-api/src/main/java/platform/contentapi/management/FrozenRunSelection.java)
+   performs database metadata checks only; no filesystem hash, S3 GET or native verifier runs.
+5. Increment epoch, insert EXECUTE/CLAIMED with a caller-allocated attempt UUID and monotonically
+   increasing attempt_no (maximum 20), change run to RUNNING/current attempt, bind coordinator
+   worker/attempt/epoch and append RUN_CLAIMED plus ATTEMPT_CLAIMED. Commit before returning a token.
+
+The run's current stage, counts and result remain null; no stage or success is invented.
+Existing inspection APIs expose those persisted records with their approved classifications.
+Ownership operations reject an outer transaction. Guard/root checks occur before SQL;
+no transaction spans external qualification or execution. Audit additions stay within the
+existing one-million-event bound and submission-reserved lifecycle budget.
+
+Owner tokens include installation, instance, attempt, epoch, coordinator/worker/run/attempt
+versions and expected states. Every mutation checks all applicable fields under coordinator-first
+locks; conditional writes require exactly one row. Heartbeat updates worker and occupied-slot
+UTC timestamps/versions atomically, without changing attempt/run state or appending audit.
+The fixed interval is five seconds; older than thirty seconds is an uncertainty indication,
+not release authority or a measured timing guarantee. Manual tick and database timestamp
+fixtures make tests deterministic. Idle observer heartbeats never update the old owner's slot.
+A database failure or stale token latches off further authorization in that repository;
+no method refreshes/adopts a token. Database failure retains the occupied persisted condition.
+
+Internal markRunning commits ATTEMPT_STARTED without launching anything. stageIntentTransaction
+is a JDBC-only C2 seam joining ownership/control checks and future stage INTENT metadata in one
+transaction; its callback must never perform external I/O. It is not a stage executor or a launch
+authorization. C2 must add fixed stage intent/process-identity/outcome persistence, check controls
+again before launch, supervise actual processes and verify effects before any success. Known
+pre-launch failure is allowed only from CLAIMED with no stage intent and the trusted protocol's
+proof that no side effect was authorized; absence of a PID alone is insufficient. It atomically
+closes FAILED, records attempt/run audit and clears only this owner. No retry eligibility is asserted.
+
+Explicit interrupt records INTERRUPTED plus RECOVERY_REQUIRED/RECOVERY_ONLY while preserving the
+occupied attempt pointer. Abrupt JVM death or lost claim acknowledgment can instead leave the
+original RUNNING run/CLAIMED attempt occupied; both block a restart. Exact attempt-ID lookup
+returns a **historical receipt only**, never a new token or relaunch permission. C1 provides no
+reconciliation/handoff/retry executor. Clean idle stop records STOPPED, closes heartbeat scheduling
+and releases the guard with queued captures unchanged. Uncertain stop does not clear ownership;
+C1 has no native child to clean up and makes no orphan-descendant termination guarantee.
+
+### C1 local validation and remaining work
+
+Local baseline: clean owner-prepared feature/e5-durable-execution-source-controls at
+78d32f537b0e82502ce0368e33680dcc596019a9. The existing index was preserved. Java 21.0.7,
+PostgreSQL 17.11, Python 3.12.15/PySpark 4.0.2 and the already provisioned isolated test runtime
+were used. Docker operations targeted only ddip-b1-postgres-test, initially stopped; no volumes,
+retained native datasets or operational database were removed. Hosted CI is unobserved.
+
+Set JAVA_HOME to the pinned JDK 21 and DDIP_TEST_DB_URL/USER/PASSWORD to the dedicated disposable
+service; set DDIP_TEST_PYTHON to the approved existing test interpreter. Exact Maven invocations
+from the repository root (test wrappers supplied credentials privately, never printed them):
+
+| Command | Observed result |
+| --- | --- |
+| `mvn -q -f services/content-api/pom.xml verify -Ppostgres -Dit.test=WorkerCoordinationIT -Dgroups=C1_GATE_A -Dtest=NoUnitTests -Dsurefire.failIfNoSpecifiedTests=false` | **29 Gate A PostgreSQL cases passed**, no skips/failures/errors |
+| `mvn -q -f services/content-api/pom.xml verify -Ppostgres -Dit.test=WorkerCoordinationIT -Dgroups=C1_GATE_B -Dtest=NoUnitTests -Dsurefire.failIfNoSpecifiedTests=false` | **26 Gate B PostgreSQL/lifecycle/process cases passed**, no skips/failures/errors |
+| `mvn -q -f services/content-api/pom.xml -Ppostgres -Dddip.test.worker-restart-signal=/private/tmp/ddip-c1-worker-restart -Dddip.test.history-restart-signal=/private/tmp/ddip-c1-history-restart verify` | **261 Java + 311 PostgreSQL cases passed**, no skips/failures/errors; external harness performed both actual dedicated server restarts |
+| `mvn -q -f services/content-api/pom.xml verify -Ppostgres -Dit.test=WorkerCoordinationIT,PersistenceIT` | Final worker-path/STOPPING/shutdown changes: **261 Java + 83 PostgreSQL cases passed**, no skips/failures/errors; repeated cases are not added to distinct totals |
+| `mvn -q -f services/content-api/pom.xml verify -Pintegration -Danalytics.python="$PWD/outputs/silver-python312/.venv/bin/python"` | **20 existing HTTP/Python compatibility cases + the same 261 Java cases passed**, no skips/failures/errors |
+
+The 311 PostgreSQL cases comprise 28 persistence, 36 source management, 42 import ownership,
+38 Spark-free imports, **23 Spark-backed Silver imports**, 44 submission, 45 history and 55 C1.
+The 261 Java cases comprise the existing 259 and two internal-evidence encoding/boundary checks.
+Gate A/B tags partition the 55 C1 cases; they are not additional tests. The default postgres
+Maven/CI profile now includes WorkerCoordinationIT; no CI job/service/dependency was replaced.
+
+Gate A uses real row locks, constraints, deferred FKs and commits. It covers all three
+pipeline/profile shapes with test capability, FIFO, concurrent winner, monotonic attempt number,
+rollback at attempt/run/coordinator/audit insertion and after the first claim audit, both source
+update/claim orderings, disabled sources, coherent immutable revisions, invalid frozen evidence,
+profile rejection, exact lost-ack lookup and stage-intent/control fencing. Concurrency barriers
+and observed PostgreSQL coordinator lock waits establish ordering. Namespace snapshots compare
+all selected fixture-root entries/bytes/mtimes around claim/inspection; no stage/process/result
+is created. Intentionally injected failures were corrected during development before these final
+passes; no failing/skipped case is counted as passing.
+
+Gate B exercises actual non-web Spring startup, guard-bound identities and heartbeats, idle stop,
+STOPPING, configuration/schema/installation mismatch, import exclusion, unresolved prior attempts,
+stale epoch/version, database outage, historical guard pinning and outer-transaction rejection.
+Separate JVMs demonstrate cooperative guard exclusion. A deliberately killed **test-only** claim
+owner leaves its attempt/slot occupied; another worker cannot claim it. This observes local JVM
+exit, not all hypothetical orphan descendants. Claim receipts and frozen run bytes survive a
+strictly later PostgreSQL postmaster start time; exact receipts authorize nothing. Production
+capability remains absent even when unknown fake-executor/dispatch properties are supplied.
+No test capability is present in the packaged production JAR. Existing GET inspection shows
+actual CLAIMED/RUNNING/INTERRUPTED/RECOVERY_REQUIRED records without fabricated results.
+
+The full regression included the 23 Silver cases excluded at B2b-2B. Their synthetic fixture
+setup/read-only qualification is distinct from C1 worker processing. No live publisher, new
+production transformation, benchmark, retained personal dataset or AWS operation ran. The
+native Python/verifier modules, fingerprints, accepted ADRs and V1–V7 remain byte-for-byte
+unchanged against the committed baseline. A C1 sentinel also retains its exact bytes/mtime.
+`npm run check` passed for all **44 Markdown files**, local links and repository hygiene.
+`git diff --check` and `git diff --cached --check` passed; V1–V7 were independently
+compared byte-for-byte with HEAD, and the initially empty index remains empty. The dedicated
+PostgreSQL test container was restored to its initial stopped state after testing.
+
+**Implemented:** passive worker readiness/guard lifetime, metadata claim repository and exact
+historical lookup, epoch/version fencing, bounded heartbeats, known pre-launch closure,
+uncertain occupied interruption and C2 JDBC intent seam. **Tested:** the local gates/regressions
+above; production dispatch has no executor. **Planned for separately authorized C2:** a fixed
+Reliability adapter, executable deployment/native dependency preflight, fixed stage intent and
+process identity/outcome persistence, launch control recheck, bounded child supervision and
+independent final result verification/registration. The current exact-profile match is deliberately
+conservative; supporting multiple compatible pinned profiles requires explicit adapter preflight,
+not substituting current configurations. **Deferred:** Content/RSS execution, controls, execution
+reconciliation/handoff, automatic retries, Operations UI and E5 completion.
+
+Known limits: PostgreSQL fences metadata, not stale filesystem writers; the guard is cooperative.
+No heartbeat, free guard, JVM exit or lost connection proves quiescence. Uncertain ownership
+requires explicit future reconciliation, and C1 supplies no operator execution-owner recovery
+command. No packaging/runtime authenticity, hostile-storage, other-host orphan cleanup,
+power-loss/backup restore or hosted CI guarantee is inferred. Native inputs remain subject to
+fresh worker-side revalidation before consumption; historical qualification is not readability.

@@ -210,13 +210,13 @@ Run the packaged JAR from the repository root; shell variables above must be exp
 DDIP_ROLE=analytics java -jar services/content-api/target/content-api-0.1.0-SNAPSHOT.jar
 # Database validation, existing analytics and B2a source management; no execution.
 DDIP_ROLE=api java -jar services/content-api/target/content-api-0.1.0-SNAPSHOT.jar
-# Non-web, database/runtime-path validation, idle only; Ctrl-C stops it.
+# Non-web C1 passive readiness; requires the private C1 bindings below; Ctrl-C stops it.
 DDIP_ROLE=worker java -jar services/content-api/target/content-api-0.1.0-SNAPSHOT.jar
 # Non-web, explicit migrations/installation initialization, then exits.
 DDIP_ROLE=migrate java -jar services/content-api/target/content-api-0.1.0-SNAPSHOT.jar
 ```
 
-`DDIP_ROLE` maps to `ddip.role`: exactly `analytics` (default), `api`, `worker`, `migrate`, `operator-import`. Unknown roles fail. The Spark-free import role is described in [the current operator contract](#spark-free-native-input-imports-b2b-1b-a). Worker requires absolute `DDIP_WORKER_PYTHON`, `DDIP_WORKER_JAVA_HOME`, `DDIP_WORKER_PROCESSING_ROOT`, an executable Python/Java path and the fixed Content/Reliability-v2 publication scripts. B1 checks path availability only; it does not probe child versions, acquire filesystem ownership, register an active worker or claim/launch anything. C must qualify exact runtime/profile/root identity before processing. Worker/migration force a non-web context even if a web type is supplied, excluding analytical controllers, properties and process pools. The worker has one idle lifecycle thread; no polling scheduler is present.
+`DDIP_ROLE` maps to `ddip.role`: exactly `analytics` (default), `api`, `worker`, `migrate`, `operator-import`. Unknown roles fail. The Spark-free import role is described in [the current operator contract](#spark-free-native-input-imports-b2b-1b-a). Worker requires absolute `DDIP_WORKER_PYTHON`, `DDIP_WORKER_JAVA_HOME`, `DDIP_WORKER_PROCESSING_ROOT`, an executable Python/Java path and the fixed Content/Reliability-v2 publication scripts. B1 originally checked path availability only. [C1 passive worker readiness](#c1-passive-worker-and-durable-claim-foundation) now also requires an approved execution-profile ID, deployment digest and the existing installation CONTROL binding. It acquires that guard, validates private roots and registers a worker, with one bounded heartbeat task and no production claim/dispatch loop. Worker/migration force a non-web context even if a web type is supplied, excluding analytical controllers and query process pools. C2 must qualify executable/native versions before any execution capability is enabled.
 
 Database roles use one Hikari pool: API maximum 4, worker/migration maximum 2, minimum idle 0. Flyway needs a second connection for its coordination; a one-connection migration pool is insufficient. Connection, SQL statement, lock and explicit transaction waits are bounded to 3 seconds; Flyway lock/connection retries are disabled; idle-in-transaction timeout is 5 seconds. Sessions use UTC. No database transaction encloses external processing. Startup errors use fixed `MANAGEMENT_CONFIGURATION_INVALID`, `MANAGEMENT_UNAVAILABLE` or `MANAGEMENT_INCOMPATIBLE`; conditional conflicts return false or `STATE_CONFLICT`. Native driver/pool/Flyway logging is disabled to avoid connection-detail leakage. These are internal B1 diagnostics, not new management REST envelopes.
 
@@ -856,3 +856,121 @@ The regression command includes the existing Spark-free import tests and their D
 For an actual dedicated DB restart test, pass `-Dddip.test.history-restart-signal=/private/tmp/ddip-history-restart`. An external harness waits for READY, restarts only the dedicated test container, waits for readiness, then writes `/private/tmp/ddip-history-restart.done` within 45 seconds. The test requires a later PostgreSQL postmaster start time and identical cursor continuation/events after API restart. Never use this procedure against an operational installation. Without the property, ordinary CI checks fresh API/connection continuity without claiming a server restart.
 
 Current executed evidence is in the [B2b-2B contract](../../docs/architecture/durable-execution.md#stage-b2b-2b-bounded-run-history-and-inspection). The implemented B2 source management, verified import, durable queued submission and requested history/inspection surfaces are ready for owner review. Full capability discovery/HTTP artifact listing is not added by this checkpoint. The queue cannot drain yet. Checkpoint C still needs owner authorization, fixed runnable deployment/adapters, host-guard/fenced claiming, live source gates, native revalidation, bounded supervision, atomic stage/result/audit writes and failure/recovery qualification. Later run controls, Operations UI and E5 completion remain deferred.
+
+## C1 passive worker and durable claim foundation
+
+**C1 does not execute processing runs. Production dispatch remains disabled until the
+Reliability adapter is implemented and approved in C2.** A READY worker means passive
+coordination readiness, not native processing capability. Accepted runs remain QUEUED;
+the twenty-unfinished-run queue cannot drain. No worker/claim/recovery HTTP endpoint exists.
+
+### Private startup contract
+
+Provision immutable database profiles and the existing private installation guard first;
+startup never creates or repairs them. Use a B2 run-profile descriptor and its exact reviewed
+deployment SHA. All worker/import profiles for the installation must associate the **same
+CONTROL binding**, with the original private root/device/inode identities. A different
+historical worker/import host-binding digest fails closed. Other local bindings use the
+existing importStorageVersion=1 root/device/inode schema; TEMP/STAGING are private writable
+roots disjoint from native roots, CONTROL and each other. Content Bronze uses the existing
+loopback-only importBronzeVersion=1 descriptor/private credentials file. Startup does not
+contact Bronze or verify imported artifacts.
+
+In addition to the existing ignored DDIP_DB_URL/USER/PASSWORD and DDIP_INSTALLATION_ID,
+export these private values; do not put credentials on command lines:
+
+```sh
+export DDIP_WORKER_EXECUTION_PROFILE_ID='<reviewed-run-profile-UUID>'
+export DDIP_WORKER_CONTROL_BINDING_ID='<existing-installation-control-binding>'
+export DDIP_WORKER_DEPLOYMENT_SHA256='<exact-deploymentSha256-from-that-profile>'
+export DDIP_WORKER_PYTHON='<absolute-approved-python-executable>'
+export DDIP_WORKER_JAVA_HOME='<running-JDK-21-home>'
+export DDIP_WORKER_PROCESSING_ROOT='<canonical-repository-processing-directory>'
+DDIP_ROLE=worker java -jar services/content-api/target/content-api-0.1.0-SNAPSHOT.jar
+```
+
+The role forces a non-web context even if servlet mode is requested. It has no Tomcat,
+analytics controllers/query pool, Flyway migration, claim polling or processing child.
+It validates the current Java 21 JVM/Java home, script/executable availability, PostgreSQL 17
+and all seven migration checksums, installation, canonical profile digest and storage roots.
+Python/PySpark versions and deployment hash are reviewed metadata pins here, **not executed
+version probes or an authenticity guarantee**; C2 must qualify the actual fixed adapter/runtime.
+There is deliberately no dispatch-enabled property or injectable production test executor.
+
+The guard is acquired before registration and retained throughout the worker lifetime.
+READY requires no unresolved ownership. A live guard owner prevents startup; a free guard
+with a durable occupied slot registers RECOVERY_ONLY and never adopts/releases that slot.
+STOPPING is respected by stopping the new idle worker without clearing the coordinator mode.
+Invalid schema/runtime/configuration fails with fixed safe diagnostics.
+
+### Claims, heartbeats and interruption
+
+The internal WorkerRepository claim boundary is exercised only with a capability on the
+**test classpath**. C1 production has NONE. A future real capability must match the exact
+configured execution-profile ID/digest and supported fixed pipeline. No fake capability
+can be selected through a request, catalog, property or Spring bean.
+
+Claims lock coordinator, selected sources in deterministic key order, then run/attempt.
+The oldest immutable submission sequence is checked; live source disablement produces
+FAILED/SOURCE_DISABLED without an attempt, leaving frozen revisions untouched. Incompatible
+metadata/profile produces FAILED/RUNTIME_MISMATCH without silently skipping an entry forever.
+Compatible test-only claims commit RUNNING plus EXECUTE/CLAIMED, monotonic attempt number,
+new epoch, worker/attempt pointer and RUN_CLAIMED/ATTEMPT_CLAIMED audits atomically. No stage,
+counts, result or SUCCEEDED evidence is fabricated. Captured request/configuration/input bytes,
+canonical hashes and registered qualification descriptors are checked in PostgreSQL only.
+C2 must independently reopen/reverify native dependencies before consumption.
+
+Owner tokens compare installation, worker, attempt, epoch, expected states and all applicable
+row versions. Zero-row/stale/failed database updates stop further authorization without
+refreshing a token or clearing ownership. The five-second heartbeat task uses bounded short
+transactions; occupied-slot heartbeats update worker/coordinator timestamps and versions,
+without audit spam or lifecycle transitions. Thirty seconds is a stale indication, never a
+lease expiry or takeover permission. An idle RECOVERY_ONLY observer cannot heartbeat the old
+owner's slot. Connection/statement/lock/transaction bounds remain three seconds.
+
+Clean idle Ctrl-C/context shutdown stops scheduling, records STOPPED and closes the guard;
+queued selections stay unchanged. Known pre-launch failure can close FAILED/release only
+while CLAIMED, before any stage intent or side-effect authorization. Missing PID information
+alone never proves quiescence. Explicit interrupt records INTERRUPTED and RECOVERY_REQUIRED
+while retaining occupied ownership. Ambiguous commit, database failure or abrupt death can
+leave RUNNING/CLAIMED occupied; a restart remains blocked. Lookup by the exact attempted UUID
+returns a historical receipt, not a new authorization token or permission to launch again.
+C1 has no reconciliation, automatic retry, orphan cleanup or native process supervisor.
+
+Existing GET run/attempt/event APIs display these persisted states and actual audit records;
+currentStage/counts/result stay null until real evidence exists. History reads remain independent
+of the coordinator lock. No public API contract/classification was expanded for C1.
+
+### Reproduction and C2 boundary
+
+Use only the dedicated disposable PostgreSQL service, pinned JDK 21 and existing test Python
+runtime. Each suite creates/drops its own synthetic database; never target operational data.
+
+```sh
+mvn -q -f services/content-api/pom.xml verify -Ppostgres \
+  -Dit.test=WorkerCoordinationIT -Dgroups=C1_GATE_A \
+  -Dtest=NoUnitTests -Dsurefire.failIfNoSpecifiedTests=false
+mvn -q -f services/content-api/pom.xml verify -Ppostgres \
+  -Dit.test=WorkerCoordinationIT -Dgroups=C1_GATE_B \
+  -Dtest=NoUnitTests -Dsurefire.failIfNoSpecifiedTests=false
+mvn -q -f services/content-api/pom.xml verify -Ppostgres
+mvn -q -f services/content-api/pom.xml verify -Pintegration \
+  -Danalytics.python="$PWD/outputs/silver-python312/.venv/bin/python"
+npm run check
+```
+
+The full postgres profile includes the 23 small Spark-backed Silver import cases; these are
+synthetic read-only import regressions, not worker execution. For an actual dedicated server
+restart, add `-Dddip.test.worker-restart-signal=/private/tmp/ddip-c1-worker-restart` and/or the
+existing history restart signal. An external harness must wait for READY, restart only the
+dedicated test container, wait for database readiness and write the matching `.done` file within
+45 seconds. Tests require a newer PostgreSQL postmaster start time and identical persisted
+claim/selection/history identities. Ordinary CI without these properties checks fresh
+connections/API restart and does not claim an actual database-server restart.
+
+Current local counts and exact commands are recorded in the [C1 evidence](../../docs/architecture/durable-execution.md#c1-local-validation-and-remaining-work).
+C2 requires the fixed Reliability adapter, actual deployment/native dependency preflight,
+stage INTENT/launch recheck/process-identity persistence, bounded process supervision, independent
+publication verification and atomic result registration before enabling dispatch. Content,
+RSS journaling, run controls and explicit execution-owner reconciliation remain later work.
+C1 does not complete Checkpoint C or E5. Hosted CI remains pending owner publication/observation.

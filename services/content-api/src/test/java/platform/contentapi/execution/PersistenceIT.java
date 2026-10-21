@@ -201,16 +201,12 @@ class PersistenceIT {
         }
         schema.verify(false);
     }
-    @Test void workerRoleIsNonWebIdleAndDoesNotInstantiateAnalytics() {
+    @Test void workerWithoutApprovedProfileAndGuardFailsClosed() {
         migrate();
-        try(var context=context("worker","--spring.main.web-application-type=servlet")) {
-            assertThat(context).isNotInstanceOf(org.springframework.boot.web.server.context.WebServerApplicationContext.class);
-            assertThat(context.getBeansOfType(AnalyticsController.class)).isEmpty();
-            assertThat(context.getBeansOfType(BoundedProcessRunner.class)).isEmpty();
-            assertThat(context.getBean(WorkerIdleLifecycle.class).isRunning()).isTrue();
-            assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.attempts",Integer.class)).isZero();
-            assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.worker_instances",Integer.class)).isZero();
-        }
+        assertThatThrownBy(()->context("worker","--spring.main.web-application-type=servlet"))
+                .hasRootCauseMessage("WORKER_CONFIGURATION_INVALID");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.attempts",Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.worker_instances",Integer.class)).isZero();
     }
     @Test void workerMissingRuntimePathsFailsClosed() {
         migrate(); assertThatThrownBy(() -> context("worker","--ddip.worker.python=")).hasMessage("MANAGEMENT_CONFIGURATION_INVALID");

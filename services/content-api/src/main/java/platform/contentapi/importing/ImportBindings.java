@@ -119,13 +119,36 @@ public final class ImportBindings {
     }
     private Bronze bronze(ImportCatalog.Entry e,String profile) {
         var i=e.identity();var c=storageRow(ImportJson.token(i.get("bronzeStorageBindingId")),profile,"content-intelligence","BRONZE");
+        return bronzeConfiguration(c,ImportJson.text(i.get("bronzeBucket")));
+    }
+    private Bronze bronzeConfiguration(JsonNode c,String bucket) {
         ImportJson.fields(c,"importBronzeVersion","endpoint","region","bucket","credentialsFile");ImportJson.integer(c.get("importBronzeVersion"),1,1);
-        ImportFailure.require(ImportJson.text(c.get("bucket")).equals(i.get("bronzeBucket").stringValue()),BINDING_INVALID);
+        ImportFailure.require(ImportJson.text(c.get("bucket")).equals(bucket),BINDING_INVALID);
         try{var uri=java.net.URI.create(ImportJson.text(c.get("endpoint")));ImportFailure.require(uri.getScheme().equals("http") && Set.of("localhost","127.0.0.1","[::1]","::1").contains(uri.getHost()) && uri.getPort()>0 && uri.getPort()<=65535 && uri.getUserInfo()==null && uri.getQuery()==null && uri.getFragment()==null && Set.of("","/").contains(uri.getPath()),BINDING_INVALID);}catch(RuntimeException f){throw new ImportFailure(BINDING_INVALID);}
         Path file=Path.of(ImportJson.text(c.get("credentialsFile")));privateFile(file,false);byte[] raw=ImportJson.read(file,8192);var secrets=ImportJson.parse(raw,8192);ImportJson.fields(secrets,"accessKey","secretKey");
         for(String key:List.of("accessKey","secretKey")){String text=ImportJson.text(secrets.get(key));ImportFailure.require(!text.isBlank() && text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length<=4096 && text.codePoints().noneMatch(Character::isISOControl),BINDING_INVALID);}
         var configuration=SourceJson.object().put("endpoint",ImportJson.text(c.get("endpoint"))).put("region",ImportJson.match(c.get("region"),"[A-Za-z0-9_-]{1,128}")).put("bucket",ImportJson.text(c.get("bucket"))).put("accessKey",secrets.get("accessKey").stringValue()).put("secretKey",secrets.get("secretKey").stringValue());
         return new Bronze(file,raw,configuration);
+    }
+    /** Worker startup checks only roots/credentials/configuration; no object GET or native verification.
+     * Reuses import storage descriptors. All filesystem checks occur after the metadata transaction ends.
+     */
+    public void checkWorkerStorage(String profile,String product) {
+        var rows=tx.required(()->jdbc.queryForList("SELECT b.binding_id,b.role,b.product FROM ddip_management.storage_bindings b JOIN ddip_management.execution_profile_storage p USING(binding_id) WHERE p.profile_id=? ORDER BY b.binding_id",profile));
+        ImportFailure.require(!rows.isEmpty() && rows.size()<=128,BINDING_INVALID);
+        Set<String> roles=new HashSet<>();List<Path> nativeRoots=new ArrayList<>(),privateRoots=new ArrayList<>();
+        for(var row:rows) {
+            String role=(String)row.get("role"),id=(String)row.get("binding_id");
+            ImportFailure.require(product.equals(row.get("product")) || role.equals("CONTROL"),BINDING_INVALID);roles.add(role);
+            var c=storageRow(id,profile,role.equals("CONTROL")?null:product,role);
+            if(role.equals("CONTROL")){privateRoots.add(control(id,profile).root());continue;}
+            if(role.equals("BRONZE")){bronzeConfiguration(c,ImportJson.text(c.get("bucket"))).check();continue;}
+            Storage s=localStorage(c,null);s.check();ImportFailure.require(Files.isReadable(s.root()),BINDING_INVALID);
+            if(Set.of("STAGING","TEMP").contains(role)){privateFile(s.root(),true);ImportFailure.require(Files.isWritable(s.root()),BINDING_INVALID);privateRoots.add(s.root());}else nativeRoots.add(s.root());
+        }
+        ImportFailure.require(roles.containsAll(product.equals("content-intelligence")?Set.of("BRONZE","SILVER","REFERENCE","GOLD","CONTENT","CONTROL","STAGING","TEMP"):Set.of("BATCH","REFERENCE","RELIABILITY","CONTROL","STAGING","TEMP")),BINDING_INVALID);
+        for(Path p:privateRoots)for(Path n:nativeRoots)ImportFailure.require(!p.startsWith(n) && !n.startsWith(p),BINDING_INVALID);
+        for(int i=0;i<privateRoots.size();i++)for(int j=0;j<i;j++)ImportFailure.require(!privateRoots.get(i).startsWith(privateRoots.get(j)) && !privateRoots.get(j).startsWith(privateRoots.get(i)),BINDING_INVALID);
     }
     static void privateFile(Path file,boolean directory) {
         try{ImportFailure.require(file.isAbsolute() && file.equals(file.toRealPath()) && (directory?Files.isDirectory(file,LinkOption.NOFOLLOW_LINKS):Files.isRegularFile(file,LinkOption.NOFOLLOW_LINKS)) && Files.getOwner(file).equals(Files.getOwner(Path.of(System.getProperty("user.home")))) &&

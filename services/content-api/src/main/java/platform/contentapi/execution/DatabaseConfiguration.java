@@ -64,10 +64,11 @@ public class DatabaseConfiguration {
             Path python=Path.of(e.getProperty("ddip.worker.python",""));
             Path javaHome=Path.of(e.getProperty("ddip.worker.java-home",""));
             Path processing=Path.of(e.getProperty("ddip.worker.processing-root",""));
-            if(!python.isAbsolute() || !Files.isRegularFile(python) || !Files.isExecutable(python) ||
+            if(Runtime.version().feature()!=21 || !python.isAbsolute() || !Files.isRegularFile(python) || !Files.isExecutable(python) ||
                     !javaHome.isAbsolute() || !Files.isExecutable(javaHome.resolve("bin/java")) || !processing.isAbsolute() ||
-                    !List.of("content_publication.py","reliability_format_publication.py").stream().allMatch(p -> Files.isRegularFile(processing.resolve(p))))
+                    !javaHome.toRealPath().equals(Path.of(System.getProperty("java.home")).toRealPath()) || !processing.equals(processing.toRealPath()) ||
+                    !List.of("content_publication.py","reliability_format_publication.py").stream().allMatch(p -> Files.isRegularFile(processing.resolve(p),java.nio.file.LinkOption.NOFOLLOW_LINKS)))
                 throw new IllegalArgumentException();
-        } catch(RuntimeException ex) { throw new ManagementFailure(ManagementFailure.Code.MANAGEMENT_CONFIGURATION_INVALID); }
+        } catch(java.io.IOException | RuntimeException ex) { throw new ManagementFailure(ManagementFailure.Code.MANAGEMENT_CONFIGURATION_INVALID); }
     }
 }

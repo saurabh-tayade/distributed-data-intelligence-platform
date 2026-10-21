@@ -14,17 +14,23 @@ import tools.jackson.databind.node.ObjectNode;
 /** Small canonical byte encoder for bounded E5 trees: object/array/string/integer/boolean/null only. */
 public final class SourceJson {
     private SourceJson() { }
-    static final JsonMapper JSON=JsonMapper.builder(JsonFactory.builder()
-            .streamReadConstraints(StreamReadConstraints.builder().maxNestingDepth(16).maxStringLength(65536).maxNumberLength(20).build())
+    static final JsonMapper JSON=mapper(65536);
+    private static final JsonMapper EVIDENCE_JSON=mapper(131072);
+    private static JsonMapper mapper(int stringLimit) { return JsonMapper.builder(JsonFactory.builder()
+            .streamReadConstraints(StreamReadConstraints.builder().maxNestingDepth(16).maxStringLength(stringLimit).maxNumberLength(20).build())
             .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
-            .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build();
+            .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build(); }
     public static JsonNode parse(byte[] bytes) {
+        return parse(bytes,65536);
+    }
+    /** Internal persisted evidence only; HTTP callers retain the 64 KiB entry point. */
+    public static JsonNode parse(byte[] bytes,int maximum) {
         try {
-            SourceFailure.require(bytes.length<=65536 && bytes.length>0);
+            SourceFailure.require(maximum>0 && maximum<=16*1024*1024 && bytes.length<=maximum && bytes.length>0);
             String text=StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
             SourceFailure.require(text.charAt(0)!='\ufeff');
-            JsonNode node=JSON.readTree(text); canonical(node); return node;
+            JsonNode node=(maximum<=65536?JSON:EVIDENCE_JSON).readTree(text); canonical(node); return node;
         } catch(SourceFailure ex) { throw ex; }
         catch(Exception ex) { throw new SourceFailure(SourceFailure.Code.INVALID_ARGUMENT); }
     }

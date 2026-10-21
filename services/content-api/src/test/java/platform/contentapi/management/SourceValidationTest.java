@@ -91,4 +91,16 @@ class SourceValidationTest {
     void unsafeOriginConfigurationFailsClosed(String origin) {
         assertThatThrownBy(() -> new ManagementConfiguration().localPolicy(new MockEnvironment().withProperty("ddip.management.origins",origin))).hasMessage("MANAGEMENT_CONFIGURATION_INVALID").hasNoCause();
     }
+    @Test void persistedEvidenceLimitDoesNotRelaxHttpBodyLimit() {
+        byte[] large=SourceJson.canonical(SourceJson.object().put("retainedEvidence","x".repeat(70000)));
+        assertThatThrownBy(()->SourceJson.parse(large)).hasMessage("INVALID_ARGUMENT");
+        assertThat(SourceJson.canonical(SourceJson.parse(large,512*1024))).isEqualTo(large);
+        assertThatThrownBy(()->SourceJson.parse(large,65536)).hasMessage("INVALID_ARGUMENT");
+    }
+    @Test void internalEvidenceRetainsStrictCanonicalTypesAndMaximumBound() {
+        for(String text:List.of("{\"x\":1,\"x\":2}","{\"x\":1.0}","{} {}","\ufeff{}"))
+            assertThatThrownBy(()->SourceJson.parse(bytes(text),16*1024*1024)).hasMessage("INVALID_ARGUMENT").hasNoCause();
+        assertThatThrownBy(()->SourceJson.parse(bytes("{}"),16*1024*1024+1)).hasMessage("INVALID_ARGUMENT");
+    }
+
 }

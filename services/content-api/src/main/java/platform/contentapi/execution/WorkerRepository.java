@@ -1,0 +1,191 @@
+package platform.contentapi.execution;
+
+import java.util.*;
+import org.springframework.jdbc.core.JdbcTemplate;
+import platform.contentapi.management.*;
+import static platform.contentapi.execution.WorkerFailure.Code.*;
+import static platform.contentapi.execution.WorkerFailure.require;
+
+/** One coordinator, short transactions, coordinator -> sorted sources -> run -> attempt locks.
+ * No native I/O, executors, recovery handoff or publication-success transition lives here.
+ */
+public final class WorkerRepository {
+    public record Session(UUID installationId,UUID instanceId,String profileId,String profileDigest,String deploymentDigest,
+                          String hostDigest,String status,long epoch,long coordinatorVersion,long workerVersion) { }
+    public record Owner(Session worker,UUID runId,UUID attemptId,long runVersion,long attemptVersion,String attemptState) { }
+    public record Claim(String status,UUID runId,String code,Session worker,Owner owner) { }
+    /** Historical receipt only; never authorizes a stage or adopts the stored owner's token. */
+    public record Receipt(UUID attemptId,UUID runId,UUID instanceId,long epoch,int attemptNo,String state,String runState) { }
+    public enum PrelaunchFailure { PROCESS_START_FAILED, RUNTIME_MISMATCH }
+    private final JdbcTemplate jdbc;private final ManagementTransactions tx;private final UUID installation;
+    private final WorkerExecutionCapability capability;
+    private volatile boolean authorizationStopped;
+    public WorkerRepository(JdbcTemplate jdbc,ManagementTransactions tx,UUID installation) {this(jdbc,tx,installation,WorkerExecutionCapability.NONE);}
+    WorkerRepository(JdbcTemplate jdbc,ManagementTransactions tx,UUID installation,WorkerExecutionCapability capability) {
+        this.jdbc=jdbc;this.tx=tx;this.installation=installation;this.capability=Objects.requireNonNull(capability);
+    }
+    public boolean executionAvailable(){return capability.available();}
+    public Session register(InstallationHostGuard guard,String profileId,String profileDigest,String deploymentDigest) {
+        outsideTransaction();
+        guard.checkHeld(installation);
+        return ownerTransaction(()->{
+            var c=slot();var profiles=jdbc.queryForList("SELECT configuration_bytes,configuration_sha256 FROM ddip_management.execution_profiles WHERE profile_id=?",profileId);
+            require(profiles.size()==1 && profileDigest.equals(profiles.getFirst().get("configuration_sha256")),RUNTIME_MISMATCH);
+            try{FrozenRunSelection.profile((byte[])profiles.getFirst().get("configuration_bytes"),profileDigest,deploymentDigest);}catch(RuntimeException ex){throw new WorkerFailure(RUNTIME_MISMATCH);}
+            require(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.storage_bindings b JOIN ddip_management.execution_profile_storage p USING(binding_id) WHERE p.profile_id=? AND b.binding_id=? AND b.installation_id=? AND b.role='CONTROL' AND b.configuration_sha256=? AND b.configuration_bytes=?)",Boolean.class,profileId,guard.binding().id(),installation,guard.binding().digest(),guard.binding().descriptor()),WORKER_CONFIGURATION_INVALID);
+            // Same historical installation binding as imports; a free second guard is not permission.
+            require(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.worker_instances WHERE installation_id=? AND host_binding_sha256<>?) OR EXISTS(SELECT 1 FROM ddip_management.artifact_import_operations WHERE installation_id=? AND host_binding_sha256<>?)",Boolean.class,installation,guard.binding().digest(),installation,guard.binding().digest()),WORKER_CONFIGURATION_INVALID);
+            String status="STOPPING".equals(c.get("mode"))?"STOPPING":idle(c)?"READY":"RECOVERY_ONLY";
+            var process=guard.process();
+            jdbc.update("INSERT INTO ddip_management.worker_instances(instance_id,installation_id,execution_profile_id,profile_sha256,host_binding_sha256,pid,process_started_at,heartbeat_at,status) VALUES (?,?,?,?,?,?,?,clock_timestamp(),?)",process.instanceId(),installation,profileId,profileDigest,guard.binding().digest(),process.pid(),java.sql.Timestamp.from(process.startedAt()),status);
+            return new Session(installation,process.instanceId(),profileId,profileDigest,deploymentDigest,guard.binding().digest(),status,number(c,"epoch"),number(c,"row_version"),0);
+        });
+    }
+    public Claim claim(InstallationHostGuard guard,Session session,UUID attemptId) {
+        held(guard,session);require(attemptId!=null,WORKER_CONFIGURATION_INVALID);
+        // Fixed production NONE. No environment property, Spring bean or API can enable a simulated executor.
+        if(!capability.available())return new Claim("NO_EXECUTOR",null,null,session,null);
+        return ownerTransaction(()->{
+            var c=slot();checkSession(c,session);require("READY".equals(session.status()) && idle(c),WORKER_NOT_READY);
+            require(jdbc.queryForObject("SELECT count(*) FROM ddip_management.attempts WHERE attempt_id=?",Long.class,attemptId)==0,CLAIM_UNCERTAIN);
+            var next=jdbc.queryForList("SELECT run_id FROM ddip_management.runs WHERE state='QUEUED' ORDER BY submission_seq LIMIT 1");
+            if(next.isEmpty())return new Claim("EMPTY",null,null,session,null);
+            UUID runId=(UUID)next.getFirst().get("run_id");
+            var sources=jdbc.queryForList("SELECT s.source_id,s.enabled,s.profile_family,r.revision,r.captured_gate_version,r.captured_enabled,v.configuration_bytes,v.configuration_sha256,v.endpoint_id,v.endpoint_sha256 FROM ddip_management.run_sources r JOIN ddip_management.sources s ON (s.product_id,s.source_id)=(r.product_id,r.source_id) JOIN ddip_management.source_revisions v ON (v.product_id,v.source_id,v.revision)=(r.product_id,r.source_id,r.revision) WHERE r.run_id=? ORDER BY s.product_id COLLATE \"C\",s.source_id COLLATE \"C\" FOR UPDATE OF s",runId);
+            var r=one(jdbc.queryForList("SELECT run_id,product_id,pipeline,pipeline_version,idempotency_key,normalized_request,request_sha256,captured_selection,selection_sha256,execution_profile_id,state,row_version,current_attempt_id FROM ddip_management.runs WHERE run_id=? FOR UPDATE",runId));
+            require("QUEUED".equals(r.get("state")) && r.get("current_attempt_id")==null,OWNERSHIP_LOST);
+            String failure=null;
+            if(sources.stream().anyMatch(s->!Boolean.TRUE.equals(s.get("enabled"))))failure="SOURCE_DISABLED";
+            else {
+                try {
+                    require(capability.supports((String)r.get("pipeline")),RUNTIME_MISMATCH);
+                    FrozenRunSelection.validate(jdbc,installation,r,sources,session.profileId(),session.profileDigest(),session.deploymentDigest());
+                }catch(org.springframework.dao.DataAccessException ex){throw ex;}
+                catch(RuntimeException ex){failure="RUNTIME_MISMATCH";}
+            }
+            if(failure!=null){
+                exactly(jdbc.update("UPDATE ddip_management.runs SET state='FAILED',finished_at=clock_timestamp(),outcome_code=?,retry_eligible=false,row_version=row_version+1 WHERE run_id=? AND state='QUEUED' AND row_version=? AND current_attempt_id IS NULL",failure,runId,number(r,"row_version")));
+                audit(runId,null,failure.equals("SOURCE_DISABLED")?"SOURCE_DISABLED_AT_DISPATCH":"RUN_FAILED","QUEUED","FAILED",number(r,"row_version"),number(r,"row_version")+1,failure);
+                return new Claim("REJECTED",runId,failure,session,null);
+            }
+            int attemptNo=jdbc.queryForObject("SELECT COALESCE(max(attempt_no),0)+1 FROM ddip_management.attempts WHERE run_id=?",Integer.class,runId);
+            require(attemptNo<=20,WORKER_NOT_READY);long epoch=Math.addExact(session.epoch(),1);
+            jdbc.update("INSERT INTO ddip_management.attempts(attempt_id,run_id,attempt_no,kind,instance_id,owner_epoch,state) VALUES (?,?,?,'EXECUTE',?,?,'CLAIMED')",attemptId,runId,attemptNo,session.instanceId(),epoch);
+            exactly(jdbc.update("UPDATE ddip_management.runs SET state='RUNNING',current_attempt_id=?,row_version=row_version+1 WHERE run_id=? AND state='QUEUED' AND row_version=? AND current_attempt_id IS NULL",attemptId,runId,number(r,"row_version")));
+            exactly(jdbc.update("UPDATE ddip_management.coordinator SET epoch=?,active_attempt_id=?,owner_instance_id=?,heartbeat_at=clock_timestamp(),row_version=row_version+1 WHERE singleton_id=1 AND installation_id=? AND mode='READY' AND epoch=? AND row_version=? AND active_attempt_id IS NULL AND owner_instance_id IS NULL AND active_import_id IS NULL",epoch,attemptId,session.instanceId(),installation,session.epoch(),session.coordinatorVersion()));
+            audit(runId,attemptId,"RUN_CLAIMED","QUEUED","RUNNING",number(r,"row_version"),number(r,"row_version")+1,"CLAIMED");
+            audit(runId,attemptId,"ATTEMPT_CLAIMED",null,"CLAIMED",null,0L,"CLAIMED");
+            Session bound=with(session,session.status(),epoch,session.coordinatorVersion()+1,session.workerVersion());
+            Owner owner=new Owner(bound,runId,attemptId,number(r,"row_version")+1,0,"CLAIMED");
+            return new Claim("CLAIMED",runId,"CLAIMED",bound,owner);
+        });
+    }
+    public Optional<Receipt> lookup(UUID attemptId) {
+        require(attemptId!=null,WORKER_CONFIGURATION_INVALID);
+        return tx.required(()->jdbc.query("SELECT a.attempt_id,a.run_id,a.instance_id,a.owner_epoch,a.attempt_no,a.state,r.state AS run_state FROM ddip_management.attempts a JOIN ddip_management.runs r USING(run_id) JOIN ddip_management.worker_instances w USING(instance_id) WHERE a.attempt_id=? AND w.installation_id=?",(rs,n)->new Receipt(rs.getObject(1,UUID.class),rs.getObject(2,UUID.class),rs.getObject(3,UUID.class),rs.getLong(4),rs.getInt(5),rs.getString(6),rs.getString(7)),attemptId,installation).stream().findFirst());
+    }
+    public Session heartbeatIdle(InstallationHostGuard guard,Session session) {
+        held(guard,session);
+        return ownerTransaction(()->{var c=slot();checkSession(c,session);
+            require(!session.instanceId().equals(c.get("owner_instance_id")),WORKER_NOT_READY);
+            exactly(jdbc.update("UPDATE ddip_management.worker_instances SET heartbeat_at=clock_timestamp(),row_version=row_version+1 WHERE instance_id=? AND installation_id=? AND row_version=? AND status=?",session.instanceId(),installation,session.workerVersion(),session.status()));
+            return with(session,session.status(),session.epoch(),session.coordinatorVersion(),session.workerVersion()+1);
+        });
+    }
+    public Owner heartbeat(InstallationHostGuard guard,Owner owner) {
+        held(guard,owner.worker());
+        return ownerTransaction(()->{owned(owner);
+            Session s=owner.worker();
+            exactly(jdbc.update("UPDATE ddip_management.worker_instances SET heartbeat_at=clock_timestamp(),row_version=row_version+1 WHERE instance_id=? AND installation_id=? AND row_version=? AND status='READY'",s.instanceId(),installation,s.workerVersion()));
+            exactly(jdbc.update("UPDATE ddip_management.coordinator SET heartbeat_at=clock_timestamp(),row_version=row_version+1 WHERE singleton_id=1 AND installation_id=? AND active_attempt_id=? AND owner_instance_id=? AND epoch=? AND row_version=? AND active_import_id IS NULL AND mode='READY'",installation,owner.attemptId(),s.instanceId(),s.epoch(),s.coordinatorVersion()));
+            return new Owner(with(s,"READY",s.epoch(),s.coordinatorVersion()+1,s.workerVersion()+1),owner.runId(),owner.attemptId(),owner.runVersion(),owner.attemptVersion(),owner.attemptState());
+        });
+    }
+    /** Metadata transition only. It does not authorize a child; C2 must commit stage INTENT first. */
+    public Owner markRunning(InstallationHostGuard guard,Owner owner) {
+        held(guard,owner.worker());require(owner.attemptState().equals("CLAIMED"),OWNERSHIP_LOST);
+        return ownerTransaction(()->{owned(owner);controls(owner);
+            exactly(jdbc.update("UPDATE ddip_management.attempts SET state='RUNNING',row_version=row_version+1 WHERE attempt_id=? AND run_id=? AND instance_id=? AND owner_epoch=? AND state='CLAIMED' AND row_version=?",owner.attemptId(),owner.runId(),owner.worker().instanceId(),owner.worker().epoch(),owner.attemptVersion()));
+            audit(owner.runId(),owner.attemptId(),"ATTEMPT_STARTED","CLAIMED","RUNNING",owner.attemptVersion(),owner.attemptVersion()+1,"STARTED");
+            return new Owner(owner.worker(),owner.runId(),owner.attemptId(),owner.runVersion(),owner.attemptVersion()+1,"RUNNING");
+        });
+    }
+    /** C2 seam: recheck fencing/controls in the SAME short transaction that inserts stage INTENT.
+     * This callback must contain JDBC metadata only, never I/O, process launch or publication.
+     * C1 production has no caller. The adapter must recheck again before launch after intent commits.
+     */
+    public void stageIntentTransaction(InstallationHostGuard guard,Owner owner,Runnable metadataIntent) {
+        held(guard,owner.worker());require(owner.attemptState().equals("RUNNING"),OWNERSHIP_LOST);
+        ownerTransaction(()->{owned(owner);controls(owner);metadataIntent.run();return null;});
+    }
+    /** Allowed only before RUNNING or ANY stage intent; the accepted protocol forbids side effects here. */
+    public Session failBeforeLaunch(InstallationHostGuard guard,Owner owner,PrelaunchFailure failure) {
+        held(guard,owner.worker());require(owner.attemptState().equals("CLAIMED") && failure!=null,OWNERSHIP_LOST);
+        return ownerTransaction(()->{owned(owner);
+            require(jdbc.queryForObject("SELECT count(*) FROM ddip_management.stage_invocations WHERE attempt_id=?",Long.class,owner.attemptId())==0,WORKER_NOT_READY);
+            finishAttempt(owner,"FAILED",failure.name());
+            exactly(jdbc.update("UPDATE ddip_management.runs SET state='FAILED',finished_at=clock_timestamp(),outcome_code=?,retry_eligible=false,row_version=row_version+1 WHERE run_id=? AND current_attempt_id=? AND state='RUNNING' AND row_version=?",failure.name(),owner.runId(),owner.attemptId(),owner.runVersion()));
+            Session s=owner.worker();
+            exactly(jdbc.update("UPDATE ddip_management.coordinator SET active_attempt_id=NULL,owner_instance_id=NULL,heartbeat_at=NULL,row_version=row_version+1 WHERE singleton_id=1 AND installation_id=? AND active_attempt_id=? AND owner_instance_id=? AND epoch=? AND row_version=? AND active_import_id IS NULL AND mode='READY'",installation,owner.attemptId(),s.instanceId(),s.epoch(),s.coordinatorVersion()));
+            audit(owner.runId(),owner.attemptId(),"RUN_FAILED","RUNNING","FAILED",owner.runVersion(),owner.runVersion()+1,failure.name());
+            return with(s,"READY",s.epoch(),s.coordinatorVersion()+1,s.workerVersion());
+        });
+    }
+    /** Uncertain execution stays occupied. This does NOT reconcile, prove quiescence or release anything. */
+    public Session interrupt(InstallationHostGuard guard,Owner owner) {
+        held(guard,owner.worker());return ownerTransaction(()->{owned(owner);
+            finishAttempt(owner,"INTERRUPTED","RECOVERY_REQUIRED");
+            exactly(jdbc.update("UPDATE ddip_management.runs SET state='RECOVERY_REQUIRED',outcome_code='RECOVERY_REQUIRED',retry_eligible=false,row_version=row_version+1 WHERE run_id=? AND current_attempt_id=? AND state='RUNNING' AND row_version=?",owner.runId(),owner.attemptId(),owner.runVersion()));
+            Session s=owner.worker();
+            exactly(jdbc.update("UPDATE ddip_management.coordinator SET mode='RECOVERY_ONLY',row_version=row_version+1 WHERE singleton_id=1 AND installation_id=? AND active_attempt_id=? AND owner_instance_id=? AND epoch=? AND row_version=? AND active_import_id IS NULL AND mode='READY'",installation,owner.attemptId(),s.instanceId(),s.epoch(),s.coordinatorVersion()));
+            exactly(jdbc.update("UPDATE ddip_management.worker_instances SET status='RECOVERY_ONLY',row_version=row_version+1 WHERE instance_id=? AND installation_id=? AND status='READY' AND row_version=?",s.instanceId(),installation,s.workerVersion()));
+            audit(owner.runId(),owner.attemptId(),"RUN_RECOVERY_REQUIRED","RUNNING","RECOVERY_REQUIRED",owner.runVersion(),owner.runVersion()+1,"RECOVERY_REQUIRED");
+            return with(s,"RECOVERY_ONLY",s.epoch(),s.coordinatorVersion()+1,s.workerVersion()+1);
+        });
+    }
+    public void stopIdle(InstallationHostGuard guard,Session s) {
+        held(guard,s);ownerTransaction(()->{var c=slot();checkSession(c,s);require(!s.instanceId().equals(c.get("owner_instance_id")),WORKER_NOT_READY);
+            exactly(jdbc.update("UPDATE ddip_management.worker_instances SET status='STOPPED',row_version=row_version+1 WHERE instance_id=? AND installation_id=? AND status=? AND row_version=?",s.instanceId(),installation,s.status(),s.workerVersion()));return null;});
+    }
+    private <T> T ownerTransaction(java.util.function.Supplier<T> operation) {
+        require(!authorizationStopped,OWNERSHIP_LOST);
+        try{return tx.required(operation);}
+        catch(ManagementFailure ex){authorizationStopped=true;throw ex;}
+        catch(WorkerFailure ex){if(ex.code()==OWNERSHIP_LOST || ex.code()==CLAIM_UNCERTAIN)authorizationStopped=true;throw ex;}
+    }
+    private void controls(Owner owner) {require(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.controls WHERE run_id=? AND type='CANCEL' AND state IN ('REQUESTED','APPLIED'))",Boolean.class,owner.runId()),WORKER_NOT_READY);}
+    private void finishAttempt(Owner o,String state,String code) {
+        exactly(jdbc.update("UPDATE ddip_management.attempts SET state=?,finished_at=clock_timestamp(),outcome_code=?,row_version=row_version+1 WHERE attempt_id=? AND run_id=? AND instance_id=? AND owner_epoch=? AND state=? AND row_version=?",state,code,o.attemptId(),o.runId(),o.worker().instanceId(),o.worker().epoch(),o.attemptState(),o.attemptVersion()));
+        audit(o.runId(),o.attemptId(),state.equals("INTERRUPTED")?"ATTEMPT_INTERRUPTED":"ATTEMPT_FINISHED",o.attemptState(),state,o.attemptVersion(),o.attemptVersion()+1,code);
+    }
+    private void owned(Owner o) {
+        var c=slot();checkSession(c,o.worker());
+        require("READY".equals(c.get("mode")) && o.attemptId().equals(c.get("active_attempt_id")) && o.worker().instanceId().equals(c.get("owner_instance_id")) && c.get("active_import_id")==null && "READY".equals(o.worker().status()),OWNERSHIP_LOST);
+        var r=one(jdbc.queryForList("SELECT state,row_version,current_attempt_id FROM ddip_management.runs WHERE run_id=? FOR UPDATE",o.runId()));
+        require("RUNNING".equals(r.get("state")) && o.attemptId().equals(r.get("current_attempt_id")) && number(r,"row_version")==o.runVersion(),OWNERSHIP_LOST);
+        var a=one(jdbc.queryForList("SELECT run_id,instance_id,owner_epoch,state,row_version FROM ddip_management.attempts WHERE attempt_id=? FOR UPDATE",o.attemptId()));
+        require(o.runId().equals(a.get("run_id")) && o.worker().instanceId().equals(a.get("instance_id")) && o.worker().epoch()==number(a,"owner_epoch") && o.attemptState().equals(a.get("state")) && number(a,"row_version")==o.attemptVersion(),OWNERSHIP_LOST);
+    }
+    private void held(InstallationHostGuard g,Session s) {
+        outsideTransaction();
+        require(!authorizationStopped,OWNERSHIP_LOST);g.checkHeld(installation);require(installation.equals(s.installationId()) && g.process().instanceId().equals(s.instanceId()) && g.binding().digest().equals(s.hostDigest()),OWNERSHIP_LOST);
+    }
+    private void checkSession(Map<String,Object> c,Session s) {
+        require(Set.of("READY","STOPPING","RECOVERY_ONLY").contains(s.status()) && installation.equals(s.installationId()) && number(c,"epoch")==s.epoch() && number(c,"row_version")==s.coordinatorVersion(),OWNERSHIP_LOST);
+        var w=one(jdbc.queryForList("SELECT installation_id,execution_profile_id,profile_sha256,host_binding_sha256,status,row_version FROM ddip_management.worker_instances WHERE instance_id=?",s.instanceId()));
+        require(installation.equals(w.get("installation_id")) && s.profileId().equals(w.get("execution_profile_id")) && s.profileDigest().equals(w.get("profile_sha256")) && s.hostDigest().equals(w.get("host_binding_sha256")) && s.status().equals(w.get("status")) && s.workerVersion()==number(w,"row_version"),OWNERSHIP_LOST);
+    }
+    private Map<String,Object> slot(){var c=one(jdbc.queryForList("SELECT installation_id,mode,epoch,active_attempt_id,owner_instance_id,active_import_id,row_version FROM ddip_management.coordinator WHERE singleton_id=1 FOR UPDATE"));require(installation.equals(c.get("installation_id")),WORKER_CONFIGURATION_INVALID);return c;}
+    private boolean idle(Map<String,Object> c) {
+        return "READY".equals(c.get("mode")) && c.get("active_attempt_id")==null && c.get("owner_instance_id")==null && c.get("active_import_id")==null && !jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.attempts WHERE state IN ('CLAIMED','RUNNING')) OR EXISTS(SELECT 1 FROM ddip_management.runs WHERE state IN ('RUNNING','CANCEL_REQUESTED','RECOVERY_REQUIRED')) OR EXISTS(SELECT 1 FROM ddip_management.artifact_import_operations WHERE state='ACTIVE')",Boolean.class);
+    }
+    private void audit(UUID run,UUID attempt,String action,String before,String after,Long bv,Long av,String code){
+        require(jdbc.queryForObject("SELECT count(*) FROM ddip_management.audit_events",Long.class)<1000000,WORKER_NOT_READY);
+        jdbc.update("INSERT INTO ddip_management.audit_events(actor_scope,run_id,attempt_id,action,before_state,after_state,before_version,after_version,safe_code,details_bytes) VALUES ('local-operator',?,?,?,?,?,?,?,?,?)",run,attempt,action,before,after,bv,av,code,SourceJson.canonical(SourceJson.object().put("protocolVersion",1)));
+    }
+    private static Session with(Session s,String status,long epoch,long cv,long wv){return new Session(s.installationId(),s.instanceId(),s.profileId(),s.profileDigest(),s.deploymentDigest(),s.hostDigest(),status,epoch,cv,wv);}
+    private static long number(Map<String,Object> row,String key){return ((Number)row.get(key)).longValue();}
+    private static Map<String,Object> one(List<Map<String,Object>> rows){require(rows.size()==1,OWNERSHIP_LOST);return rows.getFirst();}
+    private static void exactly(int affected){require(affected==1,OWNERSHIP_LOST);}
+    private static void outsideTransaction(){require(!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive(),WORKER_CONFIGURATION_INVALID);}
+}
