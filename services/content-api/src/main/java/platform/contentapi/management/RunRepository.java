@@ -21,8 +21,12 @@ public final class RunRepository {
     private final ManagementTransactions tx;
     private final UUID installation;
     private final ReviewedSourceCatalog catalog;
+    private final RunHistoryRepository history;
     public RunRepository(JdbcTemplate jdbc,ManagementTransactions tx,UUID installation,ReviewedSourceCatalog catalog) {
-        this.jdbc=jdbc;this.tx=tx;this.installation=installation;this.catalog=catalog;
+        this(jdbc,tx,installation,catalog,new RunHistoryRepository(jdbc,tx,new SourceCursor("")));
+    }
+    RunRepository(JdbcTemplate jdbc,ManagementTransactions tx,UUID installation,ReviewedSourceCatalog catalog,RunHistoryRepository history) {
+        this.jdbc=jdbc;this.tx=tx;this.installation=installation;this.catalog=catalog;this.history=history;
     }
     public JsonNode submit(RunCommands.Command c,String correlation) {
         return tx.required(() -> {
@@ -129,14 +133,5 @@ public final class RunRepository {
         catch(SourceFailure ex){throw new SourceFailure(STATE_CONFLICT);}
     }
     public JsonNode get(String id) {UUID uuid=UUID.fromString(SourceCommands.uuid(id));return tx.required(()->detail(uuid));}
-    private ObjectNode detail(UUID id) {
-        var rows=jdbc.query("SELECT * FROM ddip_management.runs WHERE run_id=?",(r,i)-> {
-            var n=SourceJson.object().put("runId",id.toString()).put("productId",r.getString("product_id")).put("pipeline",r.getString("pipeline")).put("state",r.getString("state")).put("rowVersion",Long.toString(r.getLong("row_version"))).put("requestedAt",UTC.format(r.getObject("requested_at",OffsetDateTime.class).toInstant()));
-            n.put("currentStage",r.getString("current_stage"));var end=r.getObject("finished_at",OffsetDateTime.class);n.put("finishedAt",end==null?null:UTC.format(end.toInstant()));n.put("outcomeCode",r.getString("outcome_code"));n.put("retryEligibility",r.getBoolean("retry_eligible"));
-            if(r.getString("pipeline").equals("RELIABILITY_V2"))n.put("dataOrigin","synthetic");return n;
-        },id);
-        if(rows.isEmpty())throw new SourceFailure(NOT_FOUND);var n=rows.getFirst();var sources=n.putArray("sourceRevisions");
-        jdbc.query("SELECT source_id,revision FROM ddip_management.run_sources WHERE run_id=? ORDER BY source_id COLLATE \"C\"",(org.springframework.jdbc.core.RowCallbackHandler)r->sources.addObject().put("sourceId",r.getString(1)).put("revision",r.getInt(2)),id);
-        var inputs=n.putArray("inputArtifactIds");jdbc.query("SELECT artifact_id FROM ddip_management.run_inputs WHERE run_id=? ORDER BY role COLLATE \"C\",ordinal",(org.springframework.jdbc.core.RowCallbackHandler)r->inputs.add(r.getObject(1,UUID.class).toString()),id);return n;
-    }
+    private ObjectNode detail(UUID id) {return history.detail(id);}
 }

@@ -2,7 +2,7 @@
 
 Status: **Accepted — October 20, 2026**, with the Stage A.1 refinements, under [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md). The owner accepted additive [ADR 0011](../adr/0011-artifact-import-maintenance-ownership.md) on October 21 and authorized **B2b-1A import ownership foundation only**. B1/B2a and the ownership foundation are implemented; current coordination evidence is [recorded separately](#stage-b2b-1a-durable-import-ownership). Native qualification/functional imports (B2b-1B), submission (B2b-2) and C–F execution/control/UI require separate authorization. Acceptance alone passes no E5 test group. Accepted ADRs 0001–0010 and native data contracts are unchanged.
 
-Current authorization: the owner subsequently approved and committed B2b-1A, B2b-1B-A and B2b-1B-B, and authorized **B2b-2A durable queued submission only**. Its implementation and current evidence are [recorded below](#stage-b2b-2a-durable-run-submission). Earlier checkpoint status paragraphs are historical; no B2b-2B or worker authorization follows.
+Current authorization: the owner subsequently approved and committed B2b-1A, B2b-1B-A, B2b-1B-B and B2b-2A, then authorized **B2b-2B read-only history and inspection**. Its implementation and current evidence are [recorded below](#stage-b2b-2b-bounded-run-history-and-inspection). Earlier checkpoint status paragraphs are historical. Checkpoint C/worker execution remains unauthorized.
 
 ## Boundary and invariants
 
@@ -864,7 +864,7 @@ Limits of evidence: synthetic registered metadata is not fresh native qualificat
 
 ### Planned and deferred
 
-B2b-2B requires bounded history/attempt/event reads and richer public inspection, with the same local trust boundary and frozen evidence. It has not begun. C/D must independently revalidate native files/dependencies, resolve exact approved adapters/runtime/storage readiness, enforce reserved history budgets and live source gates, and implement fenced attempts/stage freeze points. Accepted QUEUED work has no native write authority. Cancellation/retry/reconciliation endpoints, worker dispatch, publication/activation, UI, authorization/exports, schedulers and AWS remain deferred; no E5 completion claim is made.
+Historical B2b-2A closeout (superseded for history by the B2b-2B section below): B2b-2B requires bounded history/attempt/event reads and richer public inspection, with the same local trust boundary and frozen evidence. It has not begun. C/D must independently revalidate native files/dependencies, resolve exact approved adapters/runtime/storage readiness, enforce reserved history budgets and live source gates, and implement fenced attempts/stage freeze points. Accepted QUEUED work has no native write authority. Cancellation/retry/reconciliation endpoints, worker dispatch, publication/activation, UI, authorization/exports, schedulers and AWS remain deferred; no E5 completion claim is made.
 
 ### B2b-2A files changed
 
@@ -890,3 +890,74 @@ B2b-2B requires bounded history/attempt/event reads and richer public inspection
 - [services/content-api/src/test/java/platform/contentapi/management/RunSubmissionIT.java](../../services/content-api/src/test/java/platform/contentapi/management/RunSubmissionIT.java)
 
 No migrations or accepted ADRs were modified. The entry working tree/index was clean; the owner retains all Git/GitHub operations.
+
+## Stage B2b-2B bounded run history and inspection
+
+Authorized October 21, 2026, starting from clean owner-committed E5 branch `b36d2ae111139d34e4f2295e277b3ca6cc6c25a1`. Acceptance criteria are bounded deterministic read-only run/attempt/audit inspection, source/product/state filtering, reuse of signed cursors, safe exact DTOs, real PostgreSQL and HTTP gates, restart continuity and unchanged submission/ownership/native contracts. Later lifecycle states are SQL test fixtures only. No worker, dispatch, control or native execution is authorized here.
+
+### Implemented contract and queries
+
+Implemented GET `/api/management/v1/runs`, expanded GET `/runs/{id}`, GET `/runs/{id}/attempts` and GET `/runs/{id}/events`. Exact filters, field sets, examples, safe errors, counter labels, publication qualification projection and commands are in the [operator guide](../../services/content-api/README.md#bounded-run-history-and-inspection-b2b-2b). Existing POST submission receives the same additive persisted detail DTO, preserving B2b-2A's committed response/Location and replay behavior. No mutation/control/import endpoint was added.
+
+RunHistoryRepository reads the original runs, run_sources, run_inputs, artifacts, attempts, stage_invocations/stage_artifacts, controls and audit_events, without another history model/table or denormalization. Run pages sort unique submission_seq descending; source membership uses indexed EXISTS, not a fanout join or current-source configuration. Attempts sort attempt_no ascending with persisted stage counts. Events sort event_seq ascending and require explicit run_id linkage; general source/import audits and heartbeat updates are excluded. Context attempt/control FKs are checked against the same run. Event private details are not loaded or synthesized.
+
+All SQL uses explicit columns, bound values and fixed predicates/orderings. Run pages use two statements; per-run pages and detail use three. Control/result/attempt/stage summaries use SQL subqueries/joins without per-row JDBC calls. Selection/configuration/evidence blobs are absent from history projections. Detail's source/input lists have bounded lookahead and reject oversized metadata. Counts are an allowlisted nullable decimal-string map, not invented zeros. No query locks coordinator or obtains host ownership. Existing sequence, state/sequence, source, attempt/stage, control and audit indexes suffice; **no migration or index change** was needed. V1–V7, maintenance ownership and accepted ADRs/data contracts remain unchanged.
+
+A successful public result requires the proper final native product kind/version, original native 64-hex publication identity and VERIFIED VERIFY_RESULT linkage for that run. Its verificationStatus=VERIFIED_AT_EXECUTION is historical evidence, not live native verification, authenticity or activation. No publication fingerprint is derived from E5 metadata. Checkpoint C must write correct native identities, verification links and approved public classifications; a registry/flag alone cannot create a verified DTO. Unknown/private stored classifiers or malformed counters fail with fixed INTERNAL_FAILURE before any partial response.
+
+RunPageCursor is a scoped payload validator over the unchanged B2a SourceCursor HMAC signer/configuration. Version-1 tokens bind endpoint/filter/order/run scope, high-water, last position and a fixed 24-hour expiry retained through traversal. Tokens remain <=512 encoded bytes, with one-row lookahead and no OFFSET. A configured unchanged key supports restart continuity; wrong key, expiry, incompatible payload/scope or tampering fails 400. Source cursor semantics are unchanged. Page size may change. Static traversal has no duplicates/skips; mutable state-filter membership is not snapshot-isolated across requests. No persistent cursor sessions or long SQL snapshots are used.
+
+The existing trusted-loopback Host/Origin/CORS boundary and response envelope/no-store/ETag conventions remain. GETs need no mutation-only header. At most 100 rows/1 MiB encoded bytes are returned; large integers remain decimal strings and timestamps preserve UTC microseconds. Private paths/configuration/commands/process internals/native payloads and raw audit detail are not exposed. Opaque IDs are not authorization. Analytics routes remain separate.
+
+### Current validation
+
+Executed locally October 21, 2026 using host JDK 21, the existing dedicated PostgreSQL 17.11 service and isolated random test databases. Credentials remained private environment variables; DDIP_TEST_PYTHON used the existing Python 3.12.15/DuckDB environment for the older Spark-free import suite. Synthetic later-state fixtures obey database constraints and do not represent executed workers or native publication qualifications.
+
+| Exact command, repository root | Final observed result |
+| --- | --- |
+| `mvn -q -f services/content-api/pom.xml -Dtest=RunInspectionTest test` | **5** focused pure cursor/classification/encoding-limit cases passed |
+| `mvn -q -f services/content-api/pom.xml -Ppostgres -Dtest=RunInspectionTest -Dit.test=RunHistoryIT,RunSubmissionIT verify` | Focused iterations passed; final two attempt/event page-boundary additions are included in the complete run below |
+| `mvn -q -f services/content-api/pom.xml -Ppostgres -Dit.test=PersistenceIT,SourceManagementIT,ImportOwnershipIT,ImportWorkflowIT,RunSubmissionIT,RunHistoryIT -Dddip.test.history-restart-signal=/private/tmp/ddip-e5-history-restart verify` | **259 Java unit/component + 233 real PostgreSQL integration cases passed**, zero failures/errors/skips; external harness performed an actual dedicated DB restart at the READY barrier |
+| `mvn -q -f services/content-api/pom.xml verify -Pintegration -Danalytics.python="$PWD/outputs/silver-python312/.venv/bin/python"` | **20 HTTP/Python analytics compatibility cases passed**, zero failures/errors/skips; the same 259 Java cases also passed, without double counting repeats |
+| `npm run check` | **44** Markdown files/local links and repository hygiene passed |
+| `git diff --check` and `git diff --cached --check` | Passed; index unchanged |
+
+**Gate A:** all **45 new RunHistoryIT cases** use the actual PostgreSQL schema and persisted fixtures; 42 of those also exercise real loopback HTTP. Direct read-model cases and HTTP-backed cases together cover empty/queued/history order, product/source/state/combined filters, fanout avoidance, default/maximum bounds, static traversal, cursor tamper/scope/key/expiry checks, new arrivals, mutable-state membership, source revision history, actual attempts/stage counts, all seven run states, result verification linkage, controls, precise UTC timestamps and decimal values above JavaScript's safe range. Sequence/version/count fixtures exercise `9007199254740993` without floating point. A 5,001-run metadata fixture, including a 2 MiB private selection blob, confirms bounded projection; JDBC observation records exactly two page statements, and EXPLAIN confirms the submission-sequence index. No history projection loads the private blob. No speculative migration/index was introduced.
+
+**Gate B:** **42 of the same 45 cases** send real HTTP through an actual loopback Spring server and real PostgreSQL, not MockMvc-only or mock persistence. They verify exact envelopes/DTOs, malformed/duplicate queries, 200/400/403/404/500/503 mappings, paging and scope checks, null/empty observed evidence, Host/Origin protection without mutation headers on GET, stage/attempt/event counts, public native result metadata and unsafe-metadata rejection. A test-only interceptor outside the production component scan injects an oversized response into the actual response encoder; HTTP receives only the fixed 500 envelope, with no successful/partial data. Ordinary large metadata-history pages remain within 1 MiB. Private audit details/commands/locations and malformed counter keys never enter responses. No production fixture/response-injection endpoint exists.
+
+Read-only assertions preserve run states/versions, audit count and exact coordinator state. Actual history requests complete while another connection holds coordinator FOR UPDATE, demonstrating no ownership-row lock dependency. Event tests include persisted submission and attempt-linked audit, exclude unrelated source/other-run events, and reject mismatched attempt context. Attempts include EXECUTE/RECONCILE and only actual stored stage counts. Checkpoint C state fixtures insert metadata directly into disposable databases; no processing run is claimed or stage executed by the application.
+
+The restart harness stops/restarts only the dedicated test container, waits for readiness and signals completion. The test requires a strictly later pg_postmaster_start_time and identical persisted cursor continuation/events after API restart with the same configured key. Separate tests cover same-key API restart, changed-key rejection, state transitions between pages, actual connection refusal across all four reads and source updates that leave captured history unchanged.
+
+**Existing regressions:** 28 PersistenceIT, 36 SourceManagementIT, 42 ImportOwnershipIT, 38 Spark-free ImportWorkflowIT and 44 RunSubmissionIT passed (**188** older PostgreSQL cases), plus the new 45 = 233. Existing 254 Java cases plus five new = 259. Submission remains atomic/idempotent and QUEUED, its additive detail matches GET, analytics-only remains DB-independent, import fencing/host guard/recovery remains intact and worker mode remains idle. Native publication/verification code was not modified. The existing **23 Spark-backed SilverImportIT cases were explicitly not selected**, respecting this checkpoint's no-Spark boundary; they are exclusions, not reported JUnit skips or new successes. No live feed, Spark workload, retained personal dataset, benchmark or AWS experiment ran. Hosted CI remains **unobserved/pending owner publication**; only the existing postgres Maven test include gains RunHistoryIT.
+
+Intermediate failures were test expectations/instrumentation: the first changed-key fixture accidentally reused the same zero key, query observation initially omitted the plain high-water statement, and an old B2a assertion still expected GET /runs to be absent. These were corrected; the final complete commands above passed without weakening production validation. Ignored logs are outputs/e5-b2b2b-gate-a-unit.log, e5-b2b2b-focused.log, e5-b2b2b-regressions.log, e5-b2b2b-http-analytics.log and e5-b2b2b-hygiene.log. The dedicated PostgreSQL container was initially stopped and was returned to stopped with its volume retained. No Git/GitHub write operation occurred.
+
+### B2 closeout and Checkpoint C boundary
+
+**Implemented:** revisioned sources and durable source commands; verified operator artifact imports; durable bounded queued submission/frozen selections; the requested bounded run/attempt/event history and safe detail APIs. These B2 checkpoints are ready for owner review. Broader capability discovery/HTTP artifact listing is not supplied by this history checkpoint. No whole-E5 acceptance group is declared complete.
+
+**Planned, requiring separate owner authorization:** Checkpoint C must resolve pinned runnable deployment profiles/fixed adapters; implement host-guard/coordinator-fenced queue claiming; recheck source gates, native inputs/dependencies and runtime/storage readiness; persist real attempts/stage intents and observed outcomes atomically; honor admission/audit budgets; supervise cleanup and qualify interruption/recovery. New run IDs, attempts, native fingerprints and Silver operational inventory identities remain distinct. Existing queued runs have no native write authority.
+
+**Deferred:** worker dispatch/execution/publication, processing controls/reconciliation, React Operations, activation, product authorization/exports, scheduling/distributed workers, cloud and benchmarks. Native GET requalification is intentionally absent. Spark-backed Silver qualification regressions were not selected under this checkpoint's no-Spark boundary. Historical verification does not certify present readability. New public classifier/counter/native-result mappings must be coordinated with future worker writers; arbitrary private metadata will not be passed through as public history. E5 is incomplete; stop after B2b-2B.
+
+### B2b-2B files changed
+
+- [docs/architecture/durable-execution.md](../../docs/architecture/durable-execution.md)
+- [services/content-api/README.md](../../services/content-api/README.md)
+- [services/content-api/pom.xml](../../services/content-api/pom.xml)
+- [services/content-api/src/main/java/platform/contentapi/management/ManagementConfiguration.java](../../services/content-api/src/main/java/platform/contentapi/management/ManagementConfiguration.java)
+- [services/content-api/src/main/java/platform/contentapi/management/RunController.java](../../services/content-api/src/main/java/platform/contentapi/management/RunController.java)
+- [services/content-api/src/main/java/platform/contentapi/management/RunHistoryRepository.java](../../services/content-api/src/main/java/platform/contentapi/management/RunHistoryRepository.java)
+- [services/content-api/src/main/java/platform/contentapi/management/RunInspectionValues.java](../../services/content-api/src/main/java/platform/contentapi/management/RunInspectionValues.java)
+- [services/content-api/src/main/java/platform/contentapi/management/RunPageCursor.java](../../services/content-api/src/main/java/platform/contentapi/management/RunPageCursor.java)
+- [services/content-api/src/main/java/platform/contentapi/management/RunRepository.java](../../services/content-api/src/main/java/platform/contentapi/management/RunRepository.java)
+- [services/content-api/src/test/java/platform/contentapi/management/RunApiFixtures.java](../../services/content-api/src/test/java/platform/contentapi/management/RunApiFixtures.java)
+- [services/content-api/src/test/java/platform/contentapi/management/RunHistoryIT.java](../../services/content-api/src/test/java/platform/contentapi/management/RunHistoryIT.java)
+- [services/content-api/src/test/java/platform/contentapi/management/RunInspectionTest.java](../../services/content-api/src/test/java/platform/contentapi/management/RunInspectionTest.java)
+- [services/content-api/src/test/java/platform/contentapi/management/RunSubmissionIT.java](../../services/content-api/src/test/java/platform/contentapi/management/RunSubmissionIT.java)
+- [services/content-api/src/test/java/platform/contentapi/management/SourceManagementIT.java](../../services/content-api/src/test/java/platform/contentapi/management/SourceManagementIT.java)
+- [services/content-api/src/test/java/platform/historyfixture/OversizedInspectionConfiguration.java](../../services/content-api/src/test/java/platform/historyfixture/OversizedInspectionConfiguration.java)
+
+The entry branch/index/working tree was verified clean. All changes remain for the owner; no staging, commits, branch changes or GitHub operations were performed.

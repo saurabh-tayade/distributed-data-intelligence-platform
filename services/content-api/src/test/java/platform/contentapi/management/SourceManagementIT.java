@@ -166,7 +166,7 @@ class SourceManagementIT {
     void invalidPageBounds(String limit) throws Exception {code(perform(get(BASE+"/sources").param("limit",limit)),400,"INVALID_ARGUMENT");}
     @Test void strictQueryAllowlistsAndMissingSources() throws Exception {
         code(perform(get(BASE+"/sources").param("limit","1","2")),400,"INVALID_ARGUMENT");code(perform(get(BASE+"/sources").param("offset","0")),400,"INVALID_ARGUMENT");
-        code(perform(get(BASE+"/sources").param("enabled","yes")),400,"INVALID_ARGUMENT");code(perform(get(PATH)),404,"NOT_FOUND");code(perform(get(BASE+"/runs")),404,"NOT_FOUND");
+        code(perform(get(BASE+"/sources").param("enabled","yes")),400,"INVALID_ARGUMENT");code(perform(get(PATH)),404,"NOT_FOUND");assertThat(perform(get(BASE+"/runs")).getResponse().getStatus()).isEqualTo(200);
         assertThat(body(perform(get(BASE+"/sources"))).get("meta").get("limit").intValue()).isEqualTo(20);
     }
     @Test void rejectedPrivateFieldsUnknownReferencesAndDuplicateJsonLeaveNoEvidence() throws Exception {

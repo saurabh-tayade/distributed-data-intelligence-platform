@@ -756,3 +756,103 @@ git diff --cached --check
 For an actual dedicated database restart, pass `-Dddip.test.submission-restart-signal=/private/tmp/ddip-run-restart`. The test writes READY, waits at most 45 seconds, then requires a changed PostgreSQL postmaster start time and exact surviving IDs, sequence, selection bytes and input evidence. An external local harness must restart **only the dedicated test container**, wait for readiness and write `/private/tmp/ddip-run-restart.done`; it must not restart an operational installation. Omit the property for ordinary CI; that tests fresh connections/application restart without claiming a server restart.
 
 Current executed counts and failure-injection evidence are recorded in the [B2b-2A contract](../../docs/architecture/durable-execution.md#stage-b2b-2a-durable-run-submission). Hosted CI remains pending owner publication. B2b-2B requires safe bounded run-history/attempt/event inspection and approved public DTO expansion. Worker claiming, source gate checks at dispatch, deployment/runtime readiness and native dependency revalidation remain later authorized work. No accepted submission has been executed; E5 remains incomplete.
+
+## Bounded run history and inspection (B2b-2B)
+
+The API role now supplies read-only history over the existing PostgreSQL records. These GETs do not fetch feeds, open native artifacts, requalify inputs, acquire ownership, create attempts or append audit events. Existing submission remains available; newly accepted runs still stay QUEUED. Worker dispatch and run controls remain unavailable.
+
+### Routes and filters
+
+| Route | Exact query parameters | Ordering and data |
+| --- | --- | --- |
+| GET `/api/management/v1/runs` | productId, sourceId, state, limit, cursor; all optional | Descending immutable submission sequence; public run summaries |
+| GET `/api/management/v1/runs/{id}` | None | Persisted public run detail and captured source/input IDs |
+| GET `/api/management/v1/runs/{id}/attempts` | limit, cursor | Ascending attempt_no; actual attempts and stage counts |
+| GET `/api/management/v1/runs/{id}/events` | limit, cursor | Ascending event_seq; actual run-linked audit events |
+
+Product is content-intelligence or application-reliability. sourceId uses the existing lowercase ASCII source syntax, at most 128 characters. State is exactly QUEUED, RUNNING, CANCEL_REQUESTED, SUCCEEDED, FAILED, CANCELLED or RECOVERY_REQUIRED. Filters combine with AND. Source filtering uses immutable run_sources membership, including its product association, without reading current source settings or guessing from retained artifact provenance. EXISTS prevents source/input join fanout from duplicating runs.
+
+Pages default to 20, permit 1–100 and use one-row lookahead. Unknown, duplicate, empty or wrongly typed query parameters fail; there is no OFFSET or arbitrary sort. IDs are canonical UUIDs. A valid absent run returns NOT_FOUND for detail and either subresource; a present unclaimed run returns an empty attempts page.
+
+```sh
+curl --fail-with-body 'http://127.0.0.1:8080/api/management/v1/runs?productId=content-intelligence&state=QUEUED&limit=20'
+curl --fail-with-body "http://127.0.0.1:8080/api/management/v1/runs/$RUN_ID"
+curl --fail-with-body "http://127.0.0.1:8080/api/management/v1/runs/$RUN_ID/attempts?limit=20"
+curl --fail-with-body "http://127.0.0.1:8080/api/management/v1/runs/$RUN_ID/events?limit=20"
+```
+
+GETs require an approved Host and enforce the existing Origin policy when Origin is supplied. They do not require Origin, Idempotency-Key or X-DDIP-Local-Request. Mutation protections remain unchanged. The API is trusted-loopback-only; these controls and opaque IDs are not authentication or authorization. No permissive CORS, polling service, SSE or WebSocket was added.
+
+### Public DTOs
+
+Single envelopes retain exactly `{apiVersion:1,data,meta:{correlationId}}`. Page meta adds limit (JSON integer), hasMore (boolean), nextCursor (string or null). Responses remain application/json and Cache-Control: no-store; detail has an opaque row-version ETag. Encoding is capped at 1 MiB before writing, including on serialization failure. No partial successful response is returned.
+
+Run summaries contain runId, productId, pipeline, state, currentStage, rowVersion, requestedAt, finishedAt, outcomeCode, retryEligibility and result. Reliability adds dataOrigin=synthetic. Detail adds sourceRevisions (`{sourceId,revision}`), inputArtifactIds, attempts (`{count,currentAttemptId}`), latestControl and counts. Captured source revisions/input IDs come from run_sources/run_inputs, never current configuration. Detail reads at most 32 source IDs and 129 input IDs, rejecting oversized persisted selections safely. Counts, sequence IDs and row versions are canonical nonnegative decimal strings; bounded attempt numbers/revisions remain integers. All timestamps use UTC with exactly six fractional digits.
+
+Example QUEUED detail data (fictional IDs/time):
+
+```json
+{
+  "runId": "70000000-0000-4000-8000-000000000001",
+  "productId": "content-intelligence",
+  "pipeline": "CONTENT_RSS_V1",
+  "state": "QUEUED",
+  "currentStage": null,
+  "rowVersion": "0",
+  "requestedAt": "2026-10-21T00:00:00.123456Z",
+  "finishedAt": null,
+  "sourceRevisions": [{"sourceId": "demo-feed", "revision": 1}],
+  "inputArtifactIds": ["20000000-0000-4000-8000-000000000001"],
+  "attempts": {"count": "0", "currentAttemptId": null},
+  "latestControl": null,
+  "result": null,
+  "counts": null,
+  "outcomeCode": null,
+  "retryEligibility": false
+}
+```
+
+An attempt has exactly attemptId, attemptNo, kind, state, startedAt, finishedAt, outcomeCode and stageCount. Kind is EXECUTE/RECONCILE; state is CLAIMED/RUNNING/SUCCEEDED/FAILED/CANCELLED/INTERRUPTED. stageCount counts persisted stage_invocations for that attempt, not planned stages or verified-stage claims. No stage commands, PID/process evidence, output addresses or raw logs are exposed. Detailed stage arrays/routes are not included in this checkpoint.
+
+An event has exactly eventSeq, timestamp, action, beforeState, afterState, beforeVersion, afterVersion, code and context. Context has nullable attemptId/controlId; supplied links must belong to the requested run. Only explicitly run-linked audit rows are read, in immutable sequence order. General source/import audit rows and heartbeat updates are not merged into a run's lifecycle. Private details_bytes are never fetched. Actions/states/outcome codes use the fixed [inspection classifications](src/main/java/platform/contentapi/management/RunInspectionValues.java); unrecognized stored classifications fail with fixed INTERNAL_FAILURE rather than exposing arbitrary text. Checkpoint C must coordinate any additional public classifications before writing them.
+
+latestControl is null or exactly `{controlId,type,state,reason,requestedAt,appliedAt,rowVersion}` from the latest persisted control, ordered by requested time then UUID. It reports history only: no control POST endpoint or actionable control hints are supplied. retryEligibility is the stored eligibility observation, not authorization to invoke a future retry.
+
+counts is null when no counters were recorded. A present map accepts only accepted, rejected, articles, occurrences, events, windows, rows, files and bytes, each a canonical nonnegative signed-64-bit decimal string. Unsupported fields/types fail safely; counters are not reconstructed from input manifests or defaulted to zero. These are operational counter labels, not a change to native product schemas or count limits.
+
+result is null or exactly `{artifactId,nativeFingerprint,productContractVersion,processorRevision,verificationStatus,verifiedAt}`. A public successful result requires the proper Content v1/revision-1 or Reliability v2/revision-2 artifact, its original 64-hex native publication identity and a VERIFIED VERIFY_RESULT stage/artifact link belonging to the run. A database success flag or artifact row alone is insufficient. The API reads that existing native identity; it does not hash evidence into a new native fingerprint. Silver inventory identities, references and intermediate Gold artifacts cannot be presented as final publications. verificationStatus is exactly VERIFIED_AT_EXECUTION: historical persisted verification, **not current readability, authenticity or activation**. Full private evidence is never loaded to render these summaries; future workers must persist the approved native identity and verification linkage correctly.
+
+### Cursor, query and restart policy
+
+Run pages use B2a's existing SourceCursor HMAC-SHA256 signer and `ddip.management.cursor-key`; no second key, signing mechanism, pagination table or session is introduced. RunPageCursor validates only the run-specific payload. Tokens have version 1, endpoint kind, a canonical scope digest, immutable high-water sequence, last-returned position and fixed 24-hour expiry. Scope binds endpoint, filters, ordering and (for attempts/events) run ID. The scope digest avoids putting long source filters or private data in tokens. Tokens are signed, not encrypted; clients should treat them as opaque.
+
+Use an unchanged private configured signing key for API restart continuity. Changing/loss of that key, tampering, unsupported versions, wrong endpoint/run/filters, invalid bounds, expiry or tokens over 512 encoded bytes return INVALID_ARGUMENT. The original expiry is preserved across pages. Page size may change within 1–100 without changing selection scope. Existing B2a source cursors retain their previous lifetime policy. An omitted key remains process-local as before; its cursors do not survive restart.
+
+New sequence identities above the traversal's high-water are excluded. A static dataset traverses without duplicates/skips. **States are mutable and pagination is not snapshot isolation:** a run that leaves a state filter may disappear from later pages, while a run entering that filter after its position was passed may not appear in that traversal. States/results/counts can reflect later commits. Start a new traversal to refresh membership; no long-lived PostgreSQL snapshot is retained.
+
+History reads use short transactions with no coordinator/owner row lock. Run pages issue two SQL statements (high-water and bounded projection); detail uses three bounded projections; attempt/event pages use an existence check, indexed high-water and bounded page query. Aggregates/result/control summaries are SQL projections, without per-row JDBC queries. Existing submission-sequence uniqueness, state/sequence, source-membership, attempt, stage, control and run/event indexes suffice; no migration was added. Private request/selection/artifact evidence and audit-detail blobs are not selected for history pages.
+
+GET errors are fixed INVALID_ARGUMENT/400, LOCAL_BOUNDARY_REJECTED/403, NOT_FOUND/404, MANAGEMENT_UNAVAILABLE/503, or INTERNAL_FAILURE/500 for invalid persisted public metadata/response overflow. SQL, private diagnostics, roots, secrets and native payloads are absent from both success and failure responses. Database outage is not an empty successful page.
+
+### Validation and B2 readiness
+
+Focused reproduction uses the existing dedicated PostgreSQL variables and pinned host JDK 21; no Python or Spark is needed for RunHistoryIT:
+
+```sh
+mvn -B -ntp -f services/content-api/pom.xml test -Dtest=RunInspectionTest
+mvn -B -ntp -f services/content-api/pom.xml verify -Ppostgres \
+  -Dtest=RunInspectionTest -Dit.test=RunHistoryIT,RunSubmissionIT
+mvn -B -ntp -f services/content-api/pom.xml verify -Ppostgres \
+  -Dit.test=PersistenceIT,SourceManagementIT,ImportOwnershipIT,ImportWorkflowIT,RunSubmissionIT,RunHistoryIT
+mvn -B -ntp -f services/content-api/pom.xml verify -Pintegration \
+  -Danalytics.python="$PWD/outputs/silver-python312/.venv/bin/python"
+npm run check
+git diff --check
+git diff --cached --check
+```
+
+The regression command includes the existing Spark-free import tests and their DDIP_TEST_PYTHON prerequisite. The existing 23 Spark-backed SilverImportIT cases are deliberately not selected for this read-only checkpoint; their previous results remain historical. The default postgres CI profile includes the new history suite alongside existing suites; no new dependency/service/job was added.
+
+For an actual dedicated DB restart test, pass `-Dddip.test.history-restart-signal=/private/tmp/ddip-history-restart`. An external harness waits for READY, restarts only the dedicated test container, waits for readiness, then writes `/private/tmp/ddip-history-restart.done` within 45 seconds. The test requires a later PostgreSQL postmaster start time and identical cursor continuation/events after API restart. Never use this procedure against an operational installation. Without the property, ordinary CI checks fresh API/connection continuity without claiming a server restart.
+
+Current executed evidence is in the [B2b-2B contract](../../docs/architecture/durable-execution.md#stage-b2b-2b-bounded-run-history-and-inspection). The implemented B2 source management, verified import, durable queued submission and requested history/inspection surfaces are ready for owner review. Full capability discovery/HTTP artifact listing is not added by this checkpoint. The queue cannot drain yet. Checkpoint C still needs owner authorization, fixed runnable deployment/adapters, host-guard/fenced claiming, live source gates, native revalidation, bounded supervision, atomic stage/result/audit writes and failure/recovery qualification. Later run controls, Operations UI and E5 completion remain deferred.
