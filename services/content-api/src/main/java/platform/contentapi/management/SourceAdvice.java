@@ -6,7 +6,7 @@ import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import platform.contentapi.execution.ManagementFailure;
 
-@RestControllerAdvice(assignableTypes=SourceController.class)
+@RestControllerAdvice(assignableTypes={SourceController.class,RunController.class})
 @Conditional(ManagementConfiguration.ApiOnly.class)
 public final class SourceAdvice {
     private ResponseEntity<byte[]> error(SourceFailure.Code code,HttpServletRequest request) {

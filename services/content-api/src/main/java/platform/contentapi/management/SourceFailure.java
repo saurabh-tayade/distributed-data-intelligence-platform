@@ -4,8 +4,10 @@ public final class SourceFailure extends RuntimeException {
     public enum Code {
         INVALID_ARGUMENT(400,"Invalid management request.",false),
         LOCAL_BOUNDARY_REJECTED(403,"Local request boundary rejected.",false),
-        NOT_FOUND(404,"Source or endpoint not found.",false),
+        NOT_FOUND(404,"Management object not found.",false),
         IDEMPOTENCY_CONFLICT(409,"Idempotency key has different content.",false),
+        SOURCE_DISABLED(409,"Selected source is disabled.",false),
+        COORDINATOR_RECOVERY_REQUIRED(503,"Coordinator is not ready for admission.",true),
         STATE_CONFLICT(409,"Source state conflicts with this command.",false),
         PRECONDITION_FAILED(412,"Source version has changed.",false),
         PRECONDITION_REQUIRED(428,"If-Match is required.",false),

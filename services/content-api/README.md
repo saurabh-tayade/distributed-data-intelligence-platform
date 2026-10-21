@@ -662,3 +662,97 @@ npm run check
 The [E5 evidence record](../../docs/architecture/durable-execution.md#b2b-1b-b-local-validation) records actual counts, regressions, crash/restart probes and limitations. Tests use actual public native readers and PostgreSQL; Bronze integration uses a read-only loopback S3 HTTP fixture with the actual boto3 client, not a claim of newly observed SeaweedFS/AWS compatibility. Native Silver/Bronze publishers/readers remain unchanged.
 
 B2b-2 still needs opaque-ID submission, frozen selections, aggregate admission and independent fresh verification at submission/worker consumption. Historical `verified_at` is insufficient. No run submission, worker execution or full E5 completion is included. Hosted CI, other-host process behavior, hostile storage/runtime authenticity, exact XML-to-row semantic reconstruction and comprehensive backup/power-loss guarantees remain unverified.
+
+## Durable queued run submission (B2b-2A)
+
+B2b-2A accepts durable selections for CONTENT_RSS_V1 and RELIABILITY_V2. Every new run is QUEUED. No worker claim, attempt, feed retrieval, native verifier, Spark/Python child or publication is launched by submission. The queue cannot drain in this checkpoint. A registered input's historical qualification is checked as database metadata; its files and retained Bronze dependencies must be independently revalidated by the future worker before consumption.
+
+### Reviewed submission profiles
+
+Use the existing V7 API installation, [source catalog](#operator-reference-setup) and completed operator imports. Provision a new, immutable UUID-named execution profile through trusted private database setup, with exact canonical UTF-8 configuration bytes and their SHA-256. Import-verifier profiles are incompatible with submission. A version-1 admission profile has exactly:
+
+```json
+{"runProfileVersion":1,"pipeline":"CONTENT_RSS_V1","pipelineVersion":1,"sourceProfile":"rss-atom-v1","runtime":{"javaVersion":"21","pythonVersion":"3.12.15","pysparkVersion":"4.0.2","deploymentSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
+```
+
+The digest above is fictional. Use the reviewed deployment's real immutable release digest. RELIABILITY_V2 profiles use sourceProfile=request-jsonl-v2 or request-parquet-v1, one format per profile. Unknown fields, other versions and import-only profiles fail. The configuration digest and immutable profile ID identify its revision; profiles are never edited in place. This format is an admission descriptor, **not a runnable command specification**. Worker implementation must independently resolve and match the pinned deployment and supply its approved fixed adapters, commands, limits and runtime checks before execution can be authorized. No executable or arbitrary Spark settings are accepted over HTTP.
+
+Associate the profile with reviewed `execution_profile_storage` rows belonging to this installation. Required roles are BRONZE/SILVER/REFERENCE/GOLD/CONTENT/CONTROL/STAGING/TEMP for Content and BATCH/REFERENCE/RELIABILITY/CONTROL/STAGING/TEMP for Reliability. Bindings must belong to the selected product; the shared CONTROL binding may belong to the other product. Each selected source input, artifact and Silver Bronze dependency binding must be an authorized member with its correct role. At most 128 bindings are captured. Submission checks canonical database descriptors and installation membership, without opening roots, checking free disk space or contacting S3. Root/runtime readiness belongs to the future worker.
+
+Source revisions must be current and enabled for new admission. RSS endpoint evidence is reconstructed from the reviewed in-memory catalog and must match the immutable digest captured by B2a. The exact descriptor is copied into the run, so later catalog changes do not rewrite accepted work. Reliability profiles remain synthetic-only and must match the source revision, batch format, registered-profile digest and storage binding. Every selected source must have a selected batch. Historical Silver source provenance need not be one of the selected fetch sources.
+
+### Requests and safe inspection
+
+Start the packaged API with the existing private DDIP_DB_URL/USER/PASSWORD/INSTALLATION_ID settings and B2a catalog/cursor configuration; the [role setup](#role-commands-and-bounds) is unchanged:
+
+```sh
+java -jar services/content-api/target/content-api-0.1.0-SNAPSHOT.jar \
+  --ddip.role=api --server.address=127.0.0.1 --server.port=8080 \
+  --ddip.management.catalog="$DDIP_MANAGEMENT_CATALOG" \
+  --ddip.management.cursor-key="$DDIP_MANAGEMENT_CURSOR_KEY"
+```
+
+POST `/api/management/v1/runs` requires application/json, an approved Host/Origin, X-DDIP-Local-Request: 1 and an ASCII Idempotency-Key of 1–128 letters/digits/underscore/hyphen. No query parameters or If-Match are accepted. Bodies are bounded to 64 KiB. These local protections do not authenticate a person; requester scope remains local-operator.
+
+Exact Content shape (fictional previously registered IDs):
+
+```json
+{"pipeline":"CONTENT_RSS_V1","executionProfileId":"10000000-0000-4000-8000-000000000001","fetchSources":[{"sourceId":"demo-feed","revision":1}],"retainedSilverArtifactIds":[],"publisherReferenceArtifactId":"20000000-0000-4000-8000-000000000001"}
+```
+
+Exact Reliability shape:
+
+```json
+{"pipeline":"RELIABILITY_V2","executionProfileId":"10000000-0000-4000-8000-000000000002","sources":[{"sourceId":"demo-requests","revision":1}],"batchArtifactIds":["30000000-0000-4000-8000-000000000001"],"serviceReferenceArtifactId":"20000000-0000-4000-8000-000000000002"}
+```
+
+Content requires 1–8 unique fetch sources and 0–128 unique qualified Silver artifacts; Reliability requires 1–32 unique sources and 1–32 unique v2 batches of one format. Each reference must have the right kind/product/version. Revision integers range from 1 to 1,000. UUIDs are canonical lowercase. Unknown, missing, duplicate or wrongly typed fields/IDs fail; clients cannot submit paths, endpoints, configuration, raw data or fingerprints. Metadata also enforces existing aggregate limits: Silver analytical bytes <=1 GiB; Reliability <=128 raw files, <=1 GiB raw bytes and <=2M occurrences. This does not substitute for worker-side native limits/rechecks.
+
+```sh
+curl --fail-with-body -i http://127.0.0.1:8080/api/management/v1/runs \
+  -H 'Origin: http://127.0.0.1:8080' -H 'X-DDIP-Local-Request: 1' \
+  -H 'Content-Type: application/json' -H 'Idempotency-Key: reviewed-selection-001' \
+  --data-binary @private/run-selection.json
+```
+
+HTTP 202 is returned only after commit, with relative Location `/api/management/v1/runs/{runId}`, ETag and no-store. Single envelopes are exactly `{apiVersion:1,data,meta:{correlationId}}`. Minimal run data contains runId, productId, pipeline, state, currentStage, rowVersion, requestedAt, finishedAt, sourceRevisions (`{sourceId,revision}`), inputArtifactIds, outcomeCode and retryEligibility. Reliability adds dataOrigin=synthetic. Row versions are decimal strings; timestamps are UTC with six fractional digits. Nullable persisted fields are null. Input IDs include the reference and are ordered by role/ordinal; the DTO exposes no private evidence, canonical configuration, locations or native fingerprints.
+
+GET the returned Location to inspect that persisted selection without Python/Spark. It is operational history, not a current-readability certificate. Richer lists, attempts/stages/control hints and result browsing remain B2b-2B. No run control or HTTP import route is implemented; B2a capabilities remain the source-catalog response, not a complete run-profile/artifact discovery API.
+
+Errors retain `{apiVersion,code,message,correlationId,retryable}` with fixed messages: INVALID_ARGUMENT/400, LOCAL_BOUNDARY_REJECTED/403, NOT_FOUND/404, IDEMPOTENCY_CONFLICT or STATE_CONFLICT or SOURCE_DISABLED/409, MANAGEMENT_CAPACITY_EXCEEDED/429, and MANAGEMENT_UNAVAILABLE or COORDINATOR_RECOVERY_REQUIRED/503. No SQL/private exception text is returned. Response encoding is bounded to 1 MiB. Unknown commit acknowledgment returns 503; repeat the **same key and full request**, never infer failure or submit another key automatically.
+
+### Frozen evidence, admission and retry of a request
+
+One short transaction locks coordinator, resolves scoped idempotency first, checks readiness/capacity, locks sources in sorted order, validates metadata and inserts run/source/input/audit rows atomically. The existing runs uniqueness on `(product_id,principal_scope,idempotency_key)` is the binding; there is no second queue or command-binding copy. Identical replay returns the existing run's current persisted state even after source edits, disablement, a full queue or a coordinator stop/import/recovery. Changed normalized content conflicts. A source-update race either captures the exact locked revision or rejects the stale request. A failed transaction leaves no accepted run, links or audit. Submission never changes either coordinator owner pointer or creates an attempt.
+
+Source config objects/digests, original reviewed endpoint evidence, observed enabled/gate version, execution profile configuration/digest, approved storage descriptors, exact registered artifact identity/qualification bytes/digests and qualification time are frozen in canonical captured_selection and run_inputs. Native dependency descriptors remain inside qualification evidence; current imported kinds are native leaves without invented registry edges. Source FKs and artifact FKs retain linkage; V5 immutability guards protect snapshots independently of HTTP. The 16 MiB aggregate evidence limit is enforced before insertion. Request/selection SHA-256 values are operational digests, never publication fingerprints; Silver retains its separately labeled E5_SILVER_INVENTORY_V1 identity.
+
+Operational request normalization reuses B2a's UTF-8 canonical encoder: exact fields, sorted object keys, integer-only values, sorted ASCII source IDs/revisions and lexical UUID sets. Duplicates are rejected before sorting. Native dependency serializers retain their own order/formula later. Literal independent Python-stdlib vectors for [RunCommandsTest](src/test/java/platform/contentapi/management/RunCommandsTest.java), with source demo/revision 1, profile `10000000-0000-4000-8000-000000000001`, reference `20000000-0000-4000-8000-000000000001`, empty Content history or Reliability batch `30000000-0000-4000-8000-000000000001`:
+
+- Content: `ccb5b21efeca0723add5093f11a1d88bfa7a7eb412cda9d03d4f87326b294de8`.
+- Reliability: `d7bcaa53a98d8a24872119379c64b60417982309e3fca8977207480b03e0a1b2`.
+
+At most 20 unfinished runs globally (QUEUED/RUNNING/CANCEL_REQUESTED/RECOVERY_REQUIRED) and 10,000 retained runs are admitted. A healthy active execution slot can coexist with up to 19 queued runs. STOPPING/RECOVERY_ONLY, any import owner, recovery work, inconsistent execution ownership or stale supervision block new admission; none frees ownership. Historical replay bypasses these new-work checks. Queued rows do not grant native write permission.
+
+Audit admission conservatively reserves 4,096 future events per unfinished run and three per active import before accepting new metadata work within the existing 1M-event limit. Source commands and new import/recovery reservations honor this reserve. Existing import finalization uses its reserved capacity; capacity rejection never clears an uncertain owner. Future lifecycle/control implementation must stay within the reserve and continue checking history bounds. No purge or automatic queue draining is supplied.
+
+### Reproduction and remaining boundary
+
+Use a dedicated PostgreSQL 17 test service and the existing DDIP_TEST_DB_URL/USER/PASSWORD variables. Submission fixtures are tiny synthetic database qualification descriptors, not mock persistence or fresh native qualifications. They intentionally need no native files or Python/Spark. The full postgres regression also runs the existing import suites with their separate synthetic native fixtures and DDIP_TEST_PYTHON prerequisite.
+
+```sh
+mvn -B -ntp -f services/content-api/pom.xml test \
+  -Dtest=RunCommandsTest,AuditCapacityTest
+mvn -B -ntp -f services/content-api/pom.xml verify -Ppostgres \
+  -Dtest=RunCommandsTest,AuditCapacityTest -Dit.test=RunSubmissionIT
+mvn -B -ntp -f services/content-api/pom.xml verify -Ppostgres
+mvn -B -ntp -f services/content-api/pom.xml verify -Pintegration \
+  -Danalytics.python="$PWD/outputs/silver-python312/.venv/bin/python"
+npm run check
+git diff --check
+git diff --cached --check
+```
+
+For an actual dedicated database restart, pass `-Dddip.test.submission-restart-signal=/private/tmp/ddip-run-restart`. The test writes READY, waits at most 45 seconds, then requires a changed PostgreSQL postmaster start time and exact surviving IDs, sequence, selection bytes and input evidence. An external local harness must restart **only the dedicated test container**, wait for readiness and write `/private/tmp/ddip-run-restart.done`; it must not restart an operational installation. Omit the property for ordinary CI; that tests fresh connections/application restart without claiming a server restart.
+
+Current executed counts and failure-injection evidence are recorded in the [B2b-2A contract](../../docs/architecture/durable-execution.md#stage-b2b-2a-durable-run-submission). Hosted CI remains pending owner publication. B2b-2B requires safe bounded run-history/attempt/event inspection and approved public DTO expansion. Worker claiming, source gate checks at dispatch, deployment/runtime readiness and native dependency revalidation remain later authorized work. No accepted submission has been executed; E5 remains incomplete.

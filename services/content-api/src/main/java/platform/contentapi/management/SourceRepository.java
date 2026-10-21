@@ -69,7 +69,8 @@ public final class SourceRepository {
                 if(endpointHash!=null && Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.source_revisions WHERE endpoint_id=? AND endpoint_sha256<>?)",Boolean.class,UUID.fromString(SourceJson.text(c.config().get("feedEndpointId"))),endpointHash)))
                     throw new SourceFailure(STATE_CONFLICT);
             }
-            capacity("command_bindings",200000);capacity("audit_events",1000000);
+            capacity("command_bindings",200000);
+            AuditCapacity.requireAvailable(jdbc,1,jdbc.queryForObject("SELECT count(*) FROM ddip_management.runs WHERE state IN ('QUEUED','RUNNING','CANCEL_REQUESTED','RECOVERY_REQUIRED')",Long.class));
             int status=200;boolean changed=false;String action;
             if(c.action()==SourceCommands.Action.CREATE) {
                 if(Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.sources WHERE product_id=? AND source_id=?)",Boolean.class,c.product(),c.source()))) throw new SourceFailure(STATE_CONFLICT);

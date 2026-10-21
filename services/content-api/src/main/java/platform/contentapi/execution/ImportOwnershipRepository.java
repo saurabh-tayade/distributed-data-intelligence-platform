@@ -94,6 +94,10 @@ public final class ImportOwnershipRepository {
         ImportOwnershipFailure.require(!Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.attempts WHERE state IN ('CLAIMED','RUNNING')) OR " +
                 "EXISTS(SELECT 1 FROM ddip_management.runs WHERE state IN ('RUNNING','CANCEL_REQUESTED','RECOVERY_REQUIRED'))",Boolean.class)),OWNERSHIP_STALE);
     }
+    private void admissionAuditCapacity(long events) {
+        long unfinished=jdbc.queryForObject("SELECT count(*) FROM ddip_management.runs WHERE state IN ('QUEUED','RUNNING','CANCEL_REQUESTED','RECOVERY_REQUIRED')",Long.class);
+        ImportOwnershipFailure.require(platform.contentapi.management.AuditCapacity.available(jdbc,events,unfinished),MANAGEMENT_CAPACITY_EXCEEDED);
+    }
     private void insert(InstallationHostGuard guard,Reservation r,Kind kind,UUID predecessor,long epoch) {
         var p=guard.process();
         jdbc.update("INSERT INTO ddip_management.artifact_import_operations(import_id,installation_id,kind,predecessor_id,quiescence_confirmed,process_instance_id,owner_pid,owner_started_at," +
@@ -113,7 +117,7 @@ public final class ImportOwnershipRepository {
         Token token=transactions.required(() -> {
             Slot s=lockSlot();
             ImportOwnershipFailure.require(s.importId()==null && s.attemptId()==null && s.mode().equals("READY"),OWNERSHIP_STALE);
-            noExecution();binding(guard,reservation.profileId(),reservation.profileSha256());
+            noExecution();binding(guard,reservation.profileId(),reservation.profileSha256());admissionAuditCapacity(4);
             long epoch=nextEpoch(s.epoch());
             insert(guard,reservation,Kind.IMPORT,null,epoch);
             int changed=jdbc.update("UPDATE ddip_management.coordinator SET active_import_id=?,epoch=?,row_version=row_version+1 WHERE singleton_id=1 AND installation_id=? " +
@@ -220,7 +224,7 @@ public final class ImportOwnershipRepository {
             ImportOwnershipFailure.require(old.state()==State.ACTIVE && old.importId().equals(s.importId()) && old.epoch()==s.epoch() &&
                     expectedOld.epoch()==s.epoch() && expectedOld.coordinatorVersion()==s.version() && expectedOld.operationVersion()==old.rowVersion() &&
                     expectedOld.processInstanceId().equals(old.processInstanceId()) && old.installationId().equals(installation) && old.hostBindingSha256().equals(guard.binding().digest()),OWNERSHIP_STALE);
-            noExecution();binding(guard,old.profileId(),old.profileSha256());
+            noExecution();binding(guard,old.profileId(),old.profileSha256());admissionAuditCapacity(2);
             byte[] result=SourceJson.canonical(SourceJson.object().put("protocolVersion",1).put("successorOperationId",recoveryId.toString()));
             terminal(old,State.INTERRUPTED,"RECOVERY_HANDOFF",result);
             long epoch=nextEpoch(s.epoch());

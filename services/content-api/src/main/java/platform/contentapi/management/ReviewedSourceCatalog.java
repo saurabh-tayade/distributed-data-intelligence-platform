@@ -66,9 +66,11 @@ public final class ReviewedSourceCatalog {
     }
     String endpointDigest(JsonNode config) {
         if(config.get("feedEndpointId").isNull())return null;
-        Endpoint e=endpoints.get(SourceJson.text(config.get("feedEndpointId")));
-        SourceFailure.require(e!=null);
-        return SourceJson.sha(SourceJson.canonical(SourceJson.object().put("endpointId",e.id()).put("sourceId",e.source()).put("uri",e.uri())));
+        return SourceJson.sha(SourceJson.canonical(endpointEvidence(config)));
+    }
+    JsonNode endpointEvidence(JsonNode config) {
+        Endpoint e=endpoints.get(SourceJson.text(config.get("feedEndpointId")));SourceFailure.require(e!=null);
+        return SourceJson.object().put("endpointId",e.id()).put("sourceId",e.source()).put("uri",e.uri());
     }
     JsonNode capabilities() {
         var n=SourceJson.object(); n.put("scope","SOURCE_MANAGEMENT_ONLY");

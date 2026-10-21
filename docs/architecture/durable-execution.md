@@ -2,11 +2,13 @@
 
 Status: **Accepted — October 20, 2026**, with the Stage A.1 refinements, under [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md). The owner accepted additive [ADR 0011](../adr/0011-artifact-import-maintenance-ownership.md) on October 21 and authorized **B2b-1A import ownership foundation only**. B1/B2a and the ownership foundation are implemented; current coordination evidence is [recorded separately](#stage-b2b-1a-durable-import-ownership). Native qualification/functional imports (B2b-1B), submission (B2b-2) and C–F execution/control/UI require separate authorization. Acceptance alone passes no E5 test group. Accepted ADRs 0001–0010 and native data contracts are unchanged.
 
+Current authorization: the owner subsequently approved and committed B2b-1A, B2b-1B-A and B2b-1B-B, and authorized **B2b-2A durable queued submission only**. Its implementation and current evidence are [recorded below](#stage-b2b-2a-durable-run-submission). Earlier checkpoint status paragraphs are historical; no B2b-2B or worker authorization follows.
+
 ## Boundary and invariants
 
 E5 manages one local installation, one trusted operator and one worker. PostgreSQL is the operational authority; existing files/object receipts and independent verifiers remain the data authority. The API never performs processing in an HTTP request or treats a database artifact row as verification. There is no DB/filesystem/S3 distributed transaction. No exactly-once execution, automatic failover, multiwriter isolation, hostile-filesystem protection or artifact power-loss durability is claimed.
 
-The following are accepted Stage B requirements, not claims of implemented capabilities:
+The following are accepted Stage B requirements, not blanket claims of implemented capabilities:
 
 1. A submission/control is acknowledged only after its transaction commits. Lost acknowledgments are retried with the same key and full normalized request, not guessed from an HTTP error.
 2. At most one managed execution/reconciliation/import is active globally. Metadata fencing and host ownership are separate requirements. Expired heartbeats do not free the slot.
@@ -787,7 +789,7 @@ Initial Gate B had one test-setup error: it attempted to delete an immutable pro
 
 **Known limits / unverified:** checksum and cooperative-guard consistency is not hostile filesystem/runtime authenticity or an atomic S3 snapshot; mutation reverted between checks may be unobserved. Physical footer requiredness is not a new Silver contract; requiredness follows native logical schema/row rules. Empty datasets have no row-level provenance evidence, and full XML semantic equivalence is not reconstructed. Tests do not newly certify SeaweedFS/AWS behavior: retained-object integration uses the actual client against a synthetic loopback S3 protocol fixture. Hard power-loss, comprehensive restore, other-host/Linux process behavior and complete orphan-process quiescence remain unverified. Explicit recovery confirmation still requires actual operator inspection beyond parent PID/lock/connection liveness. Hosted CI has not been observed; existing pinned Python/PostgreSQL CI discovery now includes the new tests through the Maven profile, with no new services/dependencies. Documentation tooling ran on local Node 26.12.0; the repository's Node 24 engine remains a hosted verification item.
 
-**Planned, requiring owner authorization:** B2b-2 must expose/select opaque registry IDs, freeze exact selections, enforce aggregate admission and independently revalidate these retained Silver/Bronze dependencies at submission and worker consumption (including post-action rechecks). Existing `verified_at` or historical import result is insufficient. **Deferred:** run submission, queue claiming/worker execution, processing controls, derived publications, React Operations, authorization/exports, activation, automatic cleanup/backup, distributed workers, AWS and E4a. No B2b-2/worker implementation has begun; E5 remains incomplete.
+**Planned, requiring owner authorization:** B2b-2 must expose/select opaque registry IDs, freeze exact selections, enforce aggregate admission and validate registered Silver/Bronze metadata at submission and independently revalidate native dependencies at worker consumption (including post-action rechecks). Existing `verified_at` or historical import result is insufficient. **Deferred:** run submission, queue claiming/worker execution, processing controls, derived publications, React Operations, authorization/exports, activation, automatic cleanup/backup, distributed workers, AWS and E4a. No B2b-2/worker implementation has begun; E5 remains incomplete.
 
 ### B2b-1B-B changed files
 
@@ -814,3 +816,77 @@ Initial Gate B had one test-setup error: it attempted to delete an immutable pro
 - [services/content-api/src/test/java/platform/contentapi/importing/SilverImportIT.java](../../services/content-api/src/test/java/platform/contentapi/importing/SilverImportIT.java)
 
 No Git/GitHub write commands were run. The entry index was clean; six new files were later observed staged during the session. Those index entries were left untouched.
+
+## Stage B2b-2A durable run submission
+
+Authorized on October 21, 2026: queued-only CONTENT_RSS_V1/RELIABILITY_V2 submission and minimal persisted run inspection. Acceptance requires strict discriminated requests/canonical vectors, immutable source/profile/input capture, real PostgreSQL atomicity/concurrency/idempotency/capacity/restart evidence, local HTTP protection and no processing launch. B2b-2B, worker execution and full E5 remain unauthorized. Accepted ADRs 0010/0011, native contracts and migrations V1–V7 are unchanged.
+
+### Implemented boundary
+
+POST `/api/management/v1/runs` and GET `/api/management/v1/runs/{id}` use the existing API role, boundary filter, bounded canonical JSON, envelope and fixed safe advice. Exact bodies remain those in the normative REST section. [The operator guide](../../services/content-api/README.md#durable-queued-run-submission-b2b-2a) defines actual profile setup, commands, DTO fields, error mappings and synthetic reproduction. Minimal GET intentionally omits the unimplemented history/attempt/control/result expansions. Existing B2a source capabilities remain scoped to that catalog.
+
+The existing runs row is the scoped durable idempotency binding. Coordinator-first lookup returns the original run before current revision, enablement, catalog, readiness or capacity checks. New work validates a fixed versioned admission profile, locks sources in ASCII order, requires current enabled revisions and approved endpoint/profile associations, and validates registered artifacts with the existing import protocol's pure shape/consistency checks. This helper never opens roots, native data, S3 or a child process. Full native freshness checks remain worker-side, consistent with the normative freeze points above. No native publication fingerprint is computed.
+
+New version-1 admission profiles pin pipeline/version, sourceProfile and exact JDK/Python/PySpark/deployment revision metadata in immutable execution_profiles. IDs over this HTTP boundary are UUIDs; import-only profiles retain their existing token IDs and schemas. Storage associations must authorize the selected native inputs and each fixed pipeline role. A profile revision is its immutable ID/configuration digest. This metadata descriptor deliberately does not invent a runnable worker adapter; C/D must match the reviewed deployment and implement fixed runtime/command readiness before execution is possible.
+
+Canonical captured_selection stores exact source config/digest and original reviewed endpoint descriptor, gate observation, execution/storage profile configurations/digests and registered artifact identities/qualification evidence/time. Exact copies are linked through immutable run_sources/run_inputs, within the 16 MiB aggregate cap. Existing imported kinds are native leaves; retained raw/vocabulary/Bronze evidence stays in exact native descriptors, without fabricated artifact edges. Changes to current source/catalog configuration cannot rewrite the snapshot. Operational request/selection hashes remain distinct from all native fingerprints and Silver's E5 inventory identity.
+
+One short transaction inserts QUEUED run, sources, inputs and RUN_SUBMITTED audit. SQL uniqueness/FKs/digest/immutability constraints are reused; no new table or migration is required. Every conditional failure rolls back accepted work. Commit uncertainty maps to 503 and is resolved by exact scoped key/request replay. Request sets are normalized with B2a's UTF-8 encoder; native serialization order is untouched. Independent literal request SHA-256 vectors are `ccb5b21efeca0723add5093f11a1d88bfa7a7eb412cda9d03d4f87326b294de8` (Content) and `d7bcaa53a98d8a24872119379c64b60417982309e3fca8977207480b03e0a1b2` (Reliability), with full inputs in the guide/tests.
+
+Admission limits remain 20 unfinished/10,000 retained runs. New work reserves 4,096 audit events per unfinished run and three per active import against the 1M bound; source commands and import/recovery reservations respect that reserve. Already admitted import finalization is not denied by a new admission check. These are conservative logical reservations, not a new ledger/table or disk quota. Future lifecycle writers must honor their per-run budget. All counts/admissions serialize on the existing coordinator. Healthy execution can retain its slot while more work queues; stale/unresolved/recovery/import ownership blocks new admission without alteration. No source operation or submission releases either owner. There is no queue draining, attempt creation, worker claim or HTTP control/import endpoint.
+
+### Current local validation
+
+All following results were executed locally on October 21, 2026 at this checkpoint; historical results above are not counted again. The full commands used the host JDK 21, dedicated PostgreSQL 17.11 test service and existing pinned Python 3.12.15/PySpark 4.0.2 fixture environment. DB credentials were supplied privately through DDIP_TEST_DB_URL/USER/PASSWORD; DDIP_TEST_PYTHON named the existing ignored virtual environment. No live publishers, retained personal datasets or cloud services were used.
+
+| Exact Maven/check command (repository root) | Current result |
+| --- | --- |
+| `mvn -q -f services/content-api/pom.xml -Dtest=RunCommandsTest test` | Initial focused gate: 26 cases passed; two additional selection-bound cases subsequently passed in the complete commands below |
+| `mvn -q -f services/content-api/pom.xml -Ppostgres -Dtest=RunCommandsTest,AuditCapacityTest -Dit.test=RunSubmissionIT verify` | Focused validation/submission iterations passed before the final history-cap and selection-bound additions; final counts come from the complete run below |
+| `mvn -q -f services/content-api/pom.xml -Ppostgres -Dddip.test.submission-restart-signal=/private/tmp/ddip-e5-submission-restart verify` | **254 Java unit/component + 211 real PostgreSQL cases passed**, zero failures/errors/skips; external harness restarted only the dedicated test container at the READY barrier |
+| `mvn -q -f services/content-api/pom.xml verify -Pintegration -Danalytics.python="$PWD/outputs/silver-python312/.venv/bin/python"` | **20 HTTP/Python analytics compatibility cases passed**, with the same 254 unit/component cases also passing; repeats are not additional distinct tests |
+| `npm run check` | 44 Markdown files/local links and repository hygiene passed |
+| `git diff --check` and `git diff --cached --check` | Passed; no index writes |
+
+Gate A comprises **30 new pure cases**: 28 RunCommandsTest and two AuditCapacityTest. They cover strict DTO/type/duplicate/unknown-field rules, both pipeline vectors, reordered sets, changed selections, revision/source/artifact bounds, profile compatibility and audit reservation boundaries. Literal digests were independently calculated with Python stdlib sorted compact UTF-8 JSON plus hashlib, rather than PostgreSQL JSONB or the Java encoder. The extra 224 unit/component cases preserve existing runtime/management/import/query behavior.
+
+Gate B comprises **44 new real PostgreSQL RunSubmissionIT cases**. They cover committed QUEUED HTTP acceptance and GET, both Reliability formats, Content empty/retained history, frozen endpoint/config/input evidence, exact relational/audit atomicity, concurrent same/different-key submissions, replay after revision/disablement/terminal state/catalog removal, full 20-run queue and populated 10,000-run retained history, disabled/stale source rejection, wrong profiles/formats/membership and malformed registered metadata. Trigger-injected input/audit failures roll back the entire run. A JDBC wrapper throws SQLSTATE 08006 only after a real write commit; exact-key replay observes that one committed run. Real connection refusal is tested at repository and HTTP boundaries with fixed safe diagnostics.
+
+Source mutation races use explicit latches; the capture-first case additionally observes PostgreSQL's actual lock wait before releasing the admission transaction. Update-first rejects the obsolete revision; admission-first keeps the original endpoint/configuration after the update commits. Tests prove that healthy execution allows queueing while its pointer/epoch/version remain identical, recovery/stale supervision blocks admission, and active/abandoned import ownership is never changed even when the host guard becomes free. FKs and V5 guards reject evidence/link mutation. Source and artifact records/qualification bytes remain unchanged after submission; production submission has no filesystem/network/native-reader or process supervisor dependency.
+
+The actual database restart test asserts a later pg_postmaster_start_time and exact surviving run IDs, source revisions in canonical selection bytes, input evidence bytes/artifact IDs, hashes and submission sequence through new connections. Application-context restart and minimal GET are separately tested. No processing attempts, stages, receipts or worker instances are created by ordinary submission; tests that simulate an active slot create it explicitly as database setup, never via dispatch.
+
+All **167 pre-existing PostgreSQL cases** also passed: 28 PersistenceIT, 36 SourceManagementIT, 42 ImportOwnershipIT, 38 ImportWorkflowIT and 23 SilverImportIT. Because shared audit admission changed, the existing import suites ran their small actual native-reader/DuckDB/Spark/Bronze-loopback regression fixtures, separately from metadata-only run acceptance. Their read-only evidence, lost-acknowledgment and ownership/process recovery checks remain valid. No new Spark workload, native publisher workload, benchmark or native verification inside submission was introduced.
+
+Ignored local logs: outputs/e5-b2b2a-gate-a.log, e5-b2b2a-gate-b.log, e5-b2b2a-all-postgres.log, e5-b2b2a-http.log and e5-b2b2a-hygiene.log. The dedicated test PostgreSQL service was initially stopped and was returned to stopped with its volume retained. No Git/GitHub writes occurred. Hosted CI is **unobserved/pending owner publication**; the existing postgres Maven profile now includes RunSubmissionIT, without new services, dependencies or CI jobs.
+
+Limits of evidence: synthetic registered metadata is not fresh native qualification and does not prove current artifact readability. The 1M audit bound/reservation formula is tested at literal boundaries without generating a million audit rows. Actual abrupt API-process death during a commit, host power loss, disk restore certification and future worker lifecycle-budget enforcement are not independently certified by this checkpoint. DB rollback/lost-ack/restart evidence is not an exactly-once execution guarantee.
+
+### Planned and deferred
+
+B2b-2B requires bounded history/attempt/event reads and richer public inspection, with the same local trust boundary and frozen evidence. It has not begun. C/D must independently revalidate native files/dependencies, resolve exact approved adapters/runtime/storage readiness, enforce reserved history budgets and live source gates, and implement fenced attempts/stage freeze points. Accepted QUEUED work has no native write authority. Cancellation/retry/reconciliation endpoints, worker dispatch, publication/activation, UI, authorization/exports, schedulers and AWS remain deferred; no E5 completion claim is made.
+
+### B2b-2A files changed
+
+- [docs/architecture/durable-execution.md](../../docs/architecture/durable-execution.md)
+- [services/content-api/README.md](../../services/content-api/README.md)
+- [services/content-api/pom.xml](../../services/content-api/pom.xml)
+- [services/content-api/src/main/java/platform/contentapi/execution/ImportOwnershipFailure.java](../../services/content-api/src/main/java/platform/contentapi/execution/ImportOwnershipFailure.java)
+- [services/content-api/src/main/java/platform/contentapi/execution/ImportOwnershipRepository.java](../../services/content-api/src/main/java/platform/contentapi/execution/ImportOwnershipRepository.java)
+- [services/content-api/src/main/java/platform/contentapi/importing/RegisteredImportEvidence.java](../../services/content-api/src/main/java/platform/contentapi/importing/RegisteredImportEvidence.java)
+- [services/content-api/src/main/java/platform/contentapi/management/AuditCapacity.java](../../services/content-api/src/main/java/platform/contentapi/management/AuditCapacity.java)
+- [services/content-api/src/main/java/platform/contentapi/management/ManagementConfiguration.java](../../services/content-api/src/main/java/platform/contentapi/management/ManagementConfiguration.java)
+- [services/content-api/src/main/java/platform/contentapi/management/ReviewedSourceCatalog.java](../../services/content-api/src/main/java/platform/contentapi/management/ReviewedSourceCatalog.java)
+- [services/content-api/src/main/java/platform/contentapi/management/RunCommands.java](../../services/content-api/src/main/java/platform/contentapi/management/RunCommands.java)
+- [services/content-api/src/main/java/platform/contentapi/management/RunController.java](../../services/content-api/src/main/java/platform/contentapi/management/RunController.java)
+- [services/content-api/src/main/java/platform/contentapi/management/RunProfile.java](../../services/content-api/src/main/java/platform/contentapi/management/RunProfile.java)
+- [services/content-api/src/main/java/platform/contentapi/management/RunRepository.java](../../services/content-api/src/main/java/platform/contentapi/management/RunRepository.java)
+- [services/content-api/src/main/java/platform/contentapi/management/SourceAdvice.java](../../services/content-api/src/main/java/platform/contentapi/management/SourceAdvice.java)
+- [services/content-api/src/main/java/platform/contentapi/management/SourceFailure.java](../../services/content-api/src/main/java/platform/contentapi/management/SourceFailure.java)
+- [services/content-api/src/main/java/platform/contentapi/management/SourceRepository.java](../../services/content-api/src/main/java/platform/contentapi/management/SourceRepository.java)
+- [services/content-api/src/test/java/platform/contentapi/management/AuditCapacityTest.java](../../services/content-api/src/test/java/platform/contentapi/management/AuditCapacityTest.java)
+- [services/content-api/src/test/java/platform/contentapi/management/RunCommandsTest.java](../../services/content-api/src/test/java/platform/contentapi/management/RunCommandsTest.java)
+- [services/content-api/src/test/java/platform/contentapi/management/RunFixtures.java](../../services/content-api/src/test/java/platform/contentapi/management/RunFixtures.java)
+- [services/content-api/src/test/java/platform/contentapi/management/RunSubmissionIT.java](../../services/content-api/src/test/java/platform/contentapi/management/RunSubmissionIT.java)
+
+No migrations or accepted ADRs were modified. The entry working tree/index was clean; the owner retains all Git/GitHub operations.
