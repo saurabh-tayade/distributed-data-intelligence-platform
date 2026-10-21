@@ -19,7 +19,7 @@ public final class JdbcCoordinatorRepository implements CoordinatorRepository {
     }
     private Snapshot map(java.sql.ResultSet rs, int row) throws java.sql.SQLException {
         return new Snapshot(rs.getObject("installation_id", UUID.class),Mode.valueOf(rs.getString("mode")),rs.getLong("epoch"),
-                rs.getObject("active_attempt_id",UUID.class),rs.getObject("owner_instance_id",UUID.class),rs.getLong("row_version"));
+                rs.getObject("active_attempt_id",UUID.class),rs.getObject("owner_instance_id",UUID.class),rs.getObject("active_import_id",UUID.class),rs.getLong("row_version"));
     }
     private Snapshot checked(Snapshot snapshot) {
         if (!installation.equals(snapshot.installationId())) throw new ManagementFailure(ManagementFailure.Code.MANAGEMENT_INCOMPATIBLE);
@@ -40,7 +40,10 @@ public final class JdbcCoordinatorRepository implements CoordinatorRepository {
     @Override public boolean compareAndSetIdleMode(long expectedVersion, Mode mode) {
         if(expectedVersion < 0 || mode==null) throw new IllegalArgumentException("INVALID_COORDINATOR_UPDATE");
         return transactions.required(() -> jdbc.update("UPDATE ddip_management.coordinator SET mode=?,row_version=row_version+1 " +
-                "WHERE singleton_id=1 AND installation_id=? AND row_version=? AND active_attempt_id IS NULL",
+                "WHERE singleton_id=1 AND installation_id=? AND row_version=? AND active_attempt_id IS NULL AND active_import_id IS NULL " +
+                "AND NOT EXISTS(SELECT 1 FROM ddip_management.artifact_import_operations WHERE state='ACTIVE') " +
+                "AND NOT EXISTS(SELECT 1 FROM ddip_management.attempts WHERE state IN ('CLAIMED','RUNNING')) " +
+                "AND NOT EXISTS(SELECT 1 FROM ddip_management.runs WHERE state IN ('RUNNING','CANCEL_REQUESTED','RECOVERY_REQUIRED'))",
                 mode.name(),installation,expectedVersion)==1);
     }
     @Override public boolean isCurrentOwner(UUID attemptId, UUID instanceId, long epoch) {

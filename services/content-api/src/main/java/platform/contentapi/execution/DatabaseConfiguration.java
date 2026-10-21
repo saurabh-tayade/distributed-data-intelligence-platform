@@ -41,6 +41,9 @@ public class DatabaseConfiguration {
     @Bean JdbcCoordinatorRepository coordinatorRepository(JdbcTemplate jdbc,ManagementTransactions tx,DatabaseSettings settings) {
         return new JdbcCoordinatorRepository(jdbc,tx,settings.installationId());
     }
+    @Bean ImportOwnershipRepository importOwnershipRepository(JdbcTemplate jdbc,ManagementTransactions tx,DatabaseSettings settings) {
+        return new ImportOwnershipRepository(jdbc,tx,settings.installationId());
+    }
     @Bean Flyway managementFlyway(HikariDataSource dataSource) {
         return Flyway.configure().dataSource(dataSource).defaultSchema("ddip_management").schemas("ddip_management")
                 .locations("classpath:db/migration").cleanDisabled(true).baselineOnMigrate(false).outOfOrder(false)

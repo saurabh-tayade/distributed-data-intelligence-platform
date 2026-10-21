@@ -226,15 +226,33 @@ class SourceManagementIT {
         close();jdbc.execute("DROP SCHEMA ddip_management CASCADE");
         var old=Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").target("5").load();old.migrate();
         var tx=new ManagementTransactions(new org.springframework.transaction.support.TransactionTemplate(new org.springframework.jdbc.support.JdbcTransactionManager(jdbc.getDataSource())));
-        var coordinator=new JdbcCoordinatorRepository(jdbc,tx,INSTALL);coordinator.initialize();coordinator.compareAndSetIdleMode(0,CoordinatorRepository.Mode.STOPPING);
+        // Build the historical V5 fixture using its schema, not a V7 repository against old tables.
+        jdbc.update("INSERT INTO ddip_management.coordinator(singleton_id,installation_id,mode) VALUES (1,?,'READY')",INSTALL);
+        jdbc.update("UPDATE ddip_management.coordinator SET mode='STOPPING',row_version=1");
+        var coordinator=new JdbcCoordinatorRepository(jdbc,tx,INSTALL);
         var before=jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE type='SQL' ORDER BY installed_rank");
         var current=Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();
         new SchemaLifecycle(current,jdbc,coordinator).verify(true);
         assertThat(coordinator.read().rowVersion()).isEqualTo(1);assertThat(coordinator.read().mode()).isEqualTo(CoordinatorRepository.Mode.STOPPING);
-        assertThat(jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE type='SQL' AND version<>'6' ORDER BY installed_rank")).isEqualTo(before);
+        assertThat(jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE type='SQL' AND version IN ('1','2','3','4','5') ORDER BY installed_rank")).isEqualTo(before);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.flyway_schema_history WHERE type='SQL'",Integer.class)).isEqualTo(7);
         jdbc.execute("DROP SCHEMA ddip_management CASCADE");old.migrate();
         assertThatThrownBy(() -> new SchemaLifecycle(current,jdbc,coordinator).verify(true)).hasMessage("MANAGEMENT_INCOMPATIBLE");
         assertThat(count("coordinator")).isZero();
+    }
+    @Test void sourceMutationsAndReplayDoNotReleaseOrChangeMaintenanceOwnership() throws Exception {
+        var binding=OwnershipFixtures.host(Files.createTempDirectory(temp,"ownership-"));OwnershipFixtures.provision(jdbc,binding);
+        try(var guard=InstallationHostGuard.acquire(binding)) {
+            var repository=context.getBean(ImportOwnershipRepository.class);
+            var owner=repository.reserve(guard,OwnershipFixtures.reservation(UUID.randomUUID()));
+            var coordinator=context.getBean(CoordinatorRepository.class);var before=coordinator.read();
+            var initial=created();assertThat(initial.getResponse().getStatus()).isEqualTo(201);
+            var revised=write(post(PATH+"/revisions"),revise("Second",rss()),"revise","\"0\"");assertThat(revised.getResponse().getStatus()).isEqualTo(200);
+            assertThat(data(write(post(BASE+"/sources"),create(CONTENT,"demo-feed",rss()),"create",null))).isEqualTo(data(initial));
+            assertThat(coordinator.read()).isEqualTo(before);assertThat(before.activeImportId()).isEqualTo(owner.importId());
+            assertThat(count("runs")).isZero();assertThat(count("attempts")).isZero();
+            repository.finish(guard,owner,ImportOwnershipRepository.Outcome.SAFE_COMPLETION,OwnershipFixtures.RESULT,true);
+        }
     }
     @Test void sourceCapAndHundredRowPageAreEnforcedWithoutPartialRegistration() throws Exception {
         byte[] config=SourceJson.canonical(requests("request-jsonl-v2"));
