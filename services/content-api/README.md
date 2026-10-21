@@ -338,3 +338,34 @@ git diff --cached --check
 ```
 
 The `postgres` command requires DDIP_TEST_DB_URL/USER/PASSWORD and, in CI, DDIP_TEST_PYTHON as documented for B1. Tests create/drop only isolated random test databases. No live feed, production data, Spark execution or cloud service is required. Current executed counts/evidence are in the supporting B2a contract; B1 figures above remain historical. Hosted CI awaits owner publication. B2b must add run DTOs/capture/imports; C–F must add ownership/supervision/adapters/recovery/UI. None is implemented by registering an enabled source.
+
+## E5 B2b-1 import review checkpoint
+
+B2b-1 verified artifact imports were authorized on October 21, 2026 with an explicit stop for an incompatible ownership model. Inspection reached that stop: [Proposed ADR 0011](../../docs/adr/0011-artifact-import-maintenance-ownership.md) describes the required durable maintenance owner and quiescence-checked abandoned-import closure. The current coordinator represents only run-attempt ownership; STOPPING plus a host lock does not bind or recover an import operation. No importer, host guard, native verification wrapper or V7 migration was added. Existing analytics/API/migrate commands and the idle worker retain their B1/B2a behavior.
+
+There is **no runnable import invocation or approved import catalog/profile format yet**. `DDIP_ROLE=operator-import` currently fails with the fixed MANAGEMENT_CONFIGURATION_INVALID diagnostic. Do not use a fake run/attempt, change coordinator mode manually or clear ownership to make an import possible. Do not insert unverified artifacts directly into PostgreSQL. No import HTTP endpoint exists.
+
+After owner approval, B2b-1 must provide the fixed non-web role in the existing packaged JAR, exact invocation, strict private catalog/runtime/storage configuration, identity-checked persistent installation guard and read-only native qualification. Only v2 Reliability JSONL/Parquet-profile batches, publisher/service snapshots and explicitly selected completed Silver history are in scope. Spark is needed only for bounded read-only Silver qualification; batches/references have Spark-free readers. The importer must use the existing artifact/dependency tables, compare immutable native/evidence identities, reverify every import and atomically store its result/audit. Historical registry qualification never guarantees current native readability.
+
+The [checkpoint contract and local validation](../../docs/architecture/durable-execution.md#stage-b2b-1-inspection-and-owner-review-checkpoint) describe the inspected interfaces and remaining test matrix. Existing synthetic reader/regression commands validate the baseline; they do not execute an import:
+
+```sh
+export JAVA_HOME="$(/usr/libexec/java_home -v 21)"
+export PATH="$JAVA_HOME/bin:$PATH"
+export PYSPARK_PYTHON="$PWD/outputs/silver-python312/.venv/bin/python"
+export SPARK_LOCAL_IP=127.0.0.1 TZ=UTC PYTHONPATH=processing
+mvn -o -B -ntp -f services/content-api/pom.xml test
+"$PYSPARK_PYTHON" -m unittest discover -s processing/tests -p test_reliability_format_inputs.py -v
+"$PYSPARK_PYTHON" -m unittest discover -s processing/tests -p test_publisher_reference.py -v
+"$PYSPARK_PYTHON" -m unittest discover -s processing/tests -p test_reliability_inputs.py -v
+"$PYSPARK_PYTHON" -m unittest discover -s processing/tests -p test_silver_inputs.py -v
+# Dedicated PostgreSQL test-service variables are required as documented above.
+mvn -o -B -ntp -f services/content-api/pom.xml verify -Ppostgres
+mvn -o -B -ntp -f services/content-api/pom.xml verify -Pintegration \
+  -Danalytics.python="$PYSPARK_PYTHON"
+npm run check
+git diff --check
+git diff --cached --check
+```
+
+The JDK selector above is macOS-specific; on other hosts set JAVA_HOME to the installed Java 21 runtime. Use an already provisioned Python 3.12.15/PySpark 4.0.2/DuckDB 1.4.5 environment and the existing synthetic API fixtures. No packages are installed by these checks. B2b-2 still needs completed import ownership/verification/persistence, opaque registered selections, exact source/profile capture and use-time revalidation. Run submission, processing/publication, worker execution and E5 completion remain pending separate authorization.

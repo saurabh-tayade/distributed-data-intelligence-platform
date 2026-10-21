@@ -1,6 +1,6 @@
 # Durable execution and source controls
 
-Status: **Accepted — October 20, 2026**, with the Stage A.1 refinements, under [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md). The owner authorized B1 and subsequently **B2a source management only**. B2b run/import work and C–F processing/control/UI workflows remain planned and unauthorized. Implementation and executed evidence are recorded separately; acceptance alone passes no E5 test group. Accepted ADRs 0001–0009/data contracts and the wider Proposed product specification keep their existing status.
+Status: **Accepted — October 20, 2026**, with the Stage A.1 refinements, under [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md). B1 and B2a are implemented. On October 21 the owner authorized **B2b-1 verified artifact imports only**, with an explicit stop for incompatible maintenance ownership. Inspection reached that [owner-review checkpoint](#stage-b2b-1-inspection-and-owner-review-checkpoint); the proposed correction is not accepted or implemented. B2b-2 submission and C–F processing/control/UI workflows remain unauthorized. Implementation and executed evidence are recorded separately; acceptance alone passes no E5 test group. Accepted ADRs 0001–0009/data contracts and the wider Proposed product specification keep their existing status.
 
 ## Boundary and invariants
 
@@ -510,3 +510,87 @@ Independent test expectations include literal hashes, exact status/data/count/au
 The existing CI postgres profile automatically includes SourceManagementIT; no CI job names, service pins or dependencies changed. Hosted CI remains **pending owner publication**, not observed as passed. Nonfatal existing optional Maven metadata-feed 401 and JVM agent warnings remain; negative tests intentionally emit fixed startup-failure messages. Full Python/Spark/React suites were not run for this Java-only metadata/API checkpoint; their code/contracts are unchanged. The actual Vite server/browser UI was not exercised; its preserved-Host proxy contract was tested directly through the backend.
 
 B2a is implemented and locally tested; no whole E5 acceptance group is claimed complete. B2b still owns run schemas/submission, exact source/revision/private-endpoint capture and qualified artifact imports; C–F own host ownership, native processing, RSS recovery, controls and Operations. Catalog/native source truth and non-sensitive labels remain trusted operator responsibilities. Root readiness is not established by source metadata. Legacy null endpoint evidence is not fetch-ready; no automated repair/backfill is performed. Default ephemeral cursors expire on restart unless a persistent signing key is configured. E6 authentication/exports, E4a benchmarks and automatic scheduling remain deferred.
+
+## Stage B2b-1 inspection and owner-review checkpoint
+
+Current scope: verified imports of completed native inputs only, authorized October 21, 2026. Repository entry was clean, including the index, at `b0ffd78eb8e9597d74241c679c2b473facec12ac` on the existing owner-prepared `feature/e5-durable-execution-source-controls` branch. Historical B1/B2a results above are separate from the checks recorded here.
+
+**Implemented at this checkpoint:** inspection documentation and [Proposed ADR 0011](../adr/0011-artifact-import-maintenance-ownership.md). No import application role, catalog parser, Python wrapper, host guard, registry repository or migration has been implemented. B2b-1 and durable execution are incomplete.
+
+### Coordination blocker and proposed correction
+
+The accepted boundary requires one durable maintenance/import owner in the same coordinator slot. Current V1–V6 can bind only a run attempt: V1 pairs worker owner/attempt fields, V3 adds the composite attempt/instance/epoch FK, V4 makes recovery controls run/attempt-specific, and V5 seals the coordinator field set. B1's idle-mode update checks only `active_attempt_id IS NULL`, so STOPPING without an attempt is still considered idle. A mode flag/host lock alone cannot bind an import identity or resolve its abandoned ownership. Creating a synthetic run/attempt would violate this checkpoint.
+
+ADR 0011 proposes a forward V7 with one import-operation intent/result table, an exclusive import-owner pointer on the existing coordinator, conditional terminalization and explicit quiescence-checked local closure of abandoned imports. It retains existing coordinator modes, run/attempt/control states, short transactions and the existing artifact registry. This adds an ownership/recovery family beyond the accepted attempt-only transaction contract, so it is proposed for owner approval before implementation. The accepted ADR and V1–V6 are unchanged. No SQL migration is supplied or applied by this checkpoint.
+
+An additional persistence requirement is native-identity uniqueness: V2's native-identity index is nonunique, while location uniqueness and immutable evidence guards already exist. The proposal specifies an additive native key constraint, failing on existing duplicates without automatic repair. Registry commit must serialize dependency insertion under the coordinator and commit the import result/audit in the same transaction.
+
+### Native verification feasibility and boundaries
+
+| Selected input | Existing authoritative interface | Requirements for the future importer |
+| --- | --- | --- |
+| Reliability JSONL v2 registered batch | `reliability_format_inputs.open_batch(root, 'JSONL', source_id, batch_id, expected_fingerprint)` | Spark-free. V2 manifest/completion, exact source/batch/format, reviewed v2 profile, inventory/hashes/lengths and actual physical record counts are verified. Match registered profile bytes/hash to the approved binding; never route a v1 registration through this interface |
+| Parquet-v1 registered batch under Reliability v2 profile | Same `open_batch` with `'PARQUET'`; `reliability_format_parquet` | Spark-free; requires pinned DuckDB 1.4.5. Checks literal typed schema, DuckDB writer provenance, decoder/profile, footer/row-group limits and raw physical records, rather than a filename extension |
+| Publisher-reference snapshot | `publisher_reference.open_snapshot(root, reference_id, revision, expected_fingerprint)` | Spark-free. Verifies original manifest/completion, exact identity, CSV schema/count/hash and retained vocabulary compatibility; no authoring/upload interface |
+| Service-reference snapshot | `service_reference.open_snapshot` with the same identity arguments | Spark-free. Independent complete snapshot and retained CSV/vocabulary validation; no service-reference creation by imports |
+| Completed Silver | `silver_inputs.load_inputs(spark, root, markers=[exact_relative_marker])`, then `verify_unchanged()` | Requires Spark, including physical schema checks and full row/provenance/replay/count validation. No source discovery or globs. Add bounded read-only capture of original marker bytes, every accepted/rejected file and permitted bookkeeping, directory/file identities, lengths and hashes before/after qualification. Reject aliases/symlinks and extra files at the stronger managed boundary |
+
+Silver's current standalone reader permits in-root aliases and excludes hidden Spark bookkeeping from its analytical inventory. Managed import must capture/recheck bookkeeping and reject path aliases, rather than silently claiming the existing reader already enforces the stronger E5 boundary. Its broad INPUT_CHANGED failure can include inability to reread; use independent managed observations to distinguish demonstrated mutation from unavailable/invalid evidence and retain the native code.
+
+Under accepted ADRs 0003/0004 the Silver reader validates retained Bronze provenance in the marker/rows; it does not reopen original Bronze objects or prove their current readability/authenticity. No such Bronze verification was implemented or claimed here. Required retained dependencies must be explicit per native contract; embedded snapshot vocabulary/raw batch files must remain available. Do not invent batch-to-reference edges when a native registered batch has no reference dependency. Where a selected contract requires retained external evidence, its absence must fail before import commit.
+
+The existing `storage_bindings`/`execution_profiles` tables store immutable bounded private configuration bytes, not an implemented import root/runtime resolver. B2a's reviewed source catalog approves RSS endpoints, Reliability profiles and BRONZE/BATCH IDs; it does not validate filesystem root readiness. The future importer needs fixed versioned private binding/catalog schemas, installation/root/file identity checks, exact selections and bounded subprocess protocol. The existing analytical process runner has query-specific limits and best-effort descendant cleanup; it is not proof of safe Spark cleanup or durable import ownership.
+
+### Planned import contract after ownership approval
+
+Acceptance is the requested B2b-1 matrix: full native qualification before trust, immutable native identity/evidence, idempotent fully reverified imports, native/location conflicts, atomic dependency/result/audit persistence, fail-closed missing/corrupt/changed/I/O evidence, bounded operator summaries and crash-safe exclusion. Re-import must compare exact immutable evidence and dependencies and reuse the existing opaque artifact ID only after fresh verification. Historical `verified_at` is qualification history, never permanent readability or integrity. A Silver E5 inventory digest must be labeled operational evidence, not an original Silver publication fingerprint.
+
+Use only local non-web `operator-import` from the existing packaged Spring application, private operator-supplied exact catalog, fixed kinds and server-owned storage/runtime bindings. No client commands/absolute artifact paths, HTTP import endpoint, directory/latest scanner, package installation or shell interpolation. Verification remains outside SQL transactions. The [operational checkpoint](../../services/content-api/README.md#e5-b2b-1-import-review-checkpoint) distinguishes the intended role from currently runnable commands. Approval/testing must precede documenting a working import invocation.
+
+### Executed validation and remaining scope
+
+Local environment: macOS ARM64; Java 21.0.7 explicitly selected for Maven/Spark (the shell's Maven default would otherwise use Java 27); Maven 3.10.0; Python 3.12.15; DuckDB 1.4.5; PySpark 4.0.2; official PostgreSQL 17.11 in the existing isolated `ddip-b1-postgres-test` container on loopback port 15432. Node 26.12.0 ran the installed documentation checks; the repository's constrained Node 24 environment was not requalified. No dependencies were installed or changed.
+
+| Actual command/check | Outcome |
+| --- | --- |
+| `mvn -o -B -ntp -f services/content-api/pom.xml test` | Passed: 180 unit/component tests, zero failures/errors/skips. Includes database-free analytics startup and deliberate rejection of the unavailable import role |
+| `mvn -o -B -ntp -f services/content-api/pom.xml verify -Ppostgres` | Passed: 180 repeated unit/component tests plus 63 real PostgreSQL tests (28 PersistenceIT, 35 SourceManagementIT), zero failures/errors/skips. Tests create/drop only their own random databases |
+| Disposable V1–V6 PostgreSQL ownership probe | Passed 6 diagnostic assertions: no import-owner column; deferred attempt-owner FK exists; B1 idle predicate can change STOPPING back to READY; invented MAINTENANCE mode rejected; owner without an attempt rejected; same native identity/different location and evidence accepted by current SQL constraints. Probe transaction rolled back and only its generated database was dropped. These observations confirm current limitations, not successful import guarantees |
+| `mvn -o -B -ntp -f services/content-api/pom.xml verify -Pintegration -Danalytics.python="$PWD/outputs/silver-python312/.venv/bin/python"` | Passed: 180 repeated unit/component tests plus 20 HTTP/Python compatibility tests, zero failures/errors/skips; existing synthetic fixtures used without regeneration |
+| Python `-m unittest discover -s processing/tests -p test_reliability_format_inputs.py -v` | Passed: 10 existing tests, actual JSONL v2/Parquet profile registration/opening, format/provenance/physical positions and error boundaries |
+| Same discovery with `test_publisher_reference.py` | Passed: 46 existing tests, actual reference opening, vocabulary/schema/identity/retention and byte/mtime preservation/error boundaries |
+| Same discovery with `test_reliability_inputs.py` | Passed: 17 existing tests, including actual service-reference opening/replay/corruption and legacy v1 compatibility; v1 acceptance here does not authorize v1 E5 import |
+| Same discovery with `test_silver_inputs.py` | Passed: 19 existing Spark tests, actual completed Silver counts/schema/provenance/replay/inventory and mutation checks. Synthetic fixtures only; no stronger managed-import capture is claimed |
+| Same discovery with `test_reliability_format_verification.py` | Passed: 15 existing independent verifier/retained-dependency/read-only replay tests. Completed output fixtures remain native reader regression evidence, not authorization to import those output kinds |
+| `npm run check` | Passed: 44 Markdown files, zero lint/local-link issues; repository hygiene passed |
+| `git diff --check`, `git diff --cached --check` | Passed; index unchanged and empty |
+
+Python commands used the existing `outputs/silver-python312/.venv/bin/python`, `PYTHONPATH=processing`, and, for Spark, JAVA_HOME/PATH for Java 21, PYSPARK_PYTHON pointing to that executable, SPARK_LOCAL_IP=127.0.0.1 and TZ=UTC. The [operational guide](../../services/content-api/README.md#e5-b2b-1-import-review-checkpoint) gives the reproduction commands. Final test commands passed; the first restricted Maven invocation failed before running tests because its cache lock directory was outside the writable sandbox. The same command passed with authorized cache/local-socket access; no assertion or runtime setting was weakened. Existing expected negative-startup/Spark diagnostics did not fail tests.
+
+The six database probe observations can also be inspected in a disposable V1–V6 test database. This fragment demonstrates the consequential idle predicate and native index properties; roll back all mode changes and never run a diagnostic mode update against an operational installation:
+
+~~~sql
+BEGIN;
+SELECT column_name FROM information_schema.columns
+WHERE table_schema='ddip_management' AND table_name='coordinator'
+ORDER BY ordinal_position;
+SELECT pg_get_constraintdef(oid) FROM pg_constraint
+WHERE conrelid='ddip_management.coordinator'::regclass
+  AND conname='coordinator_attempt_owner_fk';
+SELECT indexdef FROM pg_indexes WHERE schemaname='ddip_management'
+  AND indexname='artifacts_native_identity_idx';
+-- Fresh synthetic coordinator starts READY/version 0 with no attempt.
+UPDATE ddip_management.coordinator SET mode='STOPPING',row_version=row_version+1
+WHERE singleton_id=1 AND row_version=0 AND active_attempt_id IS NULL
+RETURNING mode,row_version;
+UPDATE ddip_management.coordinator SET mode='READY',row_version=row_version+1
+WHERE singleton_id=1 AND row_version=1 AND active_attempt_id IS NULL
+RETURNING mode,row_version;
+ROLLBACK;
+~~~
+
+All 107 native-reader tests above are existing baseline cases; repeated Maven unit suites are not counted as additional unique coverage. No import ownership, native import acceptance, registry import idempotency, process exclusion or import crash guarantee has been tested because those features remain unimplemented. Full processing/ingestion/frontend regressions were not run at this documentation-only stop. Hosted CI remains unobserved.
+
+Only four documentation files changed: this contract, the service operational guide, Proposed ADR 0011 and the ADR index. No production code, V1–V6, dependency, CI, native contract, retained personal dataset or Git index was changed. Logs/build outputs remain ignored under outputs/target. The dedicated PostgreSQL test container was restored to its original stopped state with its volume retained; operational PostgreSQL, unrelated containers and SeaweedFS were not started or altered. Docker Desktop was started for the local test service. No Git/GitHub mutation, live publisher request, AWS resource, benchmark workload or operational processing run occurred.
+
+**Planned B2b-1:** owner-approved maintenance protocol/migration, role/catalog/profile resolver, bounded native qualification/evidence capture, transactional registry identity/result/audit repository and the complete synthetic/native/PostgreSQL/process failure matrix. **B2b-2 dependencies:** completed B2b-1; opaque artifact-ID selection/read APIs as authorized, exact source/profile/private endpoint capture, use-time revalidation of registry evidence and dependencies, and admission/idempotency transactions. Do not accept arbitrary filesystem selections or treat historical qualification as fresh verification. **Deferred:** run submission/dispatch, managed publication/worker execution, run controls, Operations UI and all other exclusions in the B2b-1 request. No whole E5 acceptance group or hosted CI result is claimed.
