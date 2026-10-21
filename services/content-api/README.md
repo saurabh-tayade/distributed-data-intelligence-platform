@@ -974,3 +974,141 @@ stage INTENT/launch recheck/process-identity persistence, bounded process superv
 publication verification and atomic result registration before enabling dispatch. Content,
 RSS journaling, run controls and explicit execution-owner reconciliation remain later work.
 C1 does not complete Checkpoint C or E5. Hosted CI remains pending owner publication/observation.
+
+## C2a Reliability read-only preflight
+
+**Production dispatch is still disabled.** No command, environment flag or HTTP request enables
+C2a as an executor. Starting the existing worker remains passive; real runs remain QUEUED.
+`ReliabilityPreflight.verify(guard, owner, executionRuntimeId, checkpointId)` is an internal seam
+for C2b and isolated test-owned attempts, not a new operator entry point. It cannot publish,
+reserve an output namespace, register a result artifact or finish a run successfully.
+
+Only RELIABILITY_V2 with homogeneous request-jsonl-v2 or request-parquet-v1 is supported.
+Preflight uses exact frozen source revisions, batch artifact IDs and one service-reference ID.
+It reopens the selected native namespaces with the authoritative import/native readers and
+joint `reliability_format_inputs.verify_dependencies`, checks original evidence before/after,
+and preserves the native dependency fingerprint. There is no latest selection, directory scan,
+fallback registration or replacement source revision. The native reader requires one approved
+batch root/reference root and compatible native profiles for the whole selected set.
+
+### Execution-only runtime profile
+
+Provision an immutable row in the existing `execution_profiles` store with this exact shape;
+this example is descriptive, not a management API request or runnable production configuration:
+
+```json
+{
+  "executionRuntimeVersion": 1,
+  "pipeline": "RELIABILITY_V2",
+  "runProfileId": "<frozen-run-profile-id>",
+  "runProfileSha256": "<64-lowercase-hex>",
+  "python": "/approved/python312/bin/python",
+  "javaHome": "/approved/jdk21",
+  "processingRoot": "/approved/pinned-deployment/processing",
+  "deploymentSha256": "<frozen-deployment-sha256>",
+  "deploymentRevision": "<40-lowercase-hex-build-revision>",
+  "bindings": {
+    "batch": "approved-batches",
+    "reference": "approved-reference",
+    "output": "approved-reliability",
+    "staging": "approved-staging",
+    "temp": "approved-temp",
+    "control": "approved-control"
+  },
+  "verificationSeconds": 900
+}
+```
+
+The unchanged RunProfile v1 and captured selection pin `runProfileSha256` and deployment SHA.
+Associate the execution-only profile with the same six reviewed storage bindings and installation.
+Each frozen canonical descriptor/root device/inode must match; roots must be disjoint, and
+CONTROL must equal the installation host guard. Staging/temp/control require private ownership
+and permissions. All writer roots must be writable with >=1 GiB usable space per volume.
+An old opaque deployment hash cannot be replaced in a queued run to make it executable.
+
+The deployment includes canonical `e5-reliability-deployment.json`:
+`{deploymentRevision,versions,spark,modules}`. Its SHA-256 equals the frozen deployment SHA;
+`modules` is the exact fixed filename/hash map listed by `ReliabilityRuntime.MODULES` and
+`reliability_execution_preflight.MODULES`. The helper `deployment_manifest(revision, root)`
+is for explicit reviewed provisioning/test setup only; preflight never generates or repairs it.
+Use canonical bytes from the existing `publication_metadata.canonical_bytes` for this manifest.
+The fixed tuple is Java 21, Python 3.12.15, PySpark 4.0.2 and DuckDB 1.4.5. The future Spark
+settings are local[2], shuffle/default parallelism 8, 1024 MiB driver/executor, four output
+partitions, event log false. Java checks its actual JVM; the authorized Python verifier checks
+actual Python/package versions. No Spark session or gateway starts. Dependencies are never
+installed automatically. Package versions and pinned local module hashes are consistency checks,
+not cryptographic authentication of the interpreter, third-party wheels or storage administrator.
+
+### Stage and process evidence
+
+CHECK_INPUTS INTENT is committed before launching the fixed verifier. A separate fenced
+transaction consumes its single command authorization after checking controls and exact
+worker/run/attempt/epoch/row versions. Actual child PID/start/instance identity is persisted
+once observed. No SQL transaction remains open during native verification. The command is an
+explicit argument list: approved Python, `-I -B -X utf8`, fixed deployed
+`reliability_execution_preflight.py`, private `command.json`. It receives no shell or ambient
+AWS/proxy/Python override environment. Stdin is closed; stdout/stderr are discarded with
+independent 16 MiB bounds. Deadline <=15 minutes, cleanup <=5 seconds graceful +5 forced
++5 final drain. Any observed descendant is conservative recovery uncertainty.
+
+Private 0700 CONTROL directories contain exclusive 0600 command/selection/result/evidence
+sidecars and parent `verified.json`. Command/result/validation anchor <=64 KiB each;
+selection/evidence <=16 MiB each. The parent verifies protocol version, run/attempt/stage,
+checkpoint/selection/runtime identities, exit/status agreement, native evidence and exact
+decimal-string counts. The stage result SHA anchors `verified.json`, which hashes the exact
+command, result, evidence and frozen selection and records observed clean cleanup. Keep these
+private descriptors for explicit reconciliation; C2a adds no automatic retention/cleanup job.
+No raw event/CSV/Parquet payload or private descriptor is returned by management inspection.
+
+Native files are opened read-only and checked for unchanged bytes/mtimes. The 32-batch,
+128-file, 1 GiB and 2M-occurrence native budgets and independent DuckDB limits are unchanged.
+Free-space checks are cooperative admission, not quotas. CHECK_INPUTS VERIFIED leaves the
+test-owned run/attempt RUNNING and ownership occupied, with no publication result. A known
+clean read-only failure records stage FAILED only. Invalid results, interruption or uncertain
+cleanup require UNKNOWN/RECOVERY_REQUIRED when a fenced database commit is possible;
+database/ownership failure retains the existing occupied evidence. C2a cannot release or
+recover an execution owner. No heartbeat expiry, process exit or free guard permits takeover.
+
+`inspectCheckInputs` resolves an exact checkpoint to historical INTENT_COMMITTED,
+LAUNCH_UNCERTAIN, CHILD_RECORDED, HISTORICAL_VERIFIED, CONFIRMED_ROLLBACK or UNRESOLVED.
+It grants no launch authority. A lost intent/authorization acknowledgment never causes an
+automatic relaunch. Existing run/attempt/event GETs show persisted stages and the fixed
+STAGE_LAUNCH_AUTHORIZED/RESOURCE_LIMIT classifications without private process information.
+
+### Synthetic reproduction and remaining boundary
+
+Use the pinned local runtimes and only a dedicated disposable PostgreSQL test service. The
+existing PostgreSQL test environment variables are required, plus an absolute DDIP_TEST_PYTHON
+pointing to the approved Python environment. Tests create/drop isolated databases and native
+fixtures; fixture authoring is setup, not part of preflight.
+
+```sh
+JAVA_HOME=$(/usr/libexec/java_home -v 21) \
+PYTHONPATH=processing:processing/tests \
+outputs/silver-python312/.venv/bin/python -B -m unittest \
+  processing/tests/test_reliability_execution_preflight.py -v
+
+mvn -q -f services/content-api/pom.xml verify -Ppostgres \
+  -Dit.test=ReliabilityPreflightIT -Dtest=VerifierProcessTest
+mvn -q -f services/content-api/pom.xml verify -Ppostgres
+mvn -q -f services/content-api/pom.xml verify -Pintegration \
+  -Danalytics.python="$PWD/outputs/silver-python312/.venv/bin/python"
+npm run check
+```
+
+The literal one-batch native dependency SHA is
+`3b9354d578f017cefea8e9ace2556c6ed474afec606722ee01e9fba8e4a39a7a`
+(one file, 2439 bytes, ten physical rows). The fixture pins native original timestamps and
+checks deterministic selection order; operational IDs are excluded from the native identity.
+Current Gate A/B and regression counts are recorded in the
+[C2a implementation contract](../../docs/architecture/durable-execution.md#c2a-validation-and-c2b-boundary).
+
+**Implemented:** internal read-only preflight, fenced stage evidence and bounded supervision.
+**Tested:** local synthetic/native/PostgreSQL evidence in the contract; hosted CI is pending.
+**Planned for separately authorized C2b:** revalidate the retained command/bundle/evidence
+(`recheck` calls full qualification again), construct exact native publisher arguments, implement
+publication stage/process lifecycle, independently verify output and atomically register verified
+results before enabling a production capability. Fresh preflight is point-in-time evidence, not
+permanent readability, a filesystem snapshot or proof of future aggregate correctness.
+**Deferred:** all production publication/dispatch, Content execution, automatic recovery/retry,
+new run-control endpoints, activation and E5 completion. STOP at C2a.

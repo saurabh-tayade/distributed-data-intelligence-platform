@@ -145,6 +145,17 @@ class RunHistoryIT extends RunApiFixtures {
         String id=run(),other=run();UUID attempt=attempt(id,worker(),1,"FAILED");byte[] b=bytes("{}");jdbc.update("INSERT INTO ddip_management.audit_events(actor_scope,run_id,attempt_id,action,safe_code,details_bytes) VALUES ('local-operator',?,?,'ATTEMPT_FINISHED','INPUT_INVALID',?)",uuid(id),attempt,b);var events=data(real(RUNS+"/"+id+"/events"));assertThat(events.get(1).get("context").get("attemptId").stringValue()).isEqualTo(attempt.toString());jdbc.update("INSERT INTO ddip_management.audit_events(actor_scope,run_id,attempt_id,action,safe_code,details_bytes) VALUES ('local-operator',?,?,'ATTEMPT_FINISHED','INPUT_INVALID',?)",uuid(other),attempt,b);error(real(RUNS+"/"+other+"/events"),500,"INTERNAL_FAILURE");
     }
 
+    @Test void preflightAuthorizationAndResourceFailureAreSafePublicEvents()throws Exception {
+        String id=run();UUID attempt=attempt(id,worker(),1,"RUNNING");
+        jdbc.update("INSERT INTO ddip_management.audit_events(actor_scope,run_id,attempt_id,action,before_state,after_state,safe_code,details_bytes) VALUES ('local-operator',?,?,'STAGE_LAUNCH_AUTHORIZED','INTENT','INTENT','STARTED',?)",uuid(id),attempt,bytes("{}"));
+        jdbc.update("INSERT INTO ddip_management.audit_events(actor_scope,run_id,attempt_id,action,before_state,after_state,safe_code,details_bytes) VALUES ('local-operator',?,?,'STAGE_FAILED','RUNNING','FAILED','RESOURCE_LIMIT',?)",uuid(id),attempt,bytes("{}"));
+        var events=data(real(RUNS+"/"+id+"/events"));
+        assertThat(events.get(1).get("action").stringValue()).isEqualTo("STAGE_LAUNCH_AUTHORIZED");
+        assertThat(events.get(2).get("code").stringValue()).isEqualTo("RESOURCE_LIMIT");
+        assertThat(events.get(2).get("context").get("attemptId").stringValue()).isEqualTo(attempt.toString());
+        assertThat(new String(SourceJson.canonical(events),java.nio.charset.StandardCharsets.UTF_8)).doesNotContain("command.json","selection.json","evidence.json",url,password);
+    }
+
     @Test void boundedAttemptPageIncludesPersistedReconciliationKind()throws Exception {
         String id=run();UUID instance=worker();for(int n=1;n<20;n++)attempt(id,instance,n,"FAILED");UUID reconcile=UUID.randomUUID();jdbc.update("INSERT INTO ddip_management.attempts(attempt_id,run_id,attempt_no,kind,instance_id,owner_epoch,state,finished_at,outcome_code) VALUES (?,?,20,'RECONCILE',?,20,'FAILED',now(),'INPUT_UNAVAILABLE')",reconcile,uuid(id),instance);var page=real(RUNS+"/"+id+"/attempts?limit=100");var rows=data(page);assertThat(rows.size()).isEqualTo(20);assertThat(rows.get(19).get("kind").stringValue()).isEqualTo("RECONCILE");assertThat(rows.get(19).get("stageCount").stringValue()).isEqualTo("0");assertThat(page.json().get("meta").get("hasMore").booleanValue()).isFalse();
     }

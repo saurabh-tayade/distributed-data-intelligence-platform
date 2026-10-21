@@ -1132,3 +1132,245 @@ requires explicit future reconciliation, and C1 supplies no operator execution-o
 command. No packaging/runtime authenticity, hostile-storage, other-host orphan cleanup,
 power-loss/backup restore or hosted CI guarantee is inferred. Native inputs remain subject to
 fresh worker-side revalidation before consumption; historical qualification is not readability.
+
+## C2a Reliability preflight acceptance boundary
+
+The owner authorizes C2a read-only runtime/native preflight and CHECK_INPUTS persistence only.
+Production WorkerExecutionCapability.NONE stays fixed; no queued production run may be claimed.
+Gate A must qualify actual small native JSONL/Parquet/reference selections and the pinned runtime,
+without native writes. Only after Gate A passes may Gate B integrate real PostgreSQL intent,
+fenced single launch, process identity, result/cleanup evidence and failure injection.
+No publication, output namespace reservation, final result verification or run success is included.
+V1–V7 already represent the fixed stage; accepted ADRs and native contracts remain unchanged.
+
+### Fixed runtime and frozen native selection
+
+C2a implements the internal `ReliabilityPreflight.verify` operation, not a production runner,
+HTTP endpoint or selectable executor. `WorkerExecutionCapability.NONE` remains the production
+capability. Real submissions stay QUEUED; a READY worker still cannot drain the queue. Only
+isolated test-classpath C1 capabilities can claim an attempt and invoke this operation.
+Successful CHECK_INPUTS is neither a successful run nor a verified publication.
+
+`RunProfile` v1 remains unchanged and metadata-only. A separately provisioned immutable
+`execution_profiles` row has `executionRuntimeVersion=1`, `pipeline=RELIABILITY_V2`, the frozen
+`runProfileId`/`runProfileSha256`, trusted `python`, `javaHome`, `processingRoot`,
+`deploymentSha256`, `deploymentRevision`, `bindings` and `verificationSeconds` (1–900).
+The six binding keys are exactly batch/reference/output/staging/temp/control, with existing
+BATCH/REFERENCE/RELIABILITY/STAGING/TEMP/CONTROL roles. Each is associated with this execution
+profile and installation and must equal the corresponding frozen descriptor. Roots are
+canonical, identity-pinned, disjoint, readable, and writer roots are writable; staging/temp/control
+are private. CONTROL is exactly the held host binding. Deployment files are outside these roots.
+This is an execution-only compatibility boundary, not another profile store or client setting.
+Old run profiles are never rewritten to make them runnable; incompatible pins require a new
+reviewed profile and submission.
+
+The approved deployment contains canonical `e5-reliability-deployment.json` with exactly
+`deploymentRevision` (40 lowercase hex), `versions`, `spark` and `modules`. Its SHA-256 must
+equal the frozen run profile's deployment SHA and the execution-only descriptor's SHA.
+`modules` maps each fixed filename in `ReliabilityRuntime.MODULES` to its exact file SHA-256;
+the same allowlist is checked in Python. It includes the fixed preflight and authoritative native
+readers/validators, not a client-selected module. Java and the child check manifest/module bytes
+before and after qualification. These hashes establish deployment consistency, not authenticity
+against a trusted operator modifying both code and pins.
+
+Actual Java must be 21; the authorized read-only Python child checks Python **3.12.15**,
+PySpark **4.0.2** and DuckDB **1.4.5**. Importing PySpark does not start a Spark session/gateway.
+The pinned future Spark configuration is local[2], shuffle/default parallelism 8, driver/executor
+1024 MiB, output partitions 4 and event logging false, validated with the native configuration
+validator. No dependency install, runtime fallback, Spark normalization or publication occurs.
+The environment is cleared and rebuilt with only PATH, TZ, LANG, JAVA_HOME, TMPDIR and fixed
+BLAS/OpenMP thread limits. No ambient AWS credentials, proxies or Python executable overrides
+are inherited. The exact trusted executable and fixed script use an argument list, never a shell.
+
+The immutable canonical captured selection is revalidated under C1 fencing. Its profile,
+synthetic-only source revisions, registered evidence digests, exact source/batch correspondence,
+homogeneous JSONL-v2 or Parquet-v1 input profile and service reference must agree. Current source
+enablement remains the C1 claim gate; a later source edit does not replace frozen configuration.
+Historical registry qualification alone is insufficient. Existing import namespace/capture helpers
+and full native `reliability_format_inputs.open_batch` / `service_reference.open_snapshot` checks
+are mandatory, followed by **one joint** `reliability_format_inputs.verify_dependencies` and
+`Dependencies.check`. Native profiles and selected roots must satisfy that reader's compatibility
+rules; there is no multi-root union, latest lookup or substitution.
+
+The child compares fresh completion bytes, exact file inventory/hash/length and filesystem stamps
+to imported evidence, invokes format-specific physical/provenance verification, then recaptures
+all selected evidence after the joint verification. The unchanged native dependency manifest and
+its native fingerprint are recorded privately. Literal synthetic JSONL dependency vector:
+
+~~~text
+SHA256(canonical(nativeDependencies)) =
+3b9354d578f017cefea8e9ace2556c6ed474afec606722ee01e9fba8e4a39a7a
+files=1, bytes=2439, rows=10
+~~~
+
+`reliability_preflight_fixtures.py` pins the original fixture timestamps and native evidence; the
+test checks this literal independently of generated operational IDs. Multi-batch ordering is
+deterministic. This is an existing native dependency identity, not a newly published Reliability
+fingerprint. No operational UUID, timestamp, root or worker identity is added to it.
+
+Existing native budgets remain authoritative: 32 batches, 128 raw files, 1 GiB raw selection,
+2 million physical occurrences and the existing file/row-group/metadata limits. DuckDB uses
+its independent two-thread, 512 MiB, no-spill/extension-install policy. At least **1 GiB available
+space on each relevant writer volume** is checked before authorization and at heartbeat/final
+checks. Staging/output/scratch are fixed but no output namespace is reserved. These are
+cooperative admission checks, not quotas or a guarantee that space stays available.
+
+### CHECK_INPUTS commit, launch and private evidence
+
+No SQL transaction spans runtime filesystem checks or native verification. The flow is:
+
+1. Revalidate the exact claimed owner and frozen selection; resolve and check approved runtime.
+2. Write bounded private command/selection sidecars under the held CONTROL root.
+3. Atomically mark CLAIMED → RUNNING when needed, insert CHECK_INPUTS/ordinal 0 INTENT, set
+   current stage and append ATTEMPT_STARTED/STAGE_INTENT. Commit before launch.
+4. Recheck runtime, exact command/selection bytes, host guard, worker/attempt/epoch, applicable
+   versions, RUNNING state and outstanding controls. In a separate short transaction bind the
+   immutable intended command digest/address and append STAGE_LAUNCH_AUTHORIZED.
+5. Launch once only after confirmed authorization. Persist observable PID/start instant/instance
+   identity with STAGE_STARTED, then run bounded read-only verification outside transactions.
+6. Validate exit/result agreement, exact identities, fresh bounded evidence and confirmed observed
+   process cleanup. Write a parent validation anchor; conditionally commit STAGE_VERIFIED and
+   stage result/counts. Run/attempt remain RUNNING and coordinator ownership stays occupied.
+
+The existing C1 coordinator-first fencing and repository failure latch apply to every mutation;
+zero-row CAS never adopts a new token. SQL statements only run inside short transactions.
+INTENT's `intended_identity` is the command digest for this read-only stage, not a product
+fingerprint. `command_address` is initially null; binding it consumes the single authorization.
+The state stays INTENT until the observed child identity can be committed. Bound command with
+no recorded child is **LAUNCH_UNCERTAIN**, not proof that no child started. No new stage state,
+run state, maintenance owner, queue or migration is introduced.
+
+Private directory: `runs/<run>/attempts/<attempt>/check-inputs/<checkpoint>` under CONTROL.
+Directories are 0700 and files 0600, created exclusively, with no-follow/identity/stability checks.
+The fixed sidecars are `command.json`, `selection.json`, `result.json`, `evidence.json` and
+`verified.json`. Canonical UTF-8 JSON rejects duplicate fields, floats, noncanonical bytes and
+unsupported protocol shapes. Command/result/anchor are <=64 KiB each; selection/evidence are
+<=16 MiB each. No raw JSONL/Parquet/CSV payload is stored. Native metadata descriptors are private.
+
+Command v1 binds run/attempt/epoch, CHECK_INPUTS/ordinal 0, checkpoint UUID, canonical captured
+selection SHA, execution-runtime profile ID/SHA/configuration, fixed selection filename and bundle
+SHA. Result v1 binds run/attempt/stage/ordinal, status OK or FAILED, fixed code, evidenceId and
+decimal-string counts. Exit 0 requires OK with checkpoint evidenceId; exit 1 requires an
+allowlisted FAILED result. The private evidence binds the same identities plus policy
+`E5_RELIABILITY_PREFLIGHT_V1`, actual runtime tuple, deployment SHA, exact imported evidence
+digests/captures, native dependency manifest/fingerprint and aggregate files/bytes/rows.
+
+The parent verifies those identities and counts, then writes `verified.json` binding the command,
+result, evidence and captured-selection SHA values, checkpoint, native dependency fingerprint and
+`OBSERVED_CLEAN_EXIT`. The stage's result address/SHA anchors this wrapper. Successful
+CHECK_INPUTS creates no artifact, stage-artifact link, publication fingerprint or run result.
+Existing history shows currentStage CHECK_INPUTS, persisted stage count/events and no invented
+result/counts at run level. The only public allowlist additions are STAGE_LAUNCH_AUTHORIZED
+and RESOURCE_LIMIT; private descriptors, commands, raw streams and roots remain absent.
+
+### Supervision, interruption and acknowledgment ambiguity
+
+The dedicated supervisor closes stdin, concurrently drains/discards stdout/stderr with independent
+16 MiB bounds, and enforces a configured deadline <=15 minutes. Cleanup allows up to 5 seconds
+graceful, 5 seconds forced and 5 seconds final drain. Heartbeats are short fenced operations every
+5 seconds, without heartbeat audits; database failure authorizes no further work. The fixed reader
+is not expected to spawn children. Any observed descendant is conservatively uncertain, even if
+identity-aware termination succeeds. PID/start identity is checked before killing observed handles.
+No universal macOS/Linux process-tree containment or proof about unobserved descendants is claimed.
+
+Known, cleanly terminated read-only failures can close the **stage only** as FAILED with fixed
+INPUT_UNAVAILABLE/INPUT_INVALID/INPUT_CHANGED/RUNTIME_MISMATCH/RESOURCE_LIMIT or process-bound
+codes. The run/attempt/slot remain occupied; C2a does not supply terminal pipeline failure/release.
+Invalid result protocol, interruption or uncertain termination marks stage UNKNOWN, interrupts the
+attempt and moves the run/coordinator to RECOVERY_REQUIRED/RECOVERY_ONLY when the current
+owner and database can commit that change. If ownership/database finalization is uncertain,
+the existing occupied state is retained instead. No timeout, heartbeat age, JVM exit or free host
+guard releases ownership. Recovery remains explicitly authorized future work.
+
+Intent, authorization and finalization use stable checkpoint identity. A lost acknowledgment stops
+the call without another launch. `inspectCheckInputs` returns historical classification only:
+CONFIRMED_ROLLBACK, INTENT_COMMITTED, LAUNCH_UNCERTAIN, CHILD_RECORDED,
+HISTORICAL_VERIFIED or UNRESOLVED. It cannot refresh ownership or authorize continuation.
+Even a confirmed historical verification does not establish current dependency readability.
+
+### C2a validation and C2b boundary
+
+Gate A completed before PostgreSQL integration: **30 native tests passed**, using actual JSONL,
+Parquet and service-reference readers, joint dependency verification, literal/deterministic identity,
+runtime/module/root mismatch, missing/corrupt/changed evidence, disk limits and exact unchanged
+native bytes/mtimes. Gate B passed **36 real PostgreSQL cases and 11 supervisor unit cases**.
+All fixtures are small, synthetic and isolated; fixture authoring is test setup, never preflight.
+
+Final local validation on October 21, 2026 used Java 21.0.7, Python 3.12.15, PySpark 4.0.2,
+DuckDB 1.4.5 and the dedicated PostgreSQL 17.11 test container. Exact underlying commands
+(DB credentials supplied only through the existing private test environment):
+
+~~~sh
+# Gate A, before PostgreSQL integration: 30 passed
+JAVA_HOME=$(/usr/libexec/java_home -v 21) PYTHONPATH=processing:processing/tests \
+outputs/silver-python312/.venv/bin/python -B -m unittest \
+  processing/tests/test_reliability_execution_preflight.py -v
+
+# Gate B: 11 Java + 36 PostgreSQL passed
+mvn -q -f services/content-api/pom.xml verify -Ppostgres \
+  -Dit.test=ReliabilityPreflightIT -Dtest=VerifierProcessTest
+
+# Full regression: 272 Java + 347 PostgreSQL passed, no skips/failures/errors
+mvn -q -f services/content-api/pom.xml -Ppostgres \
+  -Dddip.test.worker-restart-signal=/private/tmp/ddip-c1-worker-restart \
+  -Dddip.test.history-restart-signal=/private/tmp/ddip-c1-history-restart verify
+
+# Additional real HTTP allowlist case added after the full run: 1 passed
+mvn -q -f services/content-api/pom.xml verify -Ppostgres \
+  '-Dit.test=RunHistoryIT#preflightAuthorizationAndResourceFailureAreSafePublicEvents' \
+  -Dtest=NoUnitTests -Dsurefire.failIfNoSpecifiedTests=false
+
+# 85 native tests passed (includes the same 30 C2a cases, not 115 distinct cases)
+JAVA_HOME=$(/usr/libexec/java_home -v 21) PYTHONPATH=processing:processing/tests \
+outputs/silver-python312/.venv/bin/python -B -m unittest \
+  processing/tests/test_reliability_execution_preflight.py \
+  processing/tests/test_reliability_format_inputs.py \
+  processing/tests/test_reliability_format_admission.py \
+  processing/tests/test_reliability_format_verification.py \
+  processing/tests/test_reliability_inputs.py \
+  processing/tests/test_reliability_verification.py -v
+
+# 272 Java + 20 HTTP/Python compatibility cases passed
+JAVA_HOME=$(/usr/libexec/java_home -v 21) \
+mvn -q -f services/content-api/pom.xml verify -Pintegration \
+  -Danalytics.python="$PWD/outputs/silver-python312/.venv/bin/python"
+npm run check
+git diff --check
+git diff --cached --check
+~~~
+
+Across the full PostgreSQL regression and the additional HTTP case, **348 distinct PostgreSQL
+tests passed**: the existing 311, 36 C2a stage cases and one safe-event HTTP case. The 23
+Spark-backed Silver import regressions are included, with no C2a Reliability publication.
+The external restart harness observed READY signals, restarted only the disposable server and
+required later postmaster start times at both C1/history barriers. This tests existing claim/history
+durability; C2a does not claim a separate power-loss or process-tree containment guarantee.
+
+Gate B uses actual native JSONL/Parquet fixtures and actual controlled JVM children. It proves
+intent visibility before launch, observed PID persistence, cancellation/version/epoch fencing,
+audit rollback, real commit followed by injected acknowledgment loss at all three boundaries,
+safe database refusal before/after child launch, native changes after import, child startup/nonzero
+exit/timeout/stream bounds, malformed results, interruption and observed-descendant uncertainty.
+Every case asserts occupied ownership, no SUCCEEDED run, no publication result or stage-artifact
+link. The HTTP case checks only persisted safe classifications, not fabricated native execution.
+Production NONE is tested before sidecar/stage creation; existing C1 production-startup tests
+also leave real queued selections unchanged. Native read-only tests snapshot all selected roots'
+entries/bytes/mtimes and reject any staging/publication call.
+
+Markdown lint (44 files), relative links and repository hygiene passed. V1–V7 and accepted ADRs
+remain unchanged, no migration or new dependency is introduced, and the initially empty index
+remains empty. The dedicated PostgreSQL test container was restored to its initial stopped state.
+Local logs are ignored outputs; hosted CI remains pending owner publication and observation.
+No live feed, retained personal data, AWS resource or large benchmark was used.
+
+**Implemented:** internal runtime/native qualification, durable fenced CHECK_INPUTS, fixed bounded
+read-only supervision, private result/evidence anchoring and historical acknowledgment inspection.
+**Tested:** actual local evidence listed here and in the operator guide; no native processing claim
+is inferred. **Planned for separately authorized C2b:** consume/recheck this same pinned command,
+bundle and evidence (`recheck` requalifies and requires exact agreement), implement the fixed
+publisher argument construction, stage intent/launch/process/result lifecycle, independent native
+output verification and transactional verified publication registration before enabling a real
+production capability. A successful preflight is a point-in-time check, not a filesystem snapshot;
+C2b must revalidate before consumption. No Spark normalization, aggregate equivalence or output
+correctness is established here. **Deferred:** production dispatch/publication, retry/recovery
+takeover, cancellation endpoints, Content/RSS execution, UI, activation and E5 completion.
