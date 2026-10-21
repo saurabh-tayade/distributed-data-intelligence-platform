@@ -28,9 +28,10 @@ public final class SchemaLifecycle {
             throw new ManagementFailure(ManagementFailure.Code.MANAGEMENT_UNAVAILABLE);
         }
         try {
+            boolean initialSchema = migrate && flyway.info().current()==null;
             boolean appliedMigrations = migrate && flyway.migrate().migrationsExecuted > 0;
             var validation=flyway.validateWithResult();
-            if (!validation.validationSuccessful || flyway.info().pending().length!=0 || Arrays.stream(flyway.info().applied()).filter(i -> i.getVersion()!=null).count()!=5)
+            if (!validation.validationSuccessful || flyway.info().pending().length!=0 || Arrays.stream(flyway.info().applied()).filter(i -> i.getVersion()!=null).count()!=6)
                 throw new ManagementFailure(ManagementFailure.Code.MANAGEMENT_INCOMPATIBLE);
             try {
                 for(String table: List.of("storage_bindings","execution_profiles","execution_profile_storage","worker_instances",
@@ -41,7 +42,7 @@ public final class SchemaLifecycle {
             } catch(DataAccessException ex) {
                 throw new ManagementFailure(connectionFailure(ex) ? ManagementFailure.Code.MANAGEMENT_UNAVAILABLE : ManagementFailure.Code.MANAGEMENT_INCOMPATIBLE);
             }
-            if (appliedMigrations) coordinator.initialize();
+            if (initialSchema && appliedMigrations) coordinator.initialize();
             coordinator.read();
         } catch (FlywayException ex) {
             throw new ManagementFailure(connectionFailure(ex) ? ManagementFailure.Code.MANAGEMENT_UNAVAILABLE : ManagementFailure.Code.MANAGEMENT_INCOMPATIBLE);

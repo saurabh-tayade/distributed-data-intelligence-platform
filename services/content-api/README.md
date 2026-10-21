@@ -179,7 +179,7 @@ M6.5 now consumes these contracts in the separate frontend, preserving the finge
 
 ## E5 B1 persistence and runtime roles
 
-[ADR 0010](../../docs/adr/0010-durable-execution-coordination-and-recovery.md) is Accepted on October 20, 2026; only B1 is implemented here. PostgreSQL schema/migrations, startup isolation and coordinator transaction primitives are available. Source/run HTTP operations, dispatch, imports, processing supervision, host writer guards, recovery handoff, cancellation/retry/reconciliation and Operations UI remain B2–F work. An idle worker is not an execution service. Existing analytical endpoints and publication identities are unchanged.
+[ADR 0010](../../docs/adr/0010-durable-execution-coordination-and-recovery.md) is Accepted on October 20, 2026; B1 is implemented here; the subsequently authorized source-only B2a implementation is documented below. PostgreSQL schema/migrations, startup isolation and coordinator transaction primitives are available. Run HTTP operations, dispatch, imports, processing supervision, host writer guards, recovery handoff, cancellation/retry/reconciliation and Operations UI remain B2b–F work. An idle worker is not an execution service. Existing analytical endpoints and publication identities are unchanged.
 
 PostgreSQL **17.11**, a maintained 17 patch release, is pinned to the official multi-platform `postgres:17.11-bookworm` image at digest `sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826`. Local validation used its Linux ARM64 image. See PostgreSQL's [version policy](https://www.postgresql.org/support/versioning/). Spring Boot 4.1.1 manages Spring JDBC, PostgreSQL JDBC **42.7.13**, Flyway core/PostgreSQL **12.4.0** and HikariCP **7.0.2**; no version overrides, JPA, Testcontainers or second database abstraction are added. Flyway is invoked explicitly, without automatic Boot migration configuration.
 
@@ -208,7 +208,7 @@ Run the packaged JAR from the repository root; shell variables above must be exp
 ```sh
 # Default/explicit legacy analytics: no database, migrations or worker infrastructure.
 DDIP_ROLE=analytics java -jar services/content-api/target/content-api-0.1.0-SNAPSHOT.jar
-# Database validation plus existing analytics; management mutations are not implemented.
+# Database validation, existing analytics and B2a source management; no execution.
 DDIP_ROLE=api java -jar services/content-api/target/content-api-0.1.0-SNAPSHOT.jar
 # Non-web, database/runtime-path validation, idle only; Ctrl-C stops it.
 DDIP_ROLE=worker java -jar services/content-api/target/content-api-0.1.0-SNAPSHOT.jar
@@ -216,17 +216,17 @@ DDIP_ROLE=worker java -jar services/content-api/target/content-api-0.1.0-SNAPSHO
 DDIP_ROLE=migrate java -jar services/content-api/target/content-api-0.1.0-SNAPSHOT.jar
 ```
 
-`DDIP_ROLE` maps to `ddip.role`: exactly `analytics` (default), `api`, `worker`, `migrate`. Unknown/import roles fail; import belongs to B2. Worker requires absolute `DDIP_WORKER_PYTHON`, `DDIP_WORKER_JAVA_HOME`, `DDIP_WORKER_PROCESSING_ROOT`, an executable Python/Java path and the fixed Content/Reliability-v2 publication scripts. B1 checks path availability only; it does not probe child versions, acquire filesystem ownership, register an active worker or claim/launch anything. C must qualify exact runtime/profile/root identity before processing. Worker/migration force a non-web context even if a web type is supplied, excluding analytical controllers, properties and process pools. The worker has one idle lifecycle thread; no polling scheduler is present.
+`DDIP_ROLE` maps to `ddip.role`: exactly `analytics` (default), `api`, `worker`, `migrate`. Unknown/import roles fail; import belongs to B2b. Worker requires absolute `DDIP_WORKER_PYTHON`, `DDIP_WORKER_JAVA_HOME`, `DDIP_WORKER_PROCESSING_ROOT`, an executable Python/Java path and the fixed Content/Reliability-v2 publication scripts. B1 checks path availability only; it does not probe child versions, acquire filesystem ownership, register an active worker or claim/launch anything. C must qualify exact runtime/profile/root identity before processing. Worker/migration force a non-web context even if a web type is supplied, excluding analytical controllers, properties and process pools. The worker has one idle lifecycle thread; no polling scheduler is present.
 
 Database roles use one Hikari pool: API maximum 4, worker/migration maximum 2, minimum idle 0. Flyway needs a second connection for its coordination; a one-connection migration pool is insufficient. Connection, SQL statement, lock and explicit transaction waits are bounded to 3 seconds; Flyway lock/connection retries are disabled; idle-in-transaction timeout is 5 seconds. Sessions use UTC. No database transaction encloses external processing. Startup errors use fixed `MANAGEMENT_CONFIGURATION_INVALID`, `MANAGEMENT_UNAVAILABLE` or `MANAGEMENT_INCOMPATIBLE`; conditional conflicts return false or `STATE_CONFLICT`. Native driver/pool/Flyway logging is disabled to avoid connection-detail leakage. These are internal B1 diagnostics, not new management REST envelopes.
 
-`CoordinatorRepository.read()`, `compareAndSetIdleMode(expectedVersion, mode)` and `isCurrentOwner(attemptId, instanceId, epoch)` are the B1 repository boundary. `ManagementTransactions.required(...)` supplies explicit bounded transactions; initialization is called only by migration. The conditional mode update works only on an idle slot with matching installation/version. Ownership reads are snapshots, not launch authorization or proof of filesystem exclusivity. B2/C must add lock-ordered guarded source/run/claim transactions; no takeover method is provided in B1.
+`CoordinatorRepository.read()`, `compareAndSetIdleMode(expectedVersion, mode)` and `isCurrentOwner(attemptId, instanceId, epoch)` are the B1 repository boundary. `ManagementTransactions.required(...)` supplies explicit bounded transactions; initialization is called only by migration. The conditional mode update works only on an idle slot with matching installation/version. Ownership reads are snapshots, not launch authorization or proof of filesystem exclusivity. B2a adds lock-ordered source transactions; B2b/C must add guarded run/claim transactions; no takeover method is provided in B1.
 
 ### Schema and test commands
 
-The five SQL migrations are in [db/migration](src/main/resources/db/migration): V1 profiles/storage/coordinator/worker instances; V2 sources/revisions/artifacts/dependencies; V3 runs/captured sources/inputs/attempts/stages/artifact links; V4 RSS references/controls/idempotency/audit; V5 immutable evidence/identity/version/terminal-outcome guards. Nineteen operational tables plus Flyway history use bounded fields, exact bytea/digest checks, foreign keys and history/claim indexes. JSONB is used only for lossless row-identity comparison in triggers; canonical bytes are never derived from JSONB. B2 must implement the fixed canonical DTO encoder and semantic configuration validation before accepting requests. DB JSON-object/size/hash checks alone do not implement that encoder.
+The original five B1 SQL migrations are in [db/migration](src/main/resources/db/migration): V1 profiles/storage/coordinator/worker instances; V2 sources/revisions/artifacts/dependencies; V3 runs/captured sources/inputs/attempts/stages/artifact links; V4 RSS references/controls/idempotency/audit; V5 immutable evidence/identity/version/terminal-outcome guards. Nineteen operational tables plus Flyway history use bounded fields, exact bytea/digest checks, foreign keys and history/claim indexes. JSONB is used only for lossless row-identity comparison in triggers; canonical bytes are never derived from JSONB. B2a now implements the fixed source canonical encoder and source semantic validation; run DTOs remain B2b work. DB JSON-object/size/hash checks alone do not implement that encoder.
 
-Deferred composite foreign keys permit atomic initial source/revision insertion and run/attempt/coordinator binding; final committed links cannot point at a different run, instance or epoch. Unique partial indexes enforce one active run/attempt. Evidence and captured selections reject ordinary UPDATE/DELETE/TRUNCATE; mutable rows require exactly incremented versions and immutable identities. Terminal attempt/stage/control outcomes and successful runs cannot be rewritten. Superuser/DDL access remains trusted; these are application integrity guards, not E6 authorization. Cross-row admission limits, full state transitions, safe audit DTO contents, artifact-cycle insert serialization and actual handoff/quiescence protocol are B2–F responsibilities.
+Deferred composite foreign keys permit atomic initial source/revision insertion and run/attempt/coordinator binding; final committed links cannot point at a different run, instance or epoch. Unique partial indexes enforce one active run/attempt. Evidence and captured selections reject ordinary UPDATE/DELETE/TRUNCATE; mutable rows require exactly incremented versions and immutable identities. Terminal attempt/stage/control outcomes and successful runs cannot be rewritten. Superuser/DDL access remains trusted; these are application integrity guards, not E6 authorization. B2a adds source admission, revision/gate transitions and fixed source audit details. Run admission/state transitions, artifact-cycle insert serialization and actual handoff/quiescence protocol remain B2b–F responsibilities.
 
 Real PostgreSQL integration tests require a **dedicated disposable test service** and credentials allowed to create/drop isolated test databases. They create random `ddip_b1_*` databases, reset only their own schema, and drop only their own database afterward. Never point test variables at the operational installation. CI uses its own service. No H2 substitute or absent-service skip is allowed.
 
@@ -245,3 +245,96 @@ git diff --check
 ```
 
 Use the two Maven profiles separately. Ordinary `verify` needs no PostgreSQL. The `postgres` profile fails explicitly when test-service settings are absent. Existing CI job names are unchanged; the processing job adds a digest-pinned PostgreSQL service and the real DB tests. Hosted execution for B1 remains pending.
+
+## E5 B2a source management
+
+The owner authorized B2a only after committing B1. The [normative B2a contract](../../docs/architecture/durable-execution.md#stage-b2a-source-management-contract-and-evidence) defines exact fields, replay, pagination, safe failures and local security. No run/artifact/import/worker/UI workflow is implemented. `DDIP_ROLE=api` exposes source controls; analytics/worker/migrate roles do not instantiate these controllers, allowlists or request filter. Existing `/api/v1/` analytical behavior is unchanged.
+
+Run the existing **explicit migration** command with API/worker stopped before starting this version. V6 adds immutable source creation sequence, durable public command-result snapshots and private endpoint identity/digest evidence to existing tables; V1–V5 are unchanged. An upgrade cannot bootstrap a missing old coordinator. Do not repair/reset an operational schema to bypass a failure.
+
+### Operator reference setup
+
+Source registration requires reviewed references, not client-supplied paths/URLs. Configure an absolute ignored `DDIP_MANAGEMENT_CATALOG` file (<=64 KiB), and existing B1 operator-provisioned immutable storage bindings with matching UUID, installation, product and BRONZE/BATCH role. Root/ownership/native-storage qualification is not performed by source CRUD and remains required before later processing. This checkpoint adds no storage-provisioning/import HTTP route. Do not use the tests' placeholder bindings for an operational installation.
+
+Example catalog below is fictional configuration syntax, not proof of a real registered profile or storage root. Replace IDs/digest/URI with independently reviewed installation references. Native Reliability profile hashes must come from the existing validated synthetic profile and canonical bytes, not from a filename or label.
+
+```json
+{
+  "catalogVersion": 1,
+  "endpoints": [
+    {
+      "endpointId": "20000000-0000-4000-8000-000000000001",
+      "sourceId": "demo-feed",
+      "uri": "https://feeds.example.org/one"
+    }
+  ],
+  "reliabilityProfiles": [
+    {
+      "sourceId": "demo-requests",
+      "profile": "request-jsonl-v2",
+      "dataOrigin": "synthetic",
+      "registeredProfileSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "storageProfiles": [
+    {"profileId": "30000000-0000-4000-8000-000000000001", "productId": "content-intelligence", "role": "BRONZE"},
+    {"profileId": "30000000-0000-4000-8000-000000000002", "productId": "application-reliability", "role": "BATCH"}
+  ]
+}
+```
+
+Keep catalog files private under an ignored operator root such as local-data/e5. Startup reads the catalog without fetching feeds or resolving DNS. Changing a used endpoint's URI requires a **new endpoint UUID** and source revision; V6's retained private digest prevents new configurations from rebinding an old endpoint ID. Historical source inspection and exact command replay remain possible after removing a catalog entry. An empty/blank catalog approves no new references. Native profile, raw evidence and filesystem verification remain independent prerequisites for B2b/C.
+
+```sh
+# Export from private operator configuration. The catalog path must be absolute.
+export DDIP_MANAGEMENT_CATALOG="$PWD/local-data/e5/source-catalog.json"
+export DDIP_MANAGEMENT_ORIGINS='http://127.0.0.1:8080,http://127.0.0.1:5173,http://127.0.0.1:4173'
+# Generate once and retain privately if page cursors must survive application restart.
+export DDIP_MANAGEMENT_CURSOR_KEY="$(python3 -c 'import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("="))')"
+DDIP_ROLE=api java -jar services/content-api/target/content-api-0.1.0-SNAPSHOT.jar
+```
+
+The signing key is not authentication. With it unset, a process-local random key invalidates old cursors on restart; source and command state remain durable. API binds to loopback, accepts only configured local Host/Origin values and rejects preflights. Mutations require JSON, allowed Origin and `X-DDIP-Local-Request: 1`. For Vite, use its existing same-origin `/api/` proxy with preserved Host, and explicitly list dev/preview origins. No permissive CORS or React Operations is added. Other local processes can imitate these headers; E6 authentication/authorization remains deferred.
+
+### Source commands and responses
+
+After provisioning the fictional example's references with real reviewed values:
+
+```sh
+curl --fail-with-body 'http://127.0.0.1:8080/api/management/v1/capabilities'
+curl --fail-with-body -X POST 'http://127.0.0.1:8080/api/management/v1/sources' \
+  -H 'Origin: http://127.0.0.1:8080' -H 'X-DDIP-Local-Request: 1' \
+  -H 'Content-Type: application/json' -H 'Idempotency-Key: demo-create-001' \
+  --data '{"productId":"content-intelligence","sourceId":"demo-feed","displayName":"Reviewed feed","enabled":true,"config":{"configVersion":1,"profile":"rss-atom-v1","dataOrigin":"publisher","feedEndpointId":"20000000-0000-4000-8000-000000000001","registeredProfileSha256":null,"inputStorageProfileId":"30000000-0000-4000-8000-000000000001"}}'
+curl --fail-with-body 'http://127.0.0.1:8080/api/management/v1/sources/content-intelligence/demo-feed'
+curl --fail-with-body -X PUT 'http://127.0.0.1:8080/api/management/v1/sources/content-intelligence/demo-feed/enabled' \
+  -H 'Origin: http://127.0.0.1:8080' -H 'X-DDIP-Local-Request: 1' \
+  -H 'Content-Type: application/json' -H 'Idempotency-Key: demo-disable-001' \
+  -H 'If-Match: "0"' --data '{"enabled":false}'
+curl --fail-with-body 'http://127.0.0.1:8080/api/management/v1/sources?productId=content-intelligence&limit=20'
+curl --fail-with-body 'http://127.0.0.1:8080/api/management/v1/sources/content-intelligence/demo-feed/revisions?limit=20'
+```
+
+Use the exact GET/command ETag for a new conditional operation. Revision POST uses `{displayName,config}` at the revisions path, with the same mutation headers/If-Match. Initial registration creates revision 1/version "0". Changed configuration/name appends; identical current configuration/name is a no-op. Reverting appends another revision. Enablement changes only live gate/version/time, never old revisions. No identity deletion, rename or profile-family switch exists.
+
+Every command needs a durable Idempotency-Key (1–128 ASCII alphanumeric/underscore/hyphen). Same operation/source/key and normalized body/If-Match return the original committed status/data/ETag, including after later changes or a lost response. Different content conflicts. Object-key order and JSON escape spelling do not change identity. New stale requests return 412; missing If-Match returns 428. A replay returns historical data, so GET the source for its current state. Correlation IDs identify each HTTP request independently.
+
+Responses are `{apiVersion:1,data,meta:{correlationId}}`; lists add limit, hasMore, nextCursor. Source detail includes only public six-field config, its hash, identity, display name, current revision, enabled flag, decimal-string rowVersion and UTC microsecond creation/update times. Lists omit config; revision history includes old safe configurations. Failures have exactly apiVersion, code, message, correlationId, retryable, with fixed messages. No resolved URI, credential, private storage settings, SQL exception or arbitrary request data is returned.
+
+Source pagination is product/source ascending, default 20/max 100 with one-row lookahead and creation high-water. Revision pagination is ascending with revision high-water. Follow signed nextCursor with the same endpoint/filters; no offset/arbitrary sort exists. Gate-filter membership can change between pages; no cross-request database snapshot is promised. Invalid/tampered/expired cursors fail 400. Limits are 64 KiB request, 1 MiB encoded response, 128 sources and 1,000 revisions/source; failed admission does not leave bindings/audit or partial source rows.
+
+### B2a validation
+
+The existing service-backed CI Maven profile includes SourceManagementIT as well as PersistenceIT, without changing CI job names or adding services/dependencies. Run with the existing dedicated PostgreSQL service/test settings:
+
+```sh
+mvn -B -ntp -f services/content-api/pom.xml test
+mvn -B -ntp -f services/content-api/pom.xml verify -Ppostgres
+mvn -B -ntp -f services/content-api/pom.xml verify -Pintegration \
+  -Danalytics.python="$PWD/outputs/silver-python312/.venv/bin/python"
+npm run check
+git diff --check
+git diff --cached --check
+```
+
+The `postgres` command requires DDIP_TEST_DB_URL/USER/PASSWORD and, in CI, DDIP_TEST_PYTHON as documented for B1. Tests create/drop only isolated random test databases. No live feed, production data, Spark execution or cloud service is required. Current executed counts/evidence are in the supporting B2a contract; B1 figures above remain historical. Hosted CI awaits owner publication. B2b must add run DTOs/capture/imports; C–F must add ownership/supervision/adapters/recovery/UI. None is implemented by registering an enabled source.

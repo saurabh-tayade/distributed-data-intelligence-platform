@@ -2,7 +2,7 @@
 
 Status: **Accepted — October 20, 2026**
 
-Date: October 20, 2026. The owner accepted all seven decision groups below, including the Stage A.1 amendments, and authorized **Stage B1 only**: PostgreSQL persistence, migrations, runtime-role isolation and tested transactional foundations. B2–F workflows, processing launches, imports and Operations UI remain unauthorized/pending. Architecture acceptance does not establish implementation or test completion.
+Date: October 20, 2026. The owner accepted all seven decision groups below, including the Stage A.1 amendments, and initially authorized **Stage B1 only**: PostgreSQL persistence, migrations, runtime-role isolation and tested transactional foundations. The owner subsequently authorized **B2a source management only**. B2b run submission/imports and C–F processing/control/UI work remain unauthorized/pending. Architecture acceptance does not establish implementation or test completion.
 
 ## Context and requirements
 
@@ -127,3 +127,7 @@ Stage A.1 refines only this ADR and the supporting contract after owner review: 
 ## Stage B1 implementation status
 
 B1 implements the PostgreSQL/JDBC/Flyway schema and runtime-role foundation only. Local evidence records 136 unit/component and 28 real PostgreSQL cases, existing HTTP/JDBC/ingestion regressions and an isolated database restart in the [supporting contract](../architecture/durable-execution.md#stage-b1-implemented-foundation-and-local-evidence). No full E5 acceptance group, processing/recovery workflow, hosted CI run or B2 authorization is implied. Accepted data-product contracts and ADRs 0001–0009 are unchanged.
+
+## Stage B2a source-management status
+
+The owner subsequently authorized B2a: persistent source creation/inspection, immutable revisions, live enablement, durable command replay, bounded source/history APIs and their local request boundary. This implements the approved source-management subset without expanding the architecture. The [current B2a contract and evidence](../architecture/durable-execution.md#stage-b2a-source-management-contract-and-evidence) records the exact DTOs, canonical vectors, server allowlists, V6 forward migration and executed tests. V1–V5 and accepted data contracts remain unchanged. B2b, worker execution and React Operations require separate authorization; no full E5 acceptance group is declared complete.
