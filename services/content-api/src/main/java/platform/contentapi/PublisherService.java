@@ -1,7 +1,10 @@
 package platform.contentapi;
 
+import platform.contentapi.execution.AnalyticsRole;
+
 import org.springframework.stereotype.Service;
 
+@AnalyticsRole
 @Service
 public class PublisherService {
     private final GoldAnalyticsAdapter adapter;

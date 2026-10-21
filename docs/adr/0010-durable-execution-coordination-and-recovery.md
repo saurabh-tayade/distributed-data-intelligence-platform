@@ -1,8 +1,8 @@
 # ADR 0010: Durable Execution, Coordination and Recovery
 
-Status: **Proposed — awaiting owner approval**
+Status: **Accepted — October 20, 2026**
 
-Date: October 20, 2026. Scope: E5 Stage A, Durable Execution & Source Controls. No E5 implementation, dependency installation, service deployment or workload execution is authorized by this proposal. The owner must accept this ADR and its implementation scope before Stage B.
+Date: October 20, 2026. The owner accepted all seven decision groups below, including the Stage A.1 amendments, and authorized **Stage B1 only**: PostgreSQL persistence, migrations, runtime-role isolation and tested transactional foundations. B2–F workflows, processing launches, imports and Operations UI remain unauthorized/pending. Architecture acceptance does not establish implementation or test completion.
 
 ## Context and requirements
 
@@ -10,7 +10,7 @@ The owner-prepared branch is feature/e5-durable-execution-source-controls. Inspe
 
 E5 needs persistent reviewed sources, asynchronous bounded submission, durable run/attempt/stage history, cancellation, guarded retry, explicit reconciliation and a demonstrable recovery procedure. Pause/resume is deferred and is not part of mandatory E5 implementation. It does not need a configurable workflow engine, schedule service, broker, distributed workers or a new analytical implementation. Existing processors and independent verifiers remain authoritative. Successful execution means a verified immutable result, not activation of a new product selection.
 
-The [supporting E5 contract](../architecture/durable-execution.md) specifies the proposed records, exact API shapes, stage boundaries, ownership protocol, admission limits and acceptance matrix. All new requirements there are Proposed with this ADR; numerical starting limits are not measured capacities.
+The [supporting E5 contract](../architecture/durable-execution.md) specifies the accepted records, exact API shapes, stage boundaries, ownership protocol, admission limits and acceptance matrix. Numerical starting limits are not measured capacities; unexecuted acceptance groups do not become passed through architecture approval.
 
 ## Current repository evidence
 
@@ -50,7 +50,7 @@ PostgreSQL owns source/revision records, runtime bindings, runs, frozen selectio
 
 Submission commits the idempotency binding, captured configuration, all input links, QUEUED state and audit event together before HTTP 202. Claim commits worker session, increasing owner epoch, attempt ID and active slot before any child launch. Every owner mutation compares run, attempt, epoch and expected row version. Stage intent commits before side effects; checkpoint/result evidence commits after independent verification. A lost DB acknowledgment is resolved by querying the same idempotency/attempt identity; no second blind insertion or publication follows.
 
-An occupied coordinator is transferred only after confirmed old-writer quiescence and an explicit RECONCILE control. One transaction locks/revalidates the coordinator, run, old attempt and control, closes an active old attempt as INTERRUPTED, marks its unresolved stages UNKNOWN, increments the ownership epoch and binds a new reconciliation attempt to the same occupied global slot. It never clears the slot between owners. All updates are conditional on the exact previous binding/version. The new owner may perform read-only artifact verification only after the transfer commit is confirmed. Definite rollback leaves the old binding intact; lost commit acknowledgment is resolved through the same control/attempt identity, never another blind transfer. Real PostgreSQL tests must prove rollback, ambiguous acknowledgment, active-index replacement and stale-owner rejection. The [transactional handoff protocol](../architecture/durable-execution.md#transactional-recovery-handoff-of-an-occupied-coordinator) is normative for this proposal.
+An occupied coordinator is transferred only after confirmed old-writer quiescence and an explicit RECONCILE control. One transaction locks/revalidates the coordinator, run, old attempt and control, closes an active old attempt as INTERRUPTED, marks its unresolved stages UNKNOWN, increments the ownership epoch and binds a new reconciliation attempt to the same occupied global slot. It never clears the slot between owners. All updates are conditional on the exact previous binding/version. The new owner may perform read-only artifact verification only after the transfer commit is confirmed. Definite rollback leaves the old binding intact; lost commit acknowledgment is resolved through the same control/attempt identity, never another blind transfer. Real PostgreSQL tests must prove rollback, ambiguous acknowledgment, active-index replacement and stale-owner rejection. The [transactional handoff protocol](../architecture/durable-execution.md#transactional-recovery-handoff-of-an-occupied-coordinator) is normative for this accepted architecture.
 
 PostgreSQL [row locks](https://www.postgresql.org/docs/17/explicit-locking.html) support these short transactions. A lock or heartbeat cannot terminate a Python/JVM process after a database connection disappears. Session advisory locks are therefore not filesystem fencing and are not the recovery authority. A host guard prevents cooperative duplicate workers; the persistent occupied slot plus explicit post-crash quiescence proof prevents automatic takeover when that guard is released by a crashed parent.
 
@@ -102,9 +102,11 @@ Disk safety requires bounded stage admission, explicit approved roots, native ar
 | E | Crash/DB-outage/cancellation/guarded-retry/stale-owner/incomplete-output/disk-exhaustion failure matrix across both pipelines; explicit reconciliation and shutdown demonstration, no pause/resume |
 | F | React Operations, same-origin protections, restart/deployment documentation and full unchanged processing/JDBC/API/frontend regressions; reproducible small end-to-end demonstration |
 
-Foundational stop/recovery paths start in B/C, not after live writing adapters. E is intended to complete cross-pipeline failure qualification; F integrates that lifecycle only after its tests pass. All checkpoints stay in the same owner-managed E5 branch/issue, without intermediate PR requirements. Every checkpoint B–F and acceptance group E5-01–E5-18 remains proposed/unexecuted. No application suite was run in Stage A or Stage A.1.
+Foundational stop/recovery paths start in B/C, not after live writing adapters. E is intended to complete cross-pipeline failure qualification; F integrates that lifecycle only after its tests pass. All checkpoints stay in the same owner-managed E5 branch/issue, without intermediate PR requirements. B1 is the separately authorized persistence/runtime foundation within B; B2 and C–F remain planned and require further authorization. Full E5-01–E5-18 groups remain unexecuted until their complete behavior is tested; partial B1 evidence does not pass a whole group. No application suite was run in Stage A or Stage A.1. See the current B1 evidence in the supporting contract.
 
-## Explicit owner decisions before Stage B
+## Seven owner-accepted decision groups
+
+The owner approved the following seven groups as amended during Stage A.1 on October 20, 2026. Their wording records the reviewed scope; only the B1 subset is authorized for implementation now.
 
 1. **Store and packaging:** approve PostgreSQL 17, Spring JDBC/Flyway and the new local persistent volume; require exact supported patch/image/dependency pins before implementation validation. No cloud or paid service.
 2. **Runtime and ownership:** approve host-launched API/one worker, one global active slot, cooperative host guard and the exact transactional reconciliation handoff after confirmed quiescence. No automatic lease takeover or container-worker support.
@@ -114,8 +116,14 @@ Foundational stop/recovery paths start in B/C, not after live writing adapters. 
 6. **Limits and retention:** approve the supporting contract's numerical E5 starting limits, cooperative disk admission/exhaustion handling, deadlines/cleanup behavior, persistent volumes and manual retention/recovery procedure, including private RSS journals. Hard filesystem quotas and comprehensive backup automation are deferred, not E5 completion gates; no hard disk or untested restore guarantee is implied. No benchmark-derived capacity is claimed.
 7. **Delivery boundary:** approve minimal Operations source/run controls only; keep publication activation, new product-report APIs, authorization/exports, UI polish and E4a experiments out of E5. Confirm the supporting acceptance matrix/checkpoints as Stage B scope.
 
-## Stage A validation
+## Historical Stage A validation
+
+These paragraphs record the proposal status before owner acceptance and B1 authorization; current B1 evidence is recorded in the supporting contract.
 
 Repository/architecture review and primary PostgreSQL/Spring documentation checks were performed. Only this proposed ADR, its supporting contract and ADR index are intended changes. Markdown/local-link, repository hygiene and diff checks are recorded in the supporting document after execution. No runtime dependencies, application code/tests, Compose service, CI job, accepted ADR or data-product contract was changed. Hosted E5 CI, runtime feasibility and all acceptance tests remain unexecuted until Stage B approval.
 
 Stage A.1 refines only this ADR and the supporting contract after owner review: remove mandatory pause/resume, specify the exact occupied-slot recovery transaction, require managed Silver evidence qualification and replace hard quota/backup obligations with cooperative disk safety and manual retention/recovery. Status remains Proposed; checkpoints B–F and E5-01–E5-18 are unexecuted. The supporting document records documentation-only validation and preservation of the owner-staged snapshots; no Stage B implementation begins.
+
+## Stage B1 implementation status
+
+B1 implements the PostgreSQL/JDBC/Flyway schema and runtime-role foundation only. Local evidence records 136 unit/component and 28 real PostgreSQL cases, existing HTTP/JDBC/ingestion regressions and an isolated database restart in the [supporting contract](../architecture/durable-execution.md#stage-b1-implemented-foundation-and-local-evidence). No full E5 acceptance group, processing/recovery workflow, hosted CI run or B2 authorization is implied. Accepted data-product contracts and ADRs 0001–0009 are unchanged.

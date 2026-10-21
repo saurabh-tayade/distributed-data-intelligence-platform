@@ -6,9 +6,9 @@ This Java 21 module implements `GET /api/v1/publishers`, `/api/v1/articles`, `/a
 
 Acceptance requires reference-equivalent results for all four reports, explicit publication selection, exact integer and UTC microsecond serialization, safe failure responses, bounded subprocess resources, and automated real HTTP/Python integration on synthetic publications. Startup and ordinary Maven unit tests must work without Gold, Spark or Python.
 
-The dependency flow is `Controller -> Service -> GoldAnalyticsAdapter -> BoundedProcessRunner -> gold_analytics.py`. `PublisherController`/`PublisherService` remain the publisher path; `AnalyticsController`/`AnalyticsService` handle the three new endpoints using `ArticleQuery`/`DateQuery` and report-specific typed responses. Controllers validate only their explicitly supported parameters before invoking any process. The service maps typed analytical rows to typed REST records. The adapter chooses a fixed report enum, constructs arguments and validates the CLI envelope. The runner owns admission, process/stream lifecycle and cleanup. There is no SQL, Parquet reader, JDBC connection, cache, worker service or verifier port in this module.
+The dependency flow is `Controller -> Service -> GoldAnalyticsAdapter -> BoundedProcessRunner -> gold_analytics.py`. `PublisherController`/`PublisherService` remain the publisher path; `AnalyticsController`/`AnalyticsService` handle the three new endpoints using `ArticleQuery`/`DateQuery` and report-specific typed responses. Controllers validate only their explicitly supported parameters before invoking any process. The service maps typed analytical rows to typed REST records. The adapter chooses a fixed report enum, constructs arguments and validates the CLI envelope. The runner owns admission, process/stream lifecycle and cleanup. The analytics path has no SQL, Parquet reader, JDBC connection, cache, worker service or verifier port. E5 B1 adds a separately selected management persistence foundation below.
 
-Spring Boot **4.1.1** manages dependency and plugin versions; Java is **21**. Runtime starters are `spring-boot-starter-webmvc`, `spring-boot-starter-actuator`, and `spring-boot-starter-validation`. Tests use `spring-boot-starter-webmvc-test`, which includes the general Boot test starter and MVC test support. Artifact names were checked against the release POMs and Spring's [MVC documentation](https://docs.spring.io/spring-boot/reference/web/index.html), [testing documentation](https://docs.spring.io/spring-boot/reference/testing/), and [managed dependencies](https://docs.spring.io/spring-boot/appendix/dependency-versions/coordinates.html). The resolved build uses Spring MVC 7.0.9, Jackson 3.1.5, Tomcat 11.0.24, Hibernate Validator 9.1.3.Final and JUnit 6.0.3. There are no dependency version overrides or new non-framework runtime libraries.
+Spring Boot **4.1.1** manages dependency and plugin versions; Java is **21**. Original analytics starters are `spring-boot-starter-webmvc`, `spring-boot-starter-actuator`, and `spring-boot-starter-validation`. Tests use `spring-boot-starter-webmvc-test`, which includes the general Boot test starter and MVC test support. Artifact names were checked against the release POMs and Spring's [MVC documentation](https://docs.spring.io/spring-boot/reference/web/index.html), [testing documentation](https://docs.spring.io/spring-boot/reference/testing/), and [managed dependencies](https://docs.spring.io/spring-boot/appendix/dependency-versions/coordinates.html). The resolved build uses Spring MVC 7.0.9, Jackson 3.1.5, Tomcat 11.0.24, Hibernate Validator 9.1.3.Final and JUnit 6.0.3. There are no dependency version overrides; the E5 B1 persistence additions are documented below.
 
 Python runtime requirements are Python **3.12** (locally tested with 3.12.15) and only `duckdb==1.4.5` from [requirements-analytics.txt](../../processing/requirements-analytics.txt). Keep `gold_analytics.py`, `gold_reader.py` and `publication_metadata.py` together. Spark/PySpark and Boto3 are fixture-generation dependencies, not query dependencies. No Silver reads, SeaweedFS, AWS credentials or publisher requests are required.
 
@@ -176,3 +176,72 @@ Documentation/link checks, repository hygiene and `git diff --check` passed. Hos
 Optional retained-data evidence is separate from synthetic CI: the exact retained M2 fingerprint `195999b03c48ca9a5828f5a67c1e00c312efe6f52e0916c180188f8bb9bdf185` returned all **59 identities** in nine pages (eight pages of seven, then three), matching Python order without duplicates or omissions. Daily returned **3 rows / 118 observations**; quality returned **118 observations / 0 warning codes**. Source filtering, beyond-end pagination and publisher regression checks passed. All ten Gold files retained identical hashes, sizes and modification times; the temporary API was stopped. No publisher data was fetched or Gold/Silver regenerated. Ignored local evidence is `outputs/m6-4/retained-validation.json`.
 
 M6.5 now consumes these contracts in the separate frontend, preserving the fingerprint across views/pages, exact counters and warning meanings, and rendering article text with HTTP(S)-only explicit navigation. See the [frontend guide](../../frontend/README.md#m65-validation-and-remaining-closeout) for implementation and remaining browser acceptance. No backend capability or automatic publication switch is added by M6.5.
+
+## E5 B1 persistence and runtime roles
+
+[ADR 0010](../../docs/adr/0010-durable-execution-coordination-and-recovery.md) is Accepted on October 20, 2026; only B1 is implemented here. PostgreSQL schema/migrations, startup isolation and coordinator transaction primitives are available. Source/run HTTP operations, dispatch, imports, processing supervision, host writer guards, recovery handoff, cancellation/retry/reconciliation and Operations UI remain B2–F work. An idle worker is not an execution service. Existing analytical endpoints and publication identities are unchanged.
+
+PostgreSQL **17.11**, a maintained 17 patch release, is pinned to the official multi-platform `postgres:17.11-bookworm` image at digest `sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826`. Local validation used its Linux ARM64 image. See PostgreSQL's [version policy](https://www.postgresql.org/support/versioning/). Spring Boot 4.1.1 manages Spring JDBC, PostgreSQL JDBC **42.7.13**, Flyway core/PostgreSQL **12.4.0** and HikariCP **7.0.2**; no version overrides, JPA, Testcontainers or second database abstraction are added. Flyway is invoked explicitly, without automatic Boot migration configuration.
+
+### Local database setup
+
+Use Docker Compose, Java 21 and Maven 3.9+. From the repository root, copy `.env.example` to ignored `.env` only if it does not already exist. Preserve existing Bronze settings. Set local `DDIP_DB_USER`, a nonblank private `DDIP_DB_PASSWORD`, `DDIP_DB_NAME`, `DDIP_DB_PORT` and matching `DDIP_DB_URL`. Generate `DDIP_INSTALLATION_ID` once (canonical UUID), retain it privately and reuse it across restarts. Do not regenerate it to bypass an installation mismatch. The URL is restricted to an explicit loopback host/port/database, with no URL query/credentials. PostgreSQL initialization credentials/database apply only to a new volume; changing `.env` does not change an existing database's password or identity.
+
+```sh
+# Review/fill .env first. Export it only from a trusted operator-controlled shell file.
+set -a
+. ./.env
+set +a
+docker compose --env-file .env -f infrastructure/local/compose.yaml up -d --wait postgres
+mvn -B -ntp -f services/content-api/pom.xml verify
+DDIP_ROLE=migrate java -jar services/content-api/target/content-api-0.1.0-SNAPSHOT.jar
+```
+
+The new PostgreSQL host port is bound to `127.0.0.1`; `pg_isready` checks service readiness. Application readiness additionally checks authentication, server major 17, exact known Flyway versions/checksums, no pending/future migrations, required tables and the singleton installation binding. No role creates a missing database. A repeated migration does not recreate a missing coordinator. If setup is interrupted after DDL commits but before singleton initialization, retain the database and require explicit operator inspection; there is no automatic bootstrap repair. Migration is explicit, with API/worker stopped: schema `ddip_management`, migrations V1–V5, no baseline, clean, repair, out-of-order upgrade or automatic replacement. An unknown commit/startup outcome requires inspection and a repeat of the explicit validated operation; it does not authorize dropping data. Flyway history validation is not a defense against a database administrator altering arbitrary schema objects.
+
+Compose preserves the existing SeaweedFS image, credentials, Bronze volume and default Bronze-only startup. PostgreSQL is in the optional `management` profile; targeting `postgres` explicitly enables that service. Missing database variables do not prevent the existing SeaweedFS-only configuration from resolving. PostgreSQL initialization refuses an empty password on a new volume, and application database roles validate all their own settings. PostgreSQL uses the explicitly named persistent volume `ddip-management-postgres17-data`. Start/stop PostgreSQL independently; do not start ingestion. Use `docker compose --env-file .env -f infrastructure/local/compose.yaml stop postgres` for a non-destructive stop, then the same `up -d --wait postgres` to restart. Never use `down -v`, delete volumes or replace an operational database as a startup workaround. Retain native output roots and restricted journals independently; database persistence is not a cross-resource backup or certified restore guarantee. Manual retention/recovery and comprehensive backup automation remain as specified in ADR 0010.
+
+### Role commands and bounds
+
+Run the packaged JAR from the repository root; shell variables above must be exported. Secrets belong in the ignored operator environment, not command arguments, repository files or logs.
+
+```sh
+# Default/explicit legacy analytics: no database, migrations or worker infrastructure.
+DDIP_ROLE=analytics java -jar services/content-api/target/content-api-0.1.0-SNAPSHOT.jar
+# Database validation plus existing analytics; management mutations are not implemented.
+DDIP_ROLE=api java -jar services/content-api/target/content-api-0.1.0-SNAPSHOT.jar
+# Non-web, database/runtime-path validation, idle only; Ctrl-C stops it.
+DDIP_ROLE=worker java -jar services/content-api/target/content-api-0.1.0-SNAPSHOT.jar
+# Non-web, explicit migrations/installation initialization, then exits.
+DDIP_ROLE=migrate java -jar services/content-api/target/content-api-0.1.0-SNAPSHOT.jar
+```
+
+`DDIP_ROLE` maps to `ddip.role`: exactly `analytics` (default), `api`, `worker`, `migrate`. Unknown/import roles fail; import belongs to B2. Worker requires absolute `DDIP_WORKER_PYTHON`, `DDIP_WORKER_JAVA_HOME`, `DDIP_WORKER_PROCESSING_ROOT`, an executable Python/Java path and the fixed Content/Reliability-v2 publication scripts. B1 checks path availability only; it does not probe child versions, acquire filesystem ownership, register an active worker or claim/launch anything. C must qualify exact runtime/profile/root identity before processing. Worker/migration force a non-web context even if a web type is supplied, excluding analytical controllers, properties and process pools. The worker has one idle lifecycle thread; no polling scheduler is present.
+
+Database roles use one Hikari pool: API maximum 4, worker/migration maximum 2, minimum idle 0. Flyway needs a second connection for its coordination; a one-connection migration pool is insufficient. Connection, SQL statement, lock and explicit transaction waits are bounded to 3 seconds; Flyway lock/connection retries are disabled; idle-in-transaction timeout is 5 seconds. Sessions use UTC. No database transaction encloses external processing. Startup errors use fixed `MANAGEMENT_CONFIGURATION_INVALID`, `MANAGEMENT_UNAVAILABLE` or `MANAGEMENT_INCOMPATIBLE`; conditional conflicts return false or `STATE_CONFLICT`. Native driver/pool/Flyway logging is disabled to avoid connection-detail leakage. These are internal B1 diagnostics, not new management REST envelopes.
+
+`CoordinatorRepository.read()`, `compareAndSetIdleMode(expectedVersion, mode)` and `isCurrentOwner(attemptId, instanceId, epoch)` are the B1 repository boundary. `ManagementTransactions.required(...)` supplies explicit bounded transactions; initialization is called only by migration. The conditional mode update works only on an idle slot with matching installation/version. Ownership reads are snapshots, not launch authorization or proof of filesystem exclusivity. B2/C must add lock-ordered guarded source/run/claim transactions; no takeover method is provided in B1.
+
+### Schema and test commands
+
+The five SQL migrations are in [db/migration](src/main/resources/db/migration): V1 profiles/storage/coordinator/worker instances; V2 sources/revisions/artifacts/dependencies; V3 runs/captured sources/inputs/attempts/stages/artifact links; V4 RSS references/controls/idempotency/audit; V5 immutable evidence/identity/version/terminal-outcome guards. Nineteen operational tables plus Flyway history use bounded fields, exact bytea/digest checks, foreign keys and history/claim indexes. JSONB is used only for lossless row-identity comparison in triggers; canonical bytes are never derived from JSONB. B2 must implement the fixed canonical DTO encoder and semantic configuration validation before accepting requests. DB JSON-object/size/hash checks alone do not implement that encoder.
+
+Deferred composite foreign keys permit atomic initial source/revision insertion and run/attempt/coordinator binding; final committed links cannot point at a different run, instance or epoch. Unique partial indexes enforce one active run/attempt. Evidence and captured selections reject ordinary UPDATE/DELETE/TRUNCATE; mutable rows require exactly incremented versions and immutable identities. Terminal attempt/stage/control outcomes and successful runs cannot be rewritten. Superuser/DDL access remains trusted; these are application integrity guards, not E6 authorization. Cross-row admission limits, full state transitions, safe audit DTO contents, artifact-cycle insert serialization and actual handoff/quiescence protocol are B2–F responsibilities.
+
+Real PostgreSQL integration tests require a **dedicated disposable test service** and credentials allowed to create/drop isolated test databases. They create random `ddip_b1_*` databases, reset only their own schema, and drop only their own database afterward. Never point test variables at the operational installation. CI uses its own service. No H2 substitute or absent-service skip is allowed.
+
+```sh
+export DDIP_TEST_DB_URL=jdbc:postgresql://127.0.0.1:15432/ddip_test
+export DDIP_TEST_DB_USER=ddip_test
+# Export DDIP_TEST_DB_PASSWORD from private test configuration.
+export DDIP_TEST_PYTHON="$PWD/outputs/silver-python312/.venv/bin/python"
+mvn -B -ntp -f services/content-api/pom.xml verify -Ppostgres
+# Independently run existing HTTP/Python compatibility against existing synthetic fixtures.
+mvn -B -ntp -f services/content-api/pom.xml verify -Pintegration \
+  -Danalytics.python="$PWD/outputs/silver-python312/.venv/bin/python"
+mvn -B -ntp -f services/api/pom.xml verify
+npm run check
+git diff --check
+```
+
+Use the two Maven profiles separately. Ordinary `verify` needs no PostgreSQL. The `postgres` profile fails explicitly when test-service settings are absent. Existing CI job names are unchanged; the processing job adds a digest-pinned PostgreSQL service and the real DB tests. Hosted execution for B1 remains pending.

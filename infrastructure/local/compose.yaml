@@ -12,5 +12,26 @@ services:
     volumes:
       - bronze-data:/data
     stop_grace_period: 30s
+  postgres:
+    profiles: [management]
+    image: postgres:17.11-bookworm@sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826
+    ports:
+      - '127.0.0.1:${DDIP_DB_PORT:-5432}:5432'
+    environment:
+      POSTGRES_DB: ${DDIP_DB_NAME:-ddip}
+      POSTGRES_USER: ${DDIP_DB_USER:-}
+      POSTGRES_PASSWORD: ${DDIP_DB_PASSWORD:-}
+      POSTGRES_INITDB_ARGS: '--auth-host=scram-sha-256'
+    volumes:
+      - management-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    stop_grace_period: 30s
 volumes:
   bronze-data:
+  management-postgres-data:
+    name: ddip-management-postgres17-data

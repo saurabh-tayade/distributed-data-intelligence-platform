@@ -1,5 +1,7 @@
 package platform.contentapi;
 
+import platform.contentapi.execution.AnalyticsRole;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -14,6 +16,7 @@ import org.springframework.stereotype.Component;
 import static platform.contentapi.ApiFailure.Code.*;
 
 /** Owns admission, two stream readers, the child and observed descendants for one call. */
+@AnalyticsRole
 @Component
 public class BoundedProcessRunner {
     public record Result(int exitCode, byte[] stdout) { }
