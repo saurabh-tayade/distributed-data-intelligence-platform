@@ -120,6 +120,8 @@ Exclude IP addresses, user/session/device identifiers, cookies, credentials, hea
 
 This product analyzes supplied service events. Monitoring the platform's own queue, workers, storage, verification, API and audit failures is an independent operational function, available even when this product cannot publish. An observability stack, live log collector, identity provider, orchestration framework or metadata database is not selected here.
 
+The scoped E3/E4a format and benchmark proposal is [ADR 0009](../adr/0009-reliability-format-equivalence-benchmarks.md) and its [detailed contract](../architecture/reliability-format-benchmarks.md). It remains Proposed; accepted E2 v1 and this wider specification retain their current status.
+
 ## Acceptance fixtures and delivery dependencies
 
 Hand-check a group of 20 unique events with durations 1–20 ms and exactly two 5xx statuses: request count 20, errors 2, rate 0.1, duration sum 210, mean 10.5 ms, exact nearest-rank p95 19 ms. The approximate result must meet the rank budget above; it is not automatically asserted to equal 19. Add an identical delivery and retain the same metrics with duplicate count incremented. Change its duration under the same identity and require a publication conflict. Add an event exactly at the next five-minute boundary and require a separate group. Omit its service reference and retain that group's metrics with explicit missing context.
