@@ -10,7 +10,7 @@ import static platform.contentapi.execution.PreflightFailure.need;
 
 /** Execution-only descriptor. RunProfile v1 stays unchanged; frozen deployment SHA binds this manifest. */
 public final class ReliabilityRuntime {
-    public static final List<String> MODULES=List.of("reliability_execution_preflight.py","artifact_import_verifier.py","publication_metadata.py",
+    public static final List<String> MODULES=List.of("reliability_execution_preflight.py","reliability_execution.py","artifact_import_verifier.py","publication_metadata.py",
         "reliability_format_inputs.py","reliability_format_metadata.py","reliability_format_parquet.py","reliability_inputs.py","reliability_metadata.py",
         "service_reference.py","reliability_format_publication.py","reliability_format_processing.py","reliability_format_analytics.py");
     private final String id,digest;private final JsonNode config,manifest,bindings;
@@ -76,7 +76,8 @@ public final class ReliabilityRuntime {
     }
     JsonNode json(){var n=SourceJson.object().put("profileId",id).put("profileSha256",digest);n.set("configuration",config.deepCopy());return n;}
     JsonNode bindings(){return bindings.deepCopy();}
-    List<String> command(Path descriptor){return List.of(python.toString(),"-I","-B","-X","utf8",processing.resolve("reliability_execution_preflight.py").toString(),descriptor.toString());}
+    List<String> command(Path descriptor){return command(descriptor,false);}
+    List<String> command(Path descriptor,boolean execution){return List.of(python.toString(),"-I","-B","-X","utf8",processing.resolve(execution?"reliability_execution.py":"reliability_execution_preflight.py").toString(),descriptor.toString());}
     Path scratch(){return Path.of(text(bindings.get("temp"),"root"));}
     Map<String,String> environment(){return Map.of("PATH","/usr/bin:/bin","TZ","UTC","LANG","C.UTF-8","JAVA_HOME",javaHome.toString(),"TMPDIR",scratch().toString(),"OPENBLAS_NUM_THREADS","1","OMP_NUM_THREADS","1","MKL_NUM_THREADS","1");}
     int seconds(){return integer(config,"verificationSeconds");}

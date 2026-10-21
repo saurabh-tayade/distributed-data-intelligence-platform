@@ -1112,3 +1112,118 @@ results before enabling a production capability. Fresh preflight is point-in-tim
 permanent readability, a filesystem snapshot or proof of future aggregate correctness.
 **Deferred:** all production publication/dispatch, Content execution, automatic recovery/retry,
 new run-control endpoints, activation and E5 completion. STOP at C2a.
+
+## C2b-1 Reliability publication — isolated test-owned runs only
+
+**Production dispatch remains disabled.** The packaged worker still uses NONE, has no queue-draining
+loop and cannot enable an executor through a flag or HTTP parameter. No new public endpoint or
+operator processing command is provided. C2b-2 must separately authorize production activation.
+Existing ANALYTICS_PUBLICATION and all analytics endpoint selections remain unchanged.
+
+The fixed internal `ReliabilityExecution.run(guard, verifiedPreflight, runtimeId)` consumes a VERIFIED
+C2a CHECK_INPUTS checkpoint for the exact current owner. It validates original command/result,
+selection/evidence and parent-anchor hashes, frozen runtime/profile/root identities and disk reserve.
+A private retained bundle then lets the fixed child run full native dependency qualification again
+before it permits a call to `reliability_format_publication.publish`. JSONL-v2 and Parquet-v1 retain
+all native schemas, identity/fingerprint rules, rejection accounting, five-minute UTC metrics and
+approximate-p95 rank policy. No operational ID or clock is inserted into native product identity.
+
+C1 claiming now chooses the oldest eligible QUEUED run in the worker's **exact frozen profile** and
+supported fixed pipeline. A Content run or another approved format profile stays QUEUED rather
+than failing because this worker cannot execute it. Each instance is still pinned to one profile;
+C2b-1 does not switch profiles or implement cross-profile production fairness. Use separately
+reviewed JSONL and Parquet runtime/profile configurations in tests. Never rewrite an old capture.
+
+### Deployment and stage boundary
+
+The unchanged execution-runtime v1 descriptor and fixed version tuple from C2a apply. The exact
+module hash map now also includes `reliability_execution.py`; a new reviewed manifest/deployment
+pin is required. Old profile/run hashes are never replaced. Fixed local[2], 1 GiB driver/executor,
+eight-way default/shuffle parallelism, four output partitions and disabled event logging apply.
+DuckDB verification retains its independent native limits. Roots remain approved, identity-pinned,
+disjoint and subject to the 1 GiB free-space admission reserve. No dependencies are installed.
+
+The fixed sequence is CHECK_INPUTS → PUBLISH_RELIABILITY → VERIFY_RESULT. Each new stage
+commits INTENT before child launch, then separately commits single-use launch authorization after
+checking owner/control/deadline/version fencing. Its immutable input-evidence SHA binds the whole
+canonical command and retained bundle SHA. Native intended identity/namespace remain the original
+fingerprint and `v2/processor_revision=2/publication=<fingerprint>`. Actual child PID/start/instance
+is recorded as soon as observable. No transaction spans native files, Spark or DuckDB verification.
+
+The fixed Python wrapper uses explicit arguments and the cleared environment. It starts Spark only
+for a new native namespace. All runtime/warehouse/local scratch uses an approved private temp
+subdirectory; scratch and incomplete native output are retained. Spark stop, Py4J shutdown, stdin
+closure and a bounded gateway-process wait precede machine success. Parent supervision checks
+observed descendant identities and requires them all gone; a reported reaped gateway PID must be
+one it observed. Processing <=30 minutes, verification <=15 minutes, attempt <=2 hours, independent
+stdout/stderr <=16 MiB and 5+5+5-second cleanup policy apply. An unknown/reused PID is never a kill
+target. Default C2a read-only supervision still treats any observed descendant as uncertain.
+These cooperative limits do not establish universal process containment or filesystem quotas.
+
+VERIFY_RESULT runs in a distinct read-only process. The authoritative
+`reliability_format_analytics.open_publication` fully reopens native completion, retained raw/reference
+inputs and exact output inventory/schemas/provenance; independently reconciles events, occurrences,
+counts/arithmetic and p95 ranks; and executes bounded native requests/input/reference reports.
+Evidence is rechecked after reports. Publisher exit zero, a completion marker or CHECK_INPUTS
+VERIFIED cannot bypass this stage.
+
+Private CONTROL sidecars use the same exclusive 0700/0600 policy and limits as C2a. New fixed
+stage directories are `publish-reliability/<checkpoint>` and `verify-result/<checkpoint>` under the
+run/attempt directory. Each contains command.json, retained.json, result.json, evidence.json and
+parent verified.json. No raw payload/report rows or descriptors enter public responses. Final native
+qualification contains exact original completion/inputs bytes, sorted file lengths/hashes and native
+identity/format. Safe counts mean occurrences=physical occurrences, accepted=valid occurrences
+(including duplicate valid deliveries), rejected=rejected occurrences, events=unique valid events,
+and windows=stored five-minute groups. Native duplicate counts remain in original completion evidence.
+
+### Commit, replay and interruption
+
+Only after independent verification and confirmed cleanup does one fenced PostgreSQL transaction
+persist/reuse the immutable RELIABILITY_V2 artifact, retained input dependency links, VERIFIED
+VERIFY_RESULT/result link, SUCCEEDED attempt/run, counts/audits and coordinator release. Existing
+native-format/location uniqueness protects identity. Reuse requires exact evidence and dependency
+agreement. Artifact/link/audit failure rolls back all final trusted records. V1–V7 are unchanged.
+The existing run/attempt/event GETs show historical VERIFIED_AT_EXECUTION linkage, not current
+readability or analytics activation.
+
+Completed identical native replay starts no Spark writer and preserves bytes/mtimes. A lost final
+commit acknowledgment is resolved using the known run/attempt and persisted result, not another
+writer launch. Intent/authorization ambiguity, stale ownership, malformed evidence, uncertain gateway
+cleanup, database loss or timeout/interruption retain occupied ownership for explicit recovery.
+Native output may already exist; do not delete, overwrite or resume it.
+
+A proven pre-write failure or known quiescent native failure with freshly verified dependencies and
+exact ABSENT/INCOMPLETE output may close FAILED and release the slot. Incomplete output is
+retained with INCOMPLETE_OUTPUT. C2b-1 leaves failed runs retry ineligible and adds no retry control.
+Broader C3 recovery/handoff is deferred. PostgreSQL fencing does not stop stale filesystem writers;
+missing parent/heartbeat/connection is never proof of quiescence.
+
+### Small-fixture reproduction
+
+Use only the dedicated disposable PostgreSQL service, approved JDK/Python environment and existing
+DDIP_TEST_DB_* / absolute DDIP_TEST_PYTHON configuration. No live feeds, private retained datasets,
+100K/1M workload or AWS access is required.
+
+```sh
+JAVA_HOME=$(/usr/libexec/java_home -v 21) PYTHONPATH=processing:processing/tests \
+outputs/silver-python312/.venv/bin/python -B -m unittest \
+  processing/tests/test_reliability_execution.py -v
+mvn -q -f services/content-api/pom.xml verify -Ppostgres \
+  -Dit.test=ReliabilityExecutionIT -Dtest=VerifierProcessTest
+mvn -q -f services/content-api/pom.xml verify -Ppostgres
+mvn -q -f services/content-api/pom.xml verify -Pintegration \
+  -Danalytics.python="$PWD/outputs/silver-python312/.venv/bin/python"
+npm run check
+```
+
+The optional `-Dddip.test.reliability-restart-signal=/private/tmp/ddip-c2b1-result-restart` test
+requires an external harness to wait for READY, restart **only the disposable server**, wait for
+readiness and write `.done` within 45 seconds. Without the property, the test checks fresh database
+connections and management startup; it does not claim a server restart. Exact executed results and
+commands are recorded in the [C2b-1 contract](../../docs/architecture/durable-execution.md#c2b-1-validation-and-remaining-activation-boundary).
+
+**Implemented:** isolated native publication, distinct independent verification, fenced stages and
+atomic result completion. **Tested:** local synthetic acceptance/regression evidence in the contract;
+hosted CI is pending owner publication. **Planned:** C2b-2 production capability/lifecycle wiring,
+reviewed profile eligibility/fairness and explicit activation acceptance. **Deferred:** production
+queue draining, C3 recovery/takeover/controls, Content/RSS, automatic retries, UI and E5 completion.

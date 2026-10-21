@@ -1374,3 +1374,303 @@ production capability. A successful preflight is a point-in-time check, not a fi
 C2b must revalidate before consumption. No Spark normalization, aggregate equivalence or output
 correctness is established here. **Deferred:** production dispatch/publication, retry/recovery
 takeover, cancellation endpoints, Content/RSS execution, UI, activation and E5 completion.
+
+## C2b-1 fixed Reliability publication and verified completion
+
+C2b-1 implements an internal Reliability-specific adapter for isolated test-owned runs only.
+**Production WorkerExecutionCapability.NONE and passive WorkerIdleLifecycle remain unchanged.**
+No queue loop, activation property, fake packaged executor, management execution endpoint or
+analytics-publication selection is introduced. C2b-2 requires separate owner authorization.
+
+### Profile eligibility and immutable runtime
+
+C1 inspection found that claiming the oldest run without eligibility filtering could fail a valid
+Content run or a run pinned to another format profile. Claims now select the oldest QUEUED run
+**within the current worker's exact immutable execution profile and supported fixed pipelines**.
+Other valid profile/pipeline selections stay QUEUED. Source disablement and invalid captured
+metadata still reject a genuinely eligible selection under the existing coordinator-first lock order.
+This preserves submission order among executable runs without rewriting captured configurations.
+There is no SKIP LOCKED, secondary queue or in-memory scheduling authority.
+
+One worker instance remains pinned to one RunProfile ID/SHA and deployment SHA. Both Reliability
+formats are supported by the same fixed adapter, but approved JSONL and Parquet profiles remain
+distinct. An idle worker may later be stopped and a separately reviewed instance started for the
+other profile; C2b-1 does not implement profile switching or a production policy for choosing among
+profiles. Broader multi-profile readiness/fairness belongs to C2b-2 review, not silent compatibility
+coercion. No accepted ownership model or native profile is changed.
+
+The execution-only runtime descriptor remains version 1. The approved deployment manifest's exact
+module map now also includes `reliability_execution.py`. Its digest still must equal both frozen
+RunProfile and execution-runtime pins. Existing deployment pins are never rewritten; deploying this
+new wrapper requires a newly reviewed matching deployment/profile, not a fallback for old runs.
+Java 21/Python 3.12.15/PySpark 4.0.2/DuckDB 1.4.5 and the C2a fixed local Spark/DuckDB/resource
+policies remain unchanged. No package installation or machine-specific setting enters native identity.
+
+### Retained preflight and three fixed stages
+
+The internal entry is `ReliabilityExecution.run(guard, verifiedPreflight, runtimeId)`. The supplied
+C2a CHECK_INPUTS must be VERIFIED for the exact current run/attempt. Parent code reopens the
+original private command/result/selection/evidence/validation anchor and checks their exact
+hashes against the persisted checkpoint and captured selection. It revalidates runtime, host guard,
+storage binding identities, private permissions and disk reserve before continuing. A historical flag
+or caller-supplied fingerprint alone cannot qualify publication.
+
+A bounded private `retained.json` carries those original descriptors to the fixed child. Before
+invoking the native publisher, the child performs full `reliability_execution_preflight.recheck`
+with the authoritative batch/reference and joint dependency readers. The exact original native
+dependency fingerprint must still match. Stage authorization permits this fixed wrapper only;
+its write path is gated behind that fresh native qualification. No substitute input, profile, root,
+new registration, latest discovery or operational identifier enters publisher arguments.
+
+The only new native wrapper stages are PUBLISH_RELIABILITY and VERIFY_RESULT, ordinal zero.
+Each follows INTENT → separate single-use launch authorization → observed-child RUNNING →
+verified disposition. Prior-stage VERIFIED and current run stage enforce their order. Immutable
+`input_evidence_sha256` binds the canonical stage command (including retained-evidence SHA);
+`intended_identity` is the **native** fingerprint and `intended_namespace` is exactly
+`v2/processor_revision=2/publication=<native fingerprint>`. Private command/result addresses
+remain in CONTROL. Command/result/parent anchor are <=64 KiB, retained/evidence <=16 MiB.
+
+Parent sidecars use the existing private no-follow/exclusive-file policy under
+`runs/<run>/attempts/<attempt>/publish-reliability/<checkpoint>` or
+`runs/<run>/attempts/<attempt>/verify-result/<checkpoint>`. The existing protocol-v1 result fields
+and decimal-string counts are unchanged. Every mutation checks installation, worker, attempt,
+epoch, expected state and applicable versions. No PostgreSQL transaction spans native I/O or Spark.
+Bound command with uncertain launch acknowledgment is never a permission to launch again.
+
+PUBLISH_RELIABILITY constructs arguments from the frozen native dependency manifest and approved
+roots and calls **unchanged** `reliability_format_publication.publish`. Its 20/21/17-column
+contracts, rejection/identity accounting, five-minute UTC arithmetic and rank-qualified approximate
+p95 remain native responsibilities. A completed identical namespace takes native read-only replay
+without starting Spark or recalculating approximation. Incomplete namespaces are never repaired.
+The native publisher's own completion/read-back checks do not replace VERIFY_RESULT.
+
+VERIFY_RESULT is a distinct Spark-free child using **unchanged**
+`reliability_format_analytics.open_publication`. It verifies all retained dependencies, completion
+and output file inventories/hashes, exact physical schemas/provenance, independent raw-to-output
+reconciliation, counts/arithmetic and p95 rank qualification. It executes three bounded native
+reports (requests_5m over one observed five-minute window, input_coverage and reference_coverage,
+limit 1), then rechecks native evidence. Report rows are not stored in the operational registry.
+
+### Spark supervision and cleanup
+
+The default C2a supervisor still refuses every observed descendant and retains its <=15-minute
+read-only limit. An explicit internal Spark mode permits bounded observed descendants and a
+<=30-minute processing limit; it cannot be selected through configuration or HTTP. Both modes
+use closed stdin, explicit argument lists, a cleared allowlisted environment, independent 16 MiB
+stream bounds and 5-second graceful/forced/final-drain cleanup phases. Stage deadlines are also
+capped by remaining time to the attempt's two-hour deadline; authorization and heartbeats check
+that deadline in PostgreSQL. These are operational limits, not measured timing guarantees.
+
+The wrapper starts the fixed local Spark session only for a new native namespace. JVM local/temp
+and warehouse files use approved private scratch; native staging/output are used only by the
+native publisher. Scratch and incomplete native artifacts are retained, without automatic deletion.
+It stops Spark, shuts down Py4J, closes the gateway's stdin and waits up to five seconds for its
+actual child to exit. The parent requires the reaped gateway PID to match observed descendants,
+tracks start identities, and requires every observed descendant to be gone before clean completion.
+Live descendants discovered after apparent parent completion make the outcome uncertain even
+when subsequent identity-aware cleanup succeeds. Unknown/reused identities are never killed
+blindly. No universal macOS/Linux containment or proof about unobserved descendants is claimed.
+
+### Atomic result, replay and immediate failure
+
+The final independent reader produces a bounded immutable qualification descriptor: native
+product/kind/version/format/fingerprint, approved binding and native relative namespace, original
+completion/inputs bytes, exact sorted file lengths/hashes (including native bookkeeping), and safe
+counts. It contains no run/attempt timestamp or machine path in the native fingerprint. A parent
+anchor binds the exact command, retained bundle, child result, qualification evidence and observed
+clean cleanup. Historical verification is not current readability or analytics activation.
+
+Under the current fenced coordinator, one short transaction persists/reuses the RELIABILITY_V2
+artifact (contract/processor 2), exact retained batch/reference dependency links, VERIFIED
+VERIFY_RESULT and stage_artifacts RESULT linkage, SUCCEEDED attempt/run, final counts/audits
+and conditional coordinator release. Existing V7 native-format uniqueness and location constraints
+remain authoritative. Identical artifact reuse requires exact immutable evidence/location/dependency
+agreement; conflicts do not overwrite anything. Any artifact/link/audit failure rolls back all final
+trusted state. No V8 is needed; V1–V7 are unchanged.
+
+Definitive pre-write runtime/evidence failure with known ownership, failed process startup before
+publication, or fixed native failure with proven quiescence and freshly qualified ABSENT/INCOMPLETE
+output may close FAILED and release the slot atomically. Incomplete output is retained with
+INCOMPLETE_OUTPUT and retry ineligible. C2b-1 conservatively leaves all such failures retry ineligible;
+it implements no retry control. Raw native classifications stay private and map to fixed safe codes.
+A dependency I/O failure, invalid result, unconfirmed gateway, timeout/interruption, stale fencing or
+ambiguous database outcome does not establish a successful result or permission to release.
+Where possible UNKNOWN/INTERRUPTED/RECOVERY_REQUIRED is persisted; otherwise the already
+occupied state remains. C3's explicit reconciliation/handoff is not implemented here.
+
+A completed native result after a lost native response can be reopened without another writer and
+must still pass the separate VERIFY_RESULT stage. A lost final PostgreSQL acknowledgment is
+resolved using the exact known run/attempt and persisted result/stage linkage through historical
+inspection; the old repository's failure latch prevents another launch. No automatic retry,
+namespace cleanup, output overwrite or publication activation occurs.
+
+### C2b-1 validation and remaining activation boundary
+
+Gate A completed before database acceptance: eight native cases passed using actual small Spark
+publishers for JSONL/Parquet, compatible multi-batch delivery, independent reader processes,
+exact accounting/rank qualification, immutable replay, corrupt/incomplete output refusal, runtime
+and retained dependency mutation, and proven-quiescent native identity-conflict failure. Database
+and integrated regression results are recorded after the final local runs below.
+
+**Implemented:** fixed publication/independent-reader wrapper, retained preflight validation,
+fenced ordered stages and single-use launch, bounded Spark cleanup evidence, atomic verified
+result registration/completion, native immutable replay and conservative immediate failure.
+**Tested:** only the actual local gates/regressions recorded here; hosted CI remains pending.
+**Planned for separately authorized C2b-2:** review deployment/profile eligibility and starvation
+policy, wire a real fixed capability to the passive worker, handle returned lifecycle tokens safely,
+prove production startup/admission/dispatch and shutdown, then explicitly approve queue draining.
+**Deferred:** production activation, automatic retries/recovery takeover, C3 controls/handoff,
+Content/RSS execution, UI, analytics activation and E5 completion. STOP after C2b-1.
+
+#### Local C2b-1 validation evidence
+
+The final local environment was Java 21.0.7, Python 3.12.15, PySpark 4.0.2, DuckDB 1.4.5 and
+PostgreSQL 17.11. The full regression passed **274 Java and 375 PostgreSQL cases**, with no
+failures/errors/skips, including **26 C2b lifecycle**, **36 C2a preflight**, **56 C1 worker** and
+**23 Spark-backed Silver** cases. Three external harness barriers restarted only the dedicated
+server: claim durability, history/cursor durability and actual verified Reliability result linkage.
+Each required a newer postmaster start time, not merely another connection. Actual result, attempt
+and event GETs were checked after the Reliability restart with unchanged public DTOs.
+
+A subsequent cleanup-hardening run passed **275 Java cases** (including the new denied-descendant
+observation test) and **37 PostgreSQL cases** (36 C2a plus retained-preflight failure). The known
+parent is now terminated even when descendant enumeration is denied; uncertainty still blocks
+ownership release. Counts across repeated runs are not added as new distinct coverage.
+
+Native qualification passed eight Gate A cases; Spark-free C2a/native input/reader regressions
+passed 85; isolated E2 processing/publication and E3 publication regressions passed 8/17/8.
+That is **126 distinct native cases**, including the same 30 C2a preflight cases within the 85.
+These cover literal counts, duplicate/rejection and p95 rank policies, real both-format native
+publication, multi-batch delivery, separate independent-reader processes, native replay bytes/mtimes,
+completion/output schema corruption, missing/changed dependencies and actual gateway reaping.
+The refreshed-inventory schema failure and wrong-result-fingerprint PostgreSQL cases cannot
+produce a verified artifact. Existing HTTP/Python analytics compatibility passed **20 cases**.
+
+An initial combined legacy Spark invocation was invalid: it selected the host Python 3.9 worker
+for a 3.12 driver and left an incompatible Spark context after setup failure (16 tests reported,
+14 subtest failures/11 errors). A first isolated harness also resolved the venv executable symlink
+outside its environment (three loader errors). Neither attempt is counted as passing. Preserving
+the venv executable path, explicitly pinning PYSPARK_PYTHON/PYSPARK_DRIVER_PYTHON and running
+legacy suites separately produced the clean E2/E3 passes above. The new managed wrapper already
+sets its approved worker executable and was unaffected; no native contract was changed to fix tests.
+
+Exact underlying commands, with private existing DDIP_TEST_DB_* variables and absolute
+DDIP_TEST_PYTHON supplied by the local test harness, were:
+
+~~~sh
+# Gate A (eight native cases)
+JAVA_HOME=$(/usr/libexec/java_home -v 21) PYTHONPATH=processing:processing/tests \
+outputs/silver-python312/.venv/bin/python -B -m unittest \
+  processing/tests/test_reliability_execution.py -v
+
+# Focused Gate B, expanded to 26 cases in the full regression
+mvn -q -f services/content-api/pom.xml verify -Ppostgres \
+  -Dit.test=ReliabilityExecutionIT -Dtest=VerifierProcessTest
+
+# Full regression; an external dedicated-container restart harness handles the barriers
+mvn -q -f services/content-api/pom.xml -Ppostgres \
+  -Dddip.test.worker-restart-signal=/private/tmp/ddip-c1-worker-restart \
+  -Dddip.test.history-restart-signal=/private/tmp/ddip-c1-history-restart \
+  -Dddip.test.reliability-restart-signal=/private/tmp/ddip-c2b1-result-restart verify
+
+# Final shared-supervisor hardening: all 275 Java and 37 PostgreSQL cases
+mvn -q -f services/content-api/pom.xml verify -Ppostgres \
+  '-Dit.test=ReliabilityPreflightIT,ReliabilityExecutionIT#retainedEvidenceChangedBeforePublicationFailsAndReleasesKnownOwner'
+
+# Spark-free regression: 85, including C2a's 30
+JAVA_HOME=$(/usr/libexec/java_home -v 21) PYTHONPATH=processing:processing/tests \
+outputs/silver-python312/.venv/bin/python -B -m unittest \
+  processing/tests/test_reliability_execution_preflight.py \
+  processing/tests/test_reliability_format_inputs.py \
+  processing/tests/test_reliability_format_admission.py \
+  processing/tests/test_reliability_format_verification.py \
+  processing/tests/test_reliability_inputs.py \
+  processing/tests/test_reliability_verification.py -v
+
+# Separate processes: eight E2 processing, 17 E2 publication, eight E3 publication cases
+export JAVA_HOME=$(/usr/libexec/java_home -v 21)
+export PYTHONPATH=processing:processing/tests
+export PYSPARK_PYTHON="$PWD/outputs/silver-python312/.venv/bin/python"
+export PYSPARK_DRIVER_PYTHON="$PYSPARK_PYTHON"
+export SPARK_LOCAL_IP=127.0.0.1
+"$PYSPARK_PYTHON" -B -m unittest processing/tests/test_reliability_processing.py -v
+"$PYSPARK_PYTHON" -B -m unittest processing/tests/test_reliability_publication.py -v
+"$PYSPARK_PYTHON" -B -m unittest processing/tests/test_reliability_format_publication.py -v
+
+# Existing analytics compatibility: 20 cases; already-tested Java tests omitted here
+JAVA_HOME=$(/usr/libexec/java_home -v 21) \
+mvn -q -f services/content-api/pom.xml verify -Pintegration \
+  -Dtest=NoUnitTests -Dsurefire.failIfNoSpecifiedTests=false \
+  -Danalytics.python="$PWD/outputs/silver-python312/.venv/bin/python"
+npm run check
+git diff --check
+git diff --cached --check
+~~~
+
+The processing CI job keeps its existing jobs/dependencies and now allows 25 minutes instead of
+15 for the added bounded native/transaction cases. This is a timeout allowance, not a performance
+claim or observed hosted success. Local logs are ignored outputs. No E4 experiment, 100K/1M
+workload, live feed, retained personal dataset, cloud credential or AWS operation was used.
+
+A successful `Completed` result returns the exact committed released worker token. A definitive
+safe failure returns its fixed classification and committed released token through `DefinitiveFailure`;
+an ambiguous commit returns no token. These let C2b-2 continue only from confirmed lifecycle
+transitions, without adopting a newer epoch/version. The current adapter consumes an already
+verified C2a token; C2b-2 must still integrate C2a failure handling and passive-worker scheduling.
+Replayed artifact reuse preserves the artifact's original `verified_at`; fresh stage timestamps/audits
+record the later verification. Neither timestamp is permanent readability assurance.
+
+Known limits remain cooperative host/filesystem trust, no universal orphan containment, no hard disk
+quotas or deployment authenticity, and no power-loss/backup guarantee. Forced process-death and
+late-control/reconciliation matrices remain C3 work; only existing control checks before launch are
+operational here. No cancellation endpoint is enabled. Production activation is **not** inferred from
+isolated adapter success; profile fairness, lifecycle/failure-token wiring and activation/shutdown
+acceptance require separately authorized C2b-2 work.
+
+Changed implementation files are `processing/reliability_execution.py`, the operational preflight
+module allowlist, `ReliabilityExecution.java`, `WorkerRepository.java`, `ReliabilityRuntime.java`,
+`ReliabilityPreflight.java`, `PreflightFiles.java` and `ReadOnlyVerifierProcess.java`. Test changes
+are `test_reliability_execution.py`, `reliability_preflight_fixtures.py`, `ReliabilityExecutionIT.java`,
+shared `ReliabilityExecutionFixtures.java`, the existing preflight/supervisor/worker tests and the
+test-only `PreflightCatalogFixture` bridge. The content-api pom, this contract, service guide and
+existing CI timeout are updated. Authoritative native publishers/readers, accepted ADRs and V1–V7
+remain byte-identical to the committed baseline. No Git staging/commit/push/branch operation was
+run. Staged additions appeared during work outside these commands; their entries were left intact.
+
+The final affected lifecycle rerun passed all **26 PostgreSQL cases** after the confirmed-release
+interface change, using this command (no unrelated Java cases were repeated):
+
+~~~sh
+mvn -q -f services/content-api/pom.xml verify -Ppostgres \
+  -Dit.test=ReliabilityExecutionIT -Dtest=NoUnitTests -Dsurefire.failIfNoSpecifiedTests=false
+~~~
+
+The final standalone Gate A also passed all **eight cases**, including publication directory and
+file bytes/mtimes on replay. The production JAR was inspected: test-only capabilities, process
+fixtures and fixture bridges are absent. NONE/passive-worker code, accepted ADRs and V1–V7
+were compared with HEAD. Markdown lint (44 documents), local links, repository hygiene and
+both working-tree/staged whitespace checks passed. The initial dedicated database state was
+stopped; the container was restored to that state after local validation.
+
+Exact changed-file inventory:
+
+- `.github/workflows/ci.yml`
+- `docs/architecture/durable-execution.md`
+- `processing/reliability_execution.py`
+- `processing/reliability_execution_preflight.py`
+- `processing/tests/reliability_preflight_fixtures.py`
+- `processing/tests/test_reliability_execution.py`
+- `services/content-api/README.md`
+- `services/content-api/pom.xml`
+- `services/content-api/src/main/java/platform/contentapi/execution/PreflightFiles.java`
+- `services/content-api/src/main/java/platform/contentapi/execution/ReadOnlyVerifierProcess.java`
+- `services/content-api/src/main/java/platform/contentapi/execution/ReliabilityExecution.java`
+- `services/content-api/src/main/java/platform/contentapi/execution/ReliabilityPreflight.java`
+- `services/content-api/src/main/java/platform/contentapi/execution/ReliabilityRuntime.java`
+- `services/content-api/src/main/java/platform/contentapi/execution/WorkerRepository.java`
+- `services/content-api/src/test/java/platform/contentapi/execution/ReliabilityExecutionFixtures.java`
+- `services/content-api/src/test/java/platform/contentapi/execution/ReliabilityExecutionIT.java`
+- `services/content-api/src/test/java/platform/contentapi/execution/ReliabilityPreflightIT.java`
+- `services/content-api/src/test/java/platform/contentapi/execution/VerifierProcessTest.java`
+- `services/content-api/src/test/java/platform/contentapi/management/PreflightCatalogFixture.java`
+- `services/content-api/src/test/java/platform/contentapi/management/WorkerCoordinationIT.java`

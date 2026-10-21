@@ -36,6 +36,16 @@ class VerifierProcessTest {
         assertThat(launched.await(5,TimeUnit.SECONDS)).isTrue();t.interrupt();assertThat(result.get(5,TimeUnit.SECONDS)).isEqualTo("INTERRUPTED:true");t.join(1000);assertThat(ProcessHandle.of(observer.child.pid()).map(ProcessHandle::isAlive).orElse(false)).isFalse();
     }
     @Test void deadlineCannotExceedVerificationPolicy(){assertThatThrownBy(()->process().run(command("environment","unused"),Map.of(),temp,Duration.ofMinutes(16),new Observer())).hasMessage("RUNTIME_MISMATCH");}
+    @Test void sparkModeHasSeparateThirtyMinuteCeiling(){
+        var result=new ReadOnlyVerifierProcess(true).run(command("environment","unused"),Map.of(),temp,Duration.ofMinutes(30),new Observer());
+        assertThat(result.exitCode()).isZero();assertThat(result.descendants()).isEmpty();
+    }
+    @Test void sparkModeCannotExceedProcessingCeiling(){assertThatThrownBy(()->new ReadOnlyVerifierProcess(true).run(command("environment","unused"),Map.of(),temp,Duration.ofMinutes(31),new Observer())).hasMessage("RUNTIME_MISMATCH");}
+    @Test void deniedDescendantObservationStillTerminatesKnownParent(){
+        var denied=new ReadOnlyVerifierProcess(){List<ProcessHandle> descendants(Process p){throw new SecurityException();}};
+        var observer=new Observer();assertThatThrownBy(()->denied.run(command("hang","unused"),Map.of(),temp,Duration.ofSeconds(5),observer)).hasMessage("TERMINATION_UNCONFIRMED");
+        assertThat(ProcessHandle.of(observer.child.pid()).map(ProcessHandle::isAlive).orElse(false)).isFalse();
+    }
     public static final class Child {
         public static void main(String[] args)throws Exception {
             switch(args[0]) {

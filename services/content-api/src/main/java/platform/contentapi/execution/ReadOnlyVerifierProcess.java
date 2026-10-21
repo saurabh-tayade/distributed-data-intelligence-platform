@@ -7,26 +7,32 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 import static platform.contentapi.execution.PreflightFailure.Code.*;
 
-/** One fixed read-only child, bounded streams/deadline and best-effort identity-aware cleanup.
- * No analytics timeout, persistent process, shell, queue or native publication responsibility.
- */
+/** Fixed native child supervision. Default read-only mode refuses every observed descendant.
+ * Explicit Spark mode permits bounded descendants only when all are gone before clean completion;
+ * the Reliability adapter also requires the fixed wrapper's reaped-gateway identity.
+ * No analytics timeout, persistent server, shell, queue or publication implementation. */
 class ReadOnlyVerifierProcess {
     interface Observer {
         void beforeStart();
         void started(InstallationHostGuard.ProcessIdentity child);
         void heartbeat();
     }
-    record Result(int exitCode,InstallationHostGuard.ProcessIdentity child,long stdoutBytes,long stderrBytes) { }
+    record Result(int exitCode,InstallationHostGuard.ProcessIdentity child,long stdoutBytes,long stderrBytes,Set<String> descendants) { }
     private record Observed(ProcessHandle handle,Instant start) { }
-    private final int outputLimit;private final Duration graceful,forced,drain;
-    ReadOnlyVerifierProcess(){this(16*1024*1024,Duration.ofSeconds(5),Duration.ofSeconds(5),Duration.ofSeconds(5));}
+    private final boolean spark;private final int outputLimit;private final Duration graceful,forced,drain;
+    ReadOnlyVerifierProcess(){this(false);}
+    ReadOnlyVerifierProcess(boolean spark){this(spark,16*1024*1024,Duration.ofSeconds(5),Duration.ofSeconds(5),Duration.ofSeconds(5));}
     /** Narrow test constructor; production caps cannot be raised by a profile or environment. */
     ReadOnlyVerifierProcess(int limit,Duration graceful,Duration forced,Duration drain) {
+        this(false,limit,graceful,forced,drain);
+    }
+    private ReadOnlyVerifierProcess(boolean spark,int limit,Duration graceful,Duration forced,Duration drain) {
+        this.spark=spark;
         PreflightFailure.need(limit>0 && limit<=16*1024*1024 && List.of(graceful,forced,drain).stream().allMatch(d->!d.isNegative() && d.compareTo(Duration.ofSeconds(5))<=0),RUNTIME_MISMATCH);
         this.outputLimit=limit;this.graceful=graceful;this.forced=forced;this.drain=drain;
     }
     Result run(List<String> command,Map<String,String> environment,Path directory,Duration timeout,Observer observer) {
-        PreflightFailure.need(!timeout.isNegative() && !timeout.isZero() && timeout.compareTo(Duration.ofMinutes(15))<=0,RUNTIME_MISMATCH);
+        PreflightFailure.need(!timeout.isNegative() && !timeout.isZero() && timeout.compareTo(Duration.ofMinutes(spark?30:15))<=0,RUNTIME_MISMATCH);
         Process p=null;Drain out=null,err=null;InstallationHostGuard.ProcessIdentity identity=null;boolean uncertain=false,interrupted=false;
         RuntimeException failure=null;Result result=null;Map<Long,Observed> observed=new HashMap<>();
         long deadline=System.nanoTime()+timeout.toNanos();
@@ -44,12 +50,12 @@ class ReadOnlyVerifierProcess {
             long nextHeartbeat=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);
             while(true) {
                 if(Thread.currentThread().isInterrupted())throw new InterruptedException();
-                var children=p.descendants().limit(33).toList();
-                if(!children.isEmpty())uncertain=true; // This fixed adapter must not launch descendants.
+                var children=descendants(p);
+                if((!spark && !children.isEmpty()) || children.size()>32)uncertain=true; // Read-only children may not spawn; Spark observations remain bounded.
                 for(var child:children)if(observed.size()<32)observed.putIfAbsent(child.pid(),new Observed(child,child.info().startInstant().orElse(null)));
                 if(out.overflow || err.overflow)throw new PreflightFailure(STAGE_OUTPUT_LIMIT);
                 if(out.failed || err.failed)throw new PreflightFailure(RESULT_INVALID);
-                if(!p.isAlive() && out.done && err.done){result=new Result(p.exitValue(),identity,out.total,err.total);break;}
+                if(!p.isAlive() && out.done && err.done){result=new Result(p.exitValue(),identity,out.total,err.total,Set.copyOf(observed.keySet().stream().map(Object::toString).toList()));break;}
                 if(System.nanoTime()>=deadline)throw new PreflightFailure(STAGE_TIMEOUT);
                 if(System.nanoTime()>=nextHeartbeat){observer.heartbeat();nextHeartbeat=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);}
                 TimeUnit.MILLISECONDS.sleep(5);
@@ -61,9 +67,12 @@ class ReadOnlyVerifierProcess {
             interrupted|=Thread.interrupted();
             if(p!=null) {
                 try {
-                    var last=p.descendants().limit(33).toList();if(!last.isEmpty())uncertain=true;
-                    for(var child:last)if(observed.size()<32)observed.putIfAbsent(child.pid(),new Observed(child,child.info().startInstant().orElse(null)));
+                    try {
+                        var last=descendants(p);if((!spark && !last.isEmpty()) || last.size()>32)uncertain=true;
+                        for(var child:last)if(observed.size()<32)observed.putIfAbsent(child.pid(),new Observed(child,child.info().startInstant().orElse(null)));
+                    }catch(RuntimeException ex){uncertain=true;} // Enumeration failure must not skip known-parent termination.
                     for(var child:observed.values())if(child.handle().isAlive()) {
+                        if(result!=null)uncertain=true;
                         if(child.start()==null || !child.handle().info().startInstant().equals(Optional.of(child.start()))){uncertain=true;continue;}
                         child.handle().destroy();
                     }
@@ -86,6 +95,7 @@ class ReadOnlyVerifierProcess {
         if(result==null)throw new PreflightFailure(RESULT_INVALID,false);
         return result;
     }
+    List<ProcessHandle> descendants(Process process){return process.descendants().limit(33).toList();}
     private static final class Drain implements Runnable {
         static final Drain EMPTY=new Drain(InputStream.nullInputStream(),1);
         final InputStream input;final int limit;volatile boolean done,overflow,failed;volatile long total;Thread thread;

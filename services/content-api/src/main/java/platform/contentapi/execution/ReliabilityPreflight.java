@@ -57,7 +57,7 @@ public final class ReliabilityPreflight {
         // Database/ownership failures deliberately escape: never release or refresh/adopt a token.
     }
     private static final class Current {WorkerRepository.CheckInputs stage;Current(WorkerRepository.CheckInputs stage){this.stage=stage;}}
-    private static void validateResult(JsonNode command,JsonNode result,int exit) {
+    static void validateResult(JsonNode command,JsonNode result,int exit) {
         try {
             SourceJson.fields(result,"protocolVersion","runId","attemptId","stage","itemOrdinal","status","code","evidenceId","counts");
             need(result.get("protocolVersion").isIntegralNumber() && result.get("protocolVersion").intValue()==1 && result.get("itemOrdinal").isIntegralNumber() && result.get("itemOrdinal").intValue()==0,RESULT_INVALID);
@@ -66,7 +66,7 @@ public final class ReliabilityPreflight {
             else need(exit==1 && result.get("status").stringValue().equals("FAILED") && result.get("evidenceId").isNull() && result.get("counts").isObject() && result.get("counts").isEmpty() && result.get("code").isString() && NATIVE_CODES.contains(result.get("code").stringValue()),RESULT_INVALID);
         }catch(PreflightFailure ex){throw ex;}catch(RuntimeException ex){throw new PreflightFailure(RESULT_INVALID);}
     }
-    private static void validateEvidence(JsonNode command,JsonNode frozen,JsonNode result,JsonNode evidence) {
+    static void validateEvidence(JsonNode command,JsonNode frozen,JsonNode result,JsonNode evidence) {
         try {
             SourceJson.fields(evidence,"evidenceVersion","policy","runId","attemptId","ownerEpoch","checkpointId","capturedConfigSha256","runtimeProfileId","runtimeProfileSha256","deploymentSha256","runtime","inputFormat","nativeDependencyFingerprint","nativeDependencies","artifacts","counts");
             need(evidence.get("evidenceVersion").isIntegralNumber() && evidence.get("evidenceVersion").intValue()==1 && evidence.get("policy").stringValue().equals("E5_RELIABILITY_PREFLIGHT_V1"),RESULT_INVALID);
@@ -86,7 +86,7 @@ public final class ReliabilityPreflight {
             var counts=SourceJson.object().put("files",Long.toString(files)).put("bytes",Long.toString(bytes)).put("rows",Long.toString(rows));need(counts.equals(result.get("counts")),RESULT_INVALID);
         }catch(PreflightFailure ex){throw ex;}catch(RuntimeException ex){throw new PreflightFailure(RESULT_INVALID);}
     }
-    private static final Set<String> NATIVE_CODES=Set.of("ARGUMENT_INVALID","PATH_UNSAFE","UNSUPPORTED_VERSION","INTAKE_NOT_APPROVED","INPUT_UNAVAILABLE","INPUT_CHANGED","BATCH_UNAVAILABLE","BATCH_INCOMPLETE","BATCH_INVALID","BATCH_CONFLICT","CSV_INVALID","VOCABULARY_INVALID","SNAPSHOT_UNAVAILABLE","SNAPSHOT_INVALID","SNAPSHOT_CHANGED","SNAPSHOT_INCOMPLETE","IDENTITY_MISMATCH","DEPENDENCY_UNAVAILABLE","DEPENDENCY_INVALID","DEPENDENCY_CHANGED","PARQUET_INVALID","PROVENANCE_UNSUPPORTED","RESOURCE_LIMIT","EVIDENCE_UNAVAILABLE","EVIDENCE_INVALID","EVIDENCE_CHANGED","RUNTIME_INCOMPATIBLE","RUNTIME_MISMATCH","ADAPTER_INVALID","INPUT_INVALID");
+    static final Set<String> NATIVE_CODES=Set.of("ARGUMENT_INVALID","PATH_UNSAFE","UNSUPPORTED_VERSION","INTAKE_NOT_APPROVED","INPUT_UNAVAILABLE","INPUT_CHANGED","BATCH_UNAVAILABLE","BATCH_INCOMPLETE","BATCH_INVALID","BATCH_CONFLICT","CSV_INVALID","VOCABULARY_INVALID","SNAPSHOT_UNAVAILABLE","SNAPSHOT_INVALID","SNAPSHOT_CHANGED","SNAPSHOT_INCOMPLETE","IDENTITY_MISMATCH","DEPENDENCY_UNAVAILABLE","DEPENDENCY_INVALID","DEPENDENCY_CHANGED","PARQUET_INVALID","PROVENANCE_UNSUPPORTED","RESOURCE_LIMIT","EVIDENCE_UNAVAILABLE","EVIDENCE_INVALID","EVIDENCE_CHANGED","RUNTIME_INCOMPATIBLE","RUNTIME_MISMATCH","ADAPTER_INVALID","INPUT_INVALID");
     private static PreflightFailure nativeFailure(String code){return new PreflightFailure(code.equals("RESOURCE_LIMIT")?RESOURCE_LIMIT:Set.of("RUNTIME_MISMATCH","RUNTIME_INCOMPATIBLE","UNSUPPORTED_VERSION").contains(code)?RUNTIME_MISMATCH:code.endsWith("_CHANGED")?INPUT_CHANGED:code.endsWith("_UNAVAILABLE")?INPUT_UNAVAILABLE:INPUT_INVALID);}
     private static String publicCode(PreflightFailure.Code code){return switch(code){case RESULT_INVALID->"INPUT_INVALID";case INTERRUPTED,TERMINATION_UNCONFIRMED->"RECOVERY_REQUIRED";default->code.name();};}
 }

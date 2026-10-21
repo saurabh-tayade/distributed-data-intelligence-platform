@@ -15,7 +15,7 @@ import artifact_import_verifier as capture
 COMMAND_LIMIT = 65536
 EVIDENCE_LIMIT = 16 * 1024**2
 POLICY = 'E5_RELIABILITY_PREFLIGHT_V1'
-MODULES = ('reliability_execution_preflight.py', 'artifact_import_verifier.py', 'publication_metadata.py',
+MODULES = ('reliability_execution_preflight.py', 'reliability_execution.py', 'artifact_import_verifier.py', 'publication_metadata.py',
            'reliability_format_inputs.py', 'reliability_format_metadata.py', 'reliability_format_parquet.py',
            'reliability_inputs.py', 'reliability_metadata.py', 'service_reference.py',
            'reliability_format_publication.py', 'reliability_format_processing.py', 'reliability_format_analytics.py')

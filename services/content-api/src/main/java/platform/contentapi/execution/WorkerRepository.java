@@ -7,7 +7,7 @@ import static platform.contentapi.execution.WorkerFailure.Code.*;
 import static platform.contentapi.execution.WorkerFailure.require;
 
 /** One coordinator, short transactions, coordinator -> sorted sources -> run -> attempt locks.
- * No native I/O, executors, recovery handoff or publication-success transition lives here.
+ * JDBC metadata only: fixed claims/stages and verified completion, never native I/O or dispatch.
  */
 public final class WorkerRepository {
     public record Session(UUID installationId,UUID instanceId,String profileId,String profileDigest,String deploymentDigest,
@@ -48,7 +48,7 @@ public final class WorkerRepository {
         return ownerTransaction(()->{
             var c=slot();checkSession(c,session);require("READY".equals(session.status()) && idle(c),WORKER_NOT_READY);
             require(jdbc.queryForObject("SELECT count(*) FROM ddip_management.attempts WHERE attempt_id=?",Long.class,attemptId)==0,CLAIM_UNCERTAIN);
-            var next=jdbc.queryForList("SELECT run_id FROM ddip_management.runs WHERE state='QUEUED' ORDER BY submission_seq LIMIT 1");
+            var next=jdbc.queryForList("SELECT run_id FROM ddip_management.runs WHERE state='QUEUED' AND execution_profile_id=? AND ((pipeline='CONTENT_RSS_V1' AND ?) OR (pipeline='RELIABILITY_V2' AND ?)) ORDER BY submission_seq LIMIT 1",session.profileId(),capability.supports("CONTENT_RSS_V1"),capability.supports("RELIABILITY_V2"));
             if(next.isEmpty())return new Claim("EMPTY",null,null,session,null);
             UUID runId=(UUID)next.getFirst().get("run_id");
             var sources=jdbc.queryForList("SELECT s.source_id,s.enabled,s.profile_family,r.revision,r.captured_gate_version,r.captured_enabled,v.configuration_bytes,v.configuration_sha256,v.endpoint_id,v.endpoint_sha256 FROM ddip_management.run_sources r JOIN ddip_management.sources s ON (s.product_id,s.source_id)=(r.product_id,r.source_id) JOIN ddip_management.source_revisions v ON (v.product_id,v.source_id,v.revision)=(r.product_id,r.source_id,r.revision) WHERE r.run_id=? ORDER BY s.product_id COLLATE \"C\",s.source_id COLLATE \"C\" FOR UPDATE OF s",runId);
@@ -219,6 +219,116 @@ public final class WorkerRepository {
         require(stage.authorized()?stage.commandSha256().equals(row.get("command_sha256")) && (stage.namespace()+"/command.json").equals(row.get("command_address")):row.get("command_address")==null && row.get("command_sha256")==null,OWNERSHIP_LOST);
     }
     private static CheckInputs nextStage(CheckInputs s,long version,String state,boolean authorized){return new CheckInputs(s.owner(),s.checkpointId(),version,s.namespace(),s.commandSha256(),s.selectionSha256(),state,authorized);}
+    /** Fixed Reliability stages only. This is not a configurable workflow engine or dispatcher. */
+    public record ReliabilityStage(Owner owner,UUID checkpoint,String stage,String state,long version,String namespace,
+                                   String commandSha,String inputSha,String fingerprint,boolean authorized) { }
+    public record StageEvidence(UUID checkpoint,String commandAddress,String commandSha,String resultAddress,String resultSha) { }
+    public StageEvidence verifiedCheckInputs(InstallationHostGuard guard,Owner owner,UUID checkpoint) {
+        held(guard,owner.worker());return ownerTransaction(()->{owned(owner);
+            var s=one(jdbc.queryForList("SELECT checkpoint_id,command_address,command_sha256,result_address,result_sha256 FROM ddip_management.stage_invocations WHERE attempt_id=? AND stage='CHECK_INPUTS' AND item_ordinal=0 AND state='VERIFIED'",owner.attemptId()));
+            require(checkpoint.equals(s.get("checkpoint_id")),OWNERSHIP_LOST);
+            return new StageEvidence(checkpoint,(String)s.get("command_address"),(String)s.get("command_sha256"),(String)s.get("result_address"),(String)s.get("result_sha256"));
+        });
+    }
+    public ReliabilityStage beginReliabilityStage(InstallationHostGuard guard,Owner owner,String stage,UUID checkpoint,String commandSha,String inputSha,String fingerprint) {
+        held(guard,owner.worker());require(capability.available() && capability.supports("RELIABILITY_V2") && Set.of("PUBLISH_RELIABILITY","VERIFY_RESULT").contains(stage) && checkpoint!=null && hash(commandSha) && hash(inputSha) && hash(fingerprint),WORKER_NOT_READY);
+        String previous=stage.equals("PUBLISH_RELIABILITY")?"CHECK_INPUTS":"PUBLISH_RELIABILITY";
+        String namespace="runs/"+owner.runId()+"/attempts/"+owner.attemptId()+"/"+stage.toLowerCase(Locale.ROOT).replace('_','-')+"/"+checkpoint;
+        return ownerTransaction(()->{owned(owner);controls(owner);attemptDeadline(owner);
+            require(Boolean.TRUE.equals(jdbc.queryForObject("SELECT pipeline='RELIABILITY_V2' AND current_stage=? FROM ddip_management.runs WHERE run_id=?",Boolean.class,previous,owner.runId())),OWNERSHIP_LOST);
+            require(jdbc.queryForObject("SELECT count(*) FROM ddip_management.stage_invocations WHERE attempt_id=? AND stage=? AND item_ordinal=0 AND state='VERIFIED'",Long.class,owner.attemptId(),previous)==1,OWNERSHIP_LOST);
+            jdbc.update("INSERT INTO ddip_management.stage_invocations(attempt_id,stage,item_ordinal,checkpoint_id,state,input_evidence_sha256,intended_identity,intended_namespace) VALUES (?,?,0,?,'INTENT',?,?,?)",owner.attemptId(),stage,checkpoint,commandSha,fingerprint,"v2/processor_revision=2/publication="+fingerprint);
+            exactly(jdbc.update("UPDATE ddip_management.runs SET current_stage=?,row_version=row_version+1 WHERE run_id=? AND row_version=? AND state='RUNNING' AND current_attempt_id=?",stage,owner.runId(),owner.runVersion(),owner.attemptId()));
+            audit(owner.runId(),owner.attemptId(),"STAGE_INTENT",null,"INTENT",null,0L,"ACCEPTED");
+            return new ReliabilityStage(new Owner(owner.worker(),owner.runId(),owner.attemptId(),owner.runVersion()+1,owner.attemptVersion(),owner.attemptState()),checkpoint,stage,"INTENT",0,namespace,commandSha,commandSha,fingerprint,false);
+        });
+    }
+    public ReliabilityStage authorizeReliability(InstallationHostGuard guard,ReliabilityStage s) {
+        held(guard,s.owner().worker());return ownerTransaction(()->{owned(s.owner());controls(s.owner());attemptDeadline(s.owner());nativeStage(s);require(!s.authorized() && s.state().equals("INTENT"),OWNERSHIP_LOST);
+            exactly(jdbc.update("UPDATE ddip_management.stage_invocations SET command_address=?,command_sha256=?,row_version=row_version+1 WHERE attempt_id=? AND stage=? AND item_ordinal=0 AND checkpoint_id=? AND state='INTENT' AND row_version=? AND command_address IS NULL AND child_pid IS NULL",s.namespace()+"/command.json",s.commandSha(),s.owner().attemptId(),s.stage(),s.checkpoint(),s.version()));
+            audit(s.owner().runId(),s.owner().attemptId(),"STAGE_LAUNCH_AUTHORIZED","INTENT","INTENT",s.version(),s.version()+1,"STARTED");return nextNative(s,s.owner(),"INTENT",true);
+        });
+    }
+    public ReliabilityStage recordReliabilityChild(InstallationHostGuard guard,ReliabilityStage s,InstallationHostGuard.ProcessIdentity child) {
+        held(guard,s.owner().worker());return ownerTransaction(()->{owned(s.owner());controls(s.owner());nativeStage(s);require(s.authorized() && s.state().equals("INTENT"),OWNERSHIP_LOST);
+            exactly(jdbc.update("UPDATE ddip_management.stage_invocations SET state='RUNNING',child_pid=?,child_started_at=?,child_instance_id=?,started_at=clock_timestamp(),row_version=row_version+1 WHERE attempt_id=? AND stage=? AND item_ordinal=0 AND checkpoint_id=? AND state='INTENT' AND row_version=?",child.pid(),java.sql.Timestamp.from(child.startedAt()),child.instanceId(),s.owner().attemptId(),s.stage(),s.checkpoint(),s.version()));
+            audit(s.owner().runId(),s.owner().attemptId(),"STAGE_STARTED","INTENT","RUNNING",s.version(),s.version()+1,"STARTED");return nextNative(s,s.owner(),"RUNNING",true);
+        });
+    }
+    public ReliabilityStage heartbeatReliability(InstallationHostGuard guard,ReliabilityStage s) {
+        Owner next=heartbeat(guard,s.owner());
+        var updated=new ReliabilityStage(next,s.checkpoint(),s.stage(),s.state(),s.version(),s.namespace(),s.commandSha(),s.inputSha(),s.fingerprint(),s.authorized());
+        held(guard,next.worker());ownerTransaction(()->{owned(next);controls(next);attemptDeadline(next);nativeStage(updated);return null;});return updated;
+    }
+    public java.time.Duration remainingReliability(InstallationHostGuard guard,Owner owner) {
+        held(guard,owner.worker());return ownerTransaction(()->{owned(owner);attemptDeadline(owner);
+            var seconds=jdbc.queryForObject("SELECT extract(epoch FROM started_at+interval '2 hours'-clock_timestamp()) FROM ddip_management.attempts WHERE attempt_id=?",java.math.BigDecimal.class,owner.attemptId());
+            return java.time.Duration.ofMillis(Math.max(1,seconds.multiply(java.math.BigDecimal.valueOf(1000)).longValue()));
+        });
+    }
+    private void attemptDeadline(Owner owner) {require(Boolean.TRUE.equals(jdbc.queryForObject("SELECT clock_timestamp() < started_at+interval '2 hours' FROM ddip_management.attempts WHERE attempt_id=?",Boolean.class,owner.attemptId())),WORKER_NOT_READY);}
+    private void nativeStage(ReliabilityStage s) {
+        var row=one(jdbc.queryForList("SELECT checkpoint_id,state,row_version,input_evidence_sha256,intended_identity,command_address,command_sha256 FROM ddip_management.stage_invocations WHERE attempt_id=? AND stage=? AND item_ordinal=0 FOR UPDATE",s.owner().attemptId(),s.stage()));
+        require(s.checkpoint().equals(row.get("checkpoint_id")) && s.version()==number(row,"row_version") && s.state().equals(row.get("state")) && s.inputSha().equals(row.get("input_evidence_sha256")) && s.fingerprint().equals(row.get("intended_identity")),OWNERSHIP_LOST);
+        require(s.authorized()?s.commandSha().equals(row.get("command_sha256")) && (s.namespace()+"/command.json").equals(row.get("command_address")):row.get("command_address")==null && row.get("command_sha256")==null,OWNERSHIP_LOST);
+    }
+    private static ReliabilityStage nextNative(ReliabilityStage s,Owner o,String state,boolean authorized){return new ReliabilityStage(o,s.checkpoint(),s.stage(),state,s.version()+1,s.namespace(),s.commandSha(),s.inputSha(),s.fingerprint(),authorized);}
+    public ReliabilityStage publishedReliability(InstallationHostGuard guard,ReliabilityStage s,String resultSha) {
+        held(guard,s.owner().worker());return ownerTransaction(()->{owned(s.owner());nativeStage(s);require(s.stage().equals("PUBLISH_RELIABILITY") && s.state().equals("RUNNING") && hash(resultSha),OWNERSHIP_LOST);
+            finishNative(s,"VERIFIED","VERIFIED",resultSha,null);return nextNative(s,s.owner(),"VERIFIED",true);
+        });
+    }
+    private void finishNative(ReliabilityStage s,String state,String code,String hash,byte[] counts) {
+        exactly(jdbc.update("UPDATE ddip_management.stage_invocations SET state=?,outcome_code=?,result_address=?,result_sha256=?,counts_bytes=?,finished_at=clock_timestamp(),row_version=row_version+1 WHERE attempt_id=? AND stage=? AND item_ordinal=0 AND checkpoint_id=? AND state=? AND row_version=?",state,code,s.namespace()+"/verified.json",hash,counts,s.owner().attemptId(),s.stage(),s.checkpoint(),s.state(),s.version()));
+        audit(s.owner().runId(),s.owner().attemptId(),state.equals("VERIFIED")?"STAGE_VERIFIED":"STAGE_FAILED",s.state(),state,s.version(),s.version()+1,code);
+    }
+    public void blockReliability(InstallationHostGuard guard,ReliabilityStage s) {
+        held(guard,s.owner().worker());ownerTransaction(()->{owned(s.owner());nativeStage(s);
+            exactly(jdbc.update("UPDATE ddip_management.stage_invocations SET state='UNKNOWN',outcome_code='RECOVERY_REQUIRED',row_version=row_version+1 WHERE attempt_id=? AND stage=? AND item_ordinal=0 AND checkpoint_id=? AND row_version=?",s.owner().attemptId(),s.stage(),s.checkpoint(),s.version()));
+            audit(s.owner().runId(),s.owner().attemptId(),"STAGE_UNKNOWN",s.state(),"UNKNOWN",s.version(),s.version()+1,"RECOVERY_REQUIRED");interruptOwned(s.owner());return null;
+        });
+    }
+    /** Definitive, quiescent failure. No caller may use this on uncertain child/DB outcomes. */
+    public Session failReliability(InstallationHostGuard guard,Owner owner,ReliabilityStage stage,String code,String resultSha) {
+        held(guard,owner.worker());require(Set.of("INPUT_INVALID","INPUT_CHANGED","INPUT_UNAVAILABLE","RUNTIME_MISMATCH","RESOURCE_LIMIT","PROCESS_START_FAILED","INCOMPLETE_OUTPUT").contains(code),WORKER_NOT_READY);
+        return ownerTransaction(()->{owned(owner);
+            if(stage==null)require(jdbc.queryForObject("SELECT count(*) FROM ddip_management.stage_invocations WHERE attempt_id=? AND stage IN ('PUBLISH_RELIABILITY','VERIFY_RESULT')",Long.class,owner.attemptId())==0,OWNERSHIP_LOST);
+            else {nativeStage(stage);finishNative(stage,"FAILED",code,resultSha,null);}
+            finishAttempt(owner,"FAILED",code);
+            exactly(jdbc.update("UPDATE ddip_management.runs SET state='FAILED',finished_at=clock_timestamp(),outcome_code=?,retry_eligible=false,row_version=row_version+1 WHERE run_id=? AND current_attempt_id=? AND state='RUNNING' AND row_version=?",code,owner.runId(),owner.attemptId(),owner.runVersion()));
+            releaseOwned(owner);audit(owner.runId(),owner.attemptId(),"RUN_FAILED","RUNNING","FAILED",owner.runVersion(),owner.runVersion()+1,code);
+            Session w=owner.worker();return with(w,"READY",w.epoch(),w.coordinatorVersion()+1,w.workerVersion());
+        });
+    }
+    public UUID succeedReliability(InstallationHostGuard guard,ReliabilityStage s,byte[] evidence,String resultSha) {
+        held(guard,s.owner().worker());return ownerTransaction(()->{owned(s.owner());nativeStage(s);attemptDeadline(s.owner());require(s.stage().equals("VERIFY_RESULT") && s.state().equals("RUNNING") && hash(resultSha),OWNERSHIP_LOST);
+            var e=platform.contentapi.management.FrozenRunSelection.canonical(evidence,platform.contentapi.management.SourceJson.sha(evidence),16*1024*1024);
+            require(e.get("kind").stringValue().equals("RELIABILITY_V2") && e.get("productId").stringValue().equals("application-reliability") && e.get("contractVersion").intValue()==2 && e.get("processorRevision").intValue()==2 && e.get("nativeFingerprint").stringValue().equals(s.fingerprint()),RUNTIME_MISMATCH);
+            String binding=e.get("storageBindingId").stringValue(),address=e.get("relativeAddress").stringValue(),format=e.get("inputFormat").stringValue();String digest=platform.contentapi.management.SourceJson.sha(evidence);
+            require(address.equals("v2/processor_revision=2/publication="+s.fingerprint()) && Set.of("JSONL","PARQUET").contains(format),RUNTIME_MISMATCH);
+            var registered=jdbc.queryForList("SELECT artifact_id,storage_binding_id,relative_address,evidence_sha256,evidence_bytes,native_identity,native_format FROM ddip_management.artifacts WHERE (product_id='application-reliability' AND kind='RELIABILITY_V2' AND contract_version=2 AND processor_revision=2 AND native_format=? AND native_identity=?) OR (storage_binding_id=? AND relative_address=?) FOR UPDATE",format,s.fingerprint(),binding,address);
+            UUID artifact;
+            if(registered.isEmpty()) {artifact=UUID.randomUUID();jdbc.update("INSERT INTO ddip_management.artifacts(artifact_id,kind,product_id,contract_version,processor_revision,native_identity,storage_binding_id,relative_address,evidence_bytes,evidence_sha256,verified_at,native_format) VALUES (?,'RELIABILITY_V2','application-reliability',2,2,?,?,?,?,?,clock_timestamp(),?)",artifact,s.fingerprint(),binding,address,evidence,digest,format);
+                for(var input:jdbc.queryForList("SELECT role,ordinal,artifact_id FROM ddip_management.run_inputs WHERE run_id=? ORDER BY role,ordinal",s.owner().runId()))jdbc.update("INSERT INTO ddip_management.artifact_dependencies VALUES (?,?,?,?)",artifact,input.get("role"),input.get("ordinal"),input.get("artifact_id"));
+            } else {require(registered.size()==1,RUNTIME_MISMATCH);var r=registered.getFirst();require(binding.equals(r.get("storage_binding_id")) && address.equals(r.get("relative_address")) && s.fingerprint().equals(r.get("native_identity")) && format.equals(r.get("native_format")) && digest.equals(r.get("evidence_sha256")) && Arrays.equals(evidence,(byte[])r.get("evidence_bytes")),RUNTIME_MISMATCH);artifact=(UUID)r.get("artifact_id");
+                var links=jdbc.queryForList("SELECT role,ordinal,dependency_artifact_id AS artifact_id FROM ddip_management.artifact_dependencies WHERE artifact_id=? ORDER BY role,ordinal",artifact);require(links.equals(jdbc.queryForList("SELECT role,ordinal,artifact_id FROM ddip_management.run_inputs WHERE run_id=? ORDER BY role,ordinal",s.owner().runId())),RUNTIME_MISMATCH);
+            }
+            byte[] counts=platform.contentapi.management.SourceJson.canonical(e.get("counts"));finishNative(s,"VERIFIED","VERIFIED",resultSha,counts);
+            jdbc.update("INSERT INTO ddip_management.stage_artifacts VALUES (?,'VERIFY_RESULT',0,'RESULT',0,?)",s.owner().attemptId(),artifact);
+            finishAttempt(s.owner(),"SUCCEEDED","SUCCEEDED");
+            exactly(jdbc.update("UPDATE ddip_management.runs SET state='SUCCEEDED',finished_at=clock_timestamp(),result_artifact_id=?,counts_bytes=?,outcome_code='SUCCEEDED',retry_eligible=false,row_version=row_version+1 WHERE run_id=? AND current_attempt_id=? AND state='RUNNING' AND row_version=?",artifact,counts,s.owner().runId(),s.owner().attemptId(),s.owner().runVersion()));
+            releaseOwned(s.owner());audit(s.owner().runId(),s.owner().attemptId(),"RUN_SUCCEEDED","RUNNING","SUCCEEDED",s.owner().runVersion(),s.owner().runVersion()+1,"SUCCEEDED");return artifact;
+        });
+    }
+    private void interruptOwned(Owner owner) {
+            finishAttempt(owner,"INTERRUPTED","RECOVERY_REQUIRED");
+            exactly(jdbc.update("UPDATE ddip_management.runs SET state='RECOVERY_REQUIRED',outcome_code='RECOVERY_REQUIRED',retry_eligible=false,row_version=row_version+1 WHERE run_id=? AND current_attempt_id=? AND state='RUNNING' AND row_version=?",owner.runId(),owner.attemptId(),owner.runVersion()));
+            Session s=owner.worker();
+            exactly(jdbc.update("UPDATE ddip_management.coordinator SET mode='RECOVERY_ONLY',row_version=row_version+1 WHERE singleton_id=1 AND installation_id=? AND active_attempt_id=? AND owner_instance_id=? AND epoch=? AND row_version=? AND active_import_id IS NULL AND mode='READY'",installation,owner.attemptId(),s.instanceId(),s.epoch(),s.coordinatorVersion()));
+            exactly(jdbc.update("UPDATE ddip_management.worker_instances SET status='RECOVERY_ONLY',row_version=row_version+1 WHERE instance_id=? AND installation_id=? AND status='READY' AND row_version=?",s.instanceId(),installation,s.workerVersion()));
+            audit(owner.runId(),owner.attemptId(),"RUN_RECOVERY_REQUIRED","RUNNING","RECOVERY_REQUIRED",owner.runVersion(),owner.runVersion()+1,"RECOVERY_REQUIRED");
+    }
+    private void releaseOwned(Owner o) {Session s=o.worker();exactly(jdbc.update("UPDATE ddip_management.coordinator SET active_attempt_id=NULL,owner_instance_id=NULL,heartbeat_at=NULL,row_version=row_version+1 WHERE singleton_id=1 AND installation_id=? AND active_attempt_id=? AND owner_instance_id=? AND epoch=? AND row_version=? AND active_import_id IS NULL AND mode='READY'",installation,o.attemptId(),s.instanceId(),s.epoch(),s.coordinatorVersion()));}
     private static boolean hash(String s){return s!=null && s.matches("[0-9a-f]{64}");}
     /** Allowed only before RUNNING or ANY stage intent; the accepted protocol forbids side effects here. */
     public Session failBeforeLaunch(InstallationHostGuard guard,Owner owner,PrelaunchFailure failure) {
@@ -236,12 +346,7 @@ public final class WorkerRepository {
     /** Uncertain execution stays occupied. This does NOT reconcile, prove quiescence or release anything. */
     public Session interrupt(InstallationHostGuard guard,Owner owner) {
         held(guard,owner.worker());return ownerTransaction(()->{owned(owner);
-            finishAttempt(owner,"INTERRUPTED","RECOVERY_REQUIRED");
-            exactly(jdbc.update("UPDATE ddip_management.runs SET state='RECOVERY_REQUIRED',outcome_code='RECOVERY_REQUIRED',retry_eligible=false,row_version=row_version+1 WHERE run_id=? AND current_attempt_id=? AND state='RUNNING' AND row_version=?",owner.runId(),owner.attemptId(),owner.runVersion()));
-            Session s=owner.worker();
-            exactly(jdbc.update("UPDATE ddip_management.coordinator SET mode='RECOVERY_ONLY',row_version=row_version+1 WHERE singleton_id=1 AND installation_id=? AND active_attempt_id=? AND owner_instance_id=? AND epoch=? AND row_version=? AND active_import_id IS NULL AND mode='READY'",installation,owner.attemptId(),s.instanceId(),s.epoch(),s.coordinatorVersion()));
-            exactly(jdbc.update("UPDATE ddip_management.worker_instances SET status='RECOVERY_ONLY',row_version=row_version+1 WHERE instance_id=? AND installation_id=? AND status='READY' AND row_version=?",s.instanceId(),installation,s.workerVersion()));
-            audit(owner.runId(),owner.attemptId(),"RUN_RECOVERY_REQUIRED","RUNNING","RECOVERY_REQUIRED",owner.runVersion(),owner.runVersion()+1,"RECOVERY_REQUIRED");
+            interruptOwned(owner);Session s=owner.worker();
             return with(s,"RECOVERY_ONLY",s.epoch(),s.coordinatorVersion()+1,s.workerVersion()+1);
         });
     }

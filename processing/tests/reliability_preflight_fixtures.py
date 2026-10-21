@@ -19,7 +19,7 @@ PROFILE = '10000000-0000-4000-8000-000000000002'
 COMPLETED = '2026-10-03T00:00:00.000000Z'
 
 
-def create(base, fmt='JSONL', multi=False):
+def create(base, fmt='JSONL', multi=False, publication=False):
     base = Path(base).resolve()
     base.mkdir(exist_ok=True)
     inputs = base/'inputs'
@@ -32,6 +32,17 @@ def create(base, fmt='JSONL', multi=False):
         original = batches[0]
         root = Path(fixture['roots'][original['storageBindingId']])
         manifest = json.loads((root/original['relativeAddress']/'manifest.json').read_bytes())
+        if publication:
+            from reliability_format_fixtures import g1
+            incoming = root.parent/'incoming'/('events.'+fmt.lower())
+            if fmt == 'JSONL':incoming.write_bytes(b''.join(canonical_bytes(r)+b'\n' for r in g1()[:5]))
+            else:
+                from reliability_benchmark_generator import write_parquet
+                incoming.unlink()
+                def transport():
+                    for row in g1()[:5]:
+                        row=dict(row);value=row.pop('event_time');row['event_time_epoch_us']=native.m.time_us(value);yield row
+                write_parquet(incoming,transport())
         with patch('reliability_format_metadata.now', return_value=COMPLETED):
             b = native.register(root, input_root=root.parent/'incoming', source_id=original['identity']['sourceId'], batch_id='b01',
                                 input_format=fmt, files=[dict(artifact_id='events', input_file='events.'+fmt.lower())],
@@ -117,4 +128,4 @@ def load(runtime):
 
 
 if __name__ == '__main__':
-    sys.stdout.buffer.write(canonical_bytes(create(sys.argv[1],sys.argv[2] if len(sys.argv)>2 else 'JSONL')))
+    sys.stdout.buffer.write(canonical_bytes(create(sys.argv[1],sys.argv[2] if len(sys.argv)>2 else 'JSONL',multi=len(sys.argv)>3)))
