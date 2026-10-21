@@ -216,7 +216,7 @@ DDIP_ROLE=worker java -jar services/content-api/target/content-api-0.1.0-SNAPSHO
 DDIP_ROLE=migrate java -jar services/content-api/target/content-api-0.1.0-SNAPSHOT.jar
 ```
 
-`DDIP_ROLE` maps to `ddip.role`: exactly `analytics` (default), `api`, `worker`, `migrate`. Unknown/import roles fail; operator-import remains unavailable until B2b-1B. Worker requires absolute `DDIP_WORKER_PYTHON`, `DDIP_WORKER_JAVA_HOME`, `DDIP_WORKER_PROCESSING_ROOT`, an executable Python/Java path and the fixed Content/Reliability-v2 publication scripts. B1 checks path availability only; it does not probe child versions, acquire filesystem ownership, register an active worker or claim/launch anything. C must qualify exact runtime/profile/root identity before processing. Worker/migration force a non-web context even if a web type is supplied, excluding analytical controllers, properties and process pools. The worker has one idle lifecycle thread; no polling scheduler is present.
+`DDIP_ROLE` maps to `ddip.role`: exactly `analytics` (default), `api`, `worker`, `migrate`, `operator-import`. Unknown roles fail. The Spark-free import role is described in [the current operator contract](#spark-free-native-input-imports-b2b-1b-a). Worker requires absolute `DDIP_WORKER_PYTHON`, `DDIP_WORKER_JAVA_HOME`, `DDIP_WORKER_PROCESSING_ROOT`, an executable Python/Java path and the fixed Content/Reliability-v2 publication scripts. B1 checks path availability only; it does not probe child versions, acquire filesystem ownership, register an active worker or claim/launch anything. C must qualify exact runtime/profile/root identity before processing. Worker/migration force a non-web context even if a web type is supplied, excluding analytical controllers, properties and process pools. The worker has one idle lifecycle thread; no polling scheduler is present.
 
 Database roles use one Hikari pool: API maximum 4, worker/migration maximum 2, minimum idle 0. Flyway needs a second connection for its coordination; a one-connection migration pool is insufficient. Connection, SQL statement, lock and explicit transaction waits are bounded to 3 seconds; Flyway lock/connection retries are disabled; idle-in-transaction timeout is 5 seconds. Sessions use UTC. No database transaction encloses external processing. Startup errors use fixed `MANAGEMENT_CONFIGURATION_INVALID`, `MANAGEMENT_UNAVAILABLE` or `MANAGEMENT_INCOMPATIBLE`; conditional conflicts return false or `STATE_CONFLICT`. Native driver/pool/Flyway logging is disabled to avoid connection-detail leakage. These are internal B1 diagnostics, not new management REST envelopes.
 
@@ -343,7 +343,7 @@ The `postgres` command requires DDIP_TEST_DB_URL/USER/PASSWORD and, in CI, DDIP_
 
 Historical checkpoint, preceding the B2b-1A ownership implementation below: B2b-1 verified artifact imports were authorized on October 21, 2026 with an explicit stop for an incompatible ownership model. Inspection reached that stop: [ADR 0011](../../docs/adr/0011-artifact-import-maintenance-ownership.md), now accepted for B2b-1A, describes the required durable maintenance owner and quiescence-checked abandoned-import closure. The current coordinator represents only run-attempt ownership; STOPPING plus a host lock does not bind or recover an import operation. No importer, host guard, native verification wrapper or V7 migration was added. Existing analytics/API/migrate commands and the idle worker retain their B1/B2a behavior.
 
-There is **no runnable import invocation or approved import catalog/profile format yet**. `DDIP_ROLE=operator-import` currently fails with the fixed MANAGEMENT_CONFIGURATION_INVALID diagnostic. Do not use a fake run/attempt, change coordinator mode manually or clear ownership to make an import possible. Do not insert unverified artifacts directly into PostgreSQL. No import HTTP endpoint exists.
+Historical B2b-1 inspection (superseded by [B2b-1B-A](#spark-free-native-input-imports-b2b-1b-a)): there was **no runnable import invocation or approved import catalog/profile format yet**. At that checkpoint, `DDIP_ROLE=operator-import` failed with the fixed MANAGEMENT_CONFIGURATION_INVALID diagnostic. Do not use a fake run/attempt, change coordinator mode manually or clear ownership to make an import possible. Do not insert unverified artifacts directly into PostgreSQL. No import HTTP endpoint exists.
 
 After owner approval, B2b-1 must provide the fixed non-web role in the existing packaged JAR, exact invocation, strict private catalog/runtime/storage configuration, identity-checked persistent installation guard and read-only native qualification. Only v2 Reliability JSONL/Parquet-profile batches, publisher/service snapshots and explicitly selected completed Silver history are in scope. Spark is needed only for bounded read-only Silver qualification; batches/references have Spark-free readers. The importer must use the existing artifact/dependency tables, compare immutable native/evidence identities, reverify every import and atomically store its result/audit. Historical registry qualification never guarantees current native readability.
 
@@ -372,7 +372,7 @@ The JDK selector above is macOS-specific; on other hosts set JAVA_HOME to the in
 
 ## E5 B2b-1A ownership foundation
 
-Accepted ADR 0011 authorizes the internal maintenance ownership foundation only. V7 and the internal InstallationHostGuard/ImportOwnershipRepository are implemented. There is no working operator-import role, import endpoint or native qualification/registration workflow. The worker remains idle and analytics-only mode still needs no PostgreSQL. B2b-1B requires separate owner authorization.
+Historical B2b-1A scope and evidence, before the separately authorized [B2b-1B-A implementation](#spark-free-native-input-imports-b2b-1b-a): accepted ADR 0011 authorized the internal maintenance ownership foundation only. V7 and the internal InstallationHostGuard/ImportOwnershipRepository are implemented. There is no working operator-import role, import endpoint or native qualification/registration workflow. The worker remains idle and analytics-only mode still needs no PostgreSQL. B2b-1B requires separate owner authorization.
 
 Run the existing explicit migrate command with API/worker stopped before starting this version. V7 preserves existing coordinator identity/mode/epoch/version and V1–V6 checksums. It adds artifact_import_operations, coordinator.active_import_id, an import audit link, exclusion/state/identity guards and scoped artifact uniqueness. Runtime requires V7; it never applies migrations automatically.
 
@@ -400,3 +400,153 @@ git diff --cached --check
 These tests create/drop only random dedicated test databases and private temporary guard fixtures. Child JVM fixtures exercise competing locks, abrupt owner death, observable live-owner refusal and repeated recovery. A test connection wrapper loses acknowledgment only after a real PostgreSQL commit for reservation/result/handoff, then verifies exact lookup without duplicate mutations. V6 upgrade tests preserve timestamps/bytes/checksums and occupied recovery ownership; conflicts leave no partial V7 schema. No fixture qualifies or registers a native artifact through an importer. Existing CI's postgres profile includes the new suite; no new service/dependency is needed.
 
 The [current coordination evidence](../../docs/architecture/durable-execution.md#stage-b2b-1a-durable-import-ownership) records actual results and limitations. B2b-1B must add the strict private catalog/runtime resolver, complete native qualification/evidence retention, verifier containment/cleanup and artifact/dependency writes inside the finalization transaction. Historical SUCCEEDED/verified_at metadata cannot replace fresh native verification. Native imports, run submission/dispatch, publication, UI and complete E5 acceptance remain unexecuted here.
+
+## Spark-free native input imports (B2b-1B-A)
+
+The owner authorized this checkpoint separately from B2b-1A. `operator-import` now provides a fixed, non-web, local operator command for existing completed inputs. It instantiates neither analytics controllers/query pools nor the idle worker lifecycle. No import HTTP route exists. Silver and derived Gold/Content/Reliability publications are excluded. No processing run, source intake, batch registration or publication is performed by this command.
+
+### Private installation setup
+
+Use the existing migrated V7 installation and its private [host guard](#e5-b2b-1a-ownership-foundation). Stop cooperative writers and resolve any occupied execution/recovery/import ownership first. Do not clear coordinator fields manually. Provision reviewed immutable `execution_profiles`, `storage_bindings` and `execution_profile_storage` through the installation's existing trusted operator database setup; the importer creates none of them. A binding must belong to this installation and selected product, have BATCH or REFERENCE role, and be explicitly associated with the import execution profile. B2a Reliability source revisions must already contain the exact native registered-profile digest and BATCH binding UUID with the matching profile family. Historical disabled sources/revisions can be imported; enablement is a later submission policy.
+
+The CONTROL binding uses the existing `InstallationHostGuard.Binding.descriptor()` unchanged. Its private canonical root and pre-existing `host.guard`/`installation.id` must have the ownership, mode and device/inode identities required by B2b-1A. Native roots must be existing canonical absolute local directories. Store this exact canonical JSON as each native storage binding's `configuration_bytes`, with its SHA-256 in `configuration_sha256` (device and inode are **decimal strings**, from `InstallationHostGuard.identity(root)`):
+
+```json
+{"importStorageVersion":1,"root":"/private/approved/batches","rootDevice":"123","rootInode":"456"}
+```
+
+Runtime profile configuration has the following exact fields. Paths are installation-owned configuration, never catalog fields. Provision canonical bytes and their digest; module hashes must match the reviewed checkout. Root inode identity changes or module changes require explicit operator review and new immutable configuration, not automatic repair.
+
+```json
+{
+  "importProtocolVersion": 1,
+  "python": "/private/approved/venv/bin/python",
+  "processingRoot": "/private/approved/checkout/processing",
+  "pythonVersion": "3.12.15",
+  "duckdbVersion": "1.4.5",
+  "timeoutSeconds": 120,
+  "modules": {
+    "artifact_import_verifier.py": "<reviewed SHA-256>",
+    "publication_metadata.py": "<reviewed SHA-256>",
+    "reliability_format_inputs.py": "<reviewed SHA-256>",
+    "reliability_format_metadata.py": "<reviewed SHA-256>",
+    "reliability_format_parquet.py": "<reviewed SHA-256>",
+    "reliability_inputs.py": "<reviewed SHA-256>",
+    "reliability_metadata.py": "<reviewed SHA-256>",
+    "publisher_reference.py": "<reviewed SHA-256>",
+    "service_reference.py": "<reviewed SHA-256>"
+  }
+}
+```
+
+`timeoutSeconds` is 1–120 per verifier/recheck invocation. Use the pinned analytics Python dependencies already in [processing requirements](../../processing/requirements-analytics.txt); Spark is neither imported nor started. Install dependencies/build the Java application **before** invoking the import role. The command never executes Maven, pip, npm, a shell or packaging. The runtime executable and installed dependencies remain trusted operator resources; module hashes and runtime version probes do not attest a hostile runtime installation.
+
+### Catalog and invocation
+
+Create an ignored, private UTF-8 JSON file (regular file, canonical absolute address, no symlink, owned by the current operator, no group/other permissions). Set mode `0600`. Catalog bytes are at most 64 KiB, depth 16, with 1–16 explicit selections; unknown/duplicate fields, floating-point values, duplicate native keys and duplicate locations fail. Sixteen is this checkpoint's smaller operational limit within ADR 0011's 128-selection ceiling. The normalized canonical selection order is deterministic, independent of supplied array ordering.
+
+Example syntax uses fictional identities/digests; it is not a usable approved binding:
+
+```json
+{
+  "catalogVersion": 1,
+  "operationId": "40000000-0000-4000-8000-000000000001",
+  "executionProfileId": "native-import-v1",
+  "controlBindingId": "installation-control",
+  "artifacts": [
+    {
+      "kind": "RELIABILITY_BATCH_V2",
+      "productId": "application-reliability",
+      "storageBindingId": "30000000-0000-4000-8000-000000000002",
+      "relativeAddress": "v2/format=jsonl/source_id=demo-requests/batch_id=b00",
+      "contractVersion": 2,
+      "processorRevision": 2,
+      "identity": {
+        "sourceId": "demo-requests",
+        "sourceRevision": 1,
+        "batchId": "b00",
+        "inputFormat": "JSONL",
+        "registeredProfileSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ]
+}
+```
+
+Supported selections are exact native namespaces:
+
+| Kind | Product; versions | Identity and relative address | Authoritative reader |
+| --- | --- | --- | --- |
+| RELIABILITY_BATCH_V2 | application-reliability; contract/registrar 2/2 | sourceId, sourceRevision, batchId, inputFormat JSONL/PARQUET, registeredProfileSha256; `v2/format=jsonl` or `parquet` `/source_id=…/batch_id=…` | `reliability_format_inputs.open_batch` |
+| PUBLISHER_REFERENCE | content-intelligence; contract/validator 1/1 | referenceId, revision; `reference_id=…/revision=…` | `publisher_reference.open_snapshot` |
+| SERVICE_REFERENCE | application-reliability; contract/validator 1/1 | referenceId, revision; `reference_id=…/revision=…` | `service_reference.open_snapshot` |
+
+All entries require `fingerprint`, `storageBindingId`, `relativeAddress`, `kind`, `productId`, `contractVersion`, `processorRevision`, `identity` exactly. References have only `referenceId` and `revision` inside identity. Parquet means Parquet-v1 input profile under Reliability product contract v2. Legacy v1 registrations are never reinterpreted. Native manifests supply fingerprints; an E5 evidence digest never replaces one. There is no latest selection, glob, scan or arbitrary absolute artifact selection.
+
+From the repository root, with Java 21 and the same private database/installation variables used by migration:
+
+```sh
+# Build outside any import operation.
+mvn -o -B -ntp -f services/content-api/pom.xml -DskipTests package
+export DDIP_ROLE=operator-import
+export DDIP_IMPORT_CATALOG=/private/approved/import-catalog.json
+# DDIP_DB_URL, DDIP_DB_USER, DDIP_DB_PASSWORD, DDIP_INSTALLATION_ID: private installation configuration.
+java -jar services/content-api/target/content-api-0.1.0-SNAPSHOT.jar \
+  --spring.main.banner-mode=off --logging.level.root=OFF
+```
+
+One bounded JSON summary identifies the operation and opaque artifacts/evidence digests; it contains no source payload, manifests, private root paths, URLs or native exception text. Exit 0 means VERIFIED, definitive RECOVERY_CLOSED, or an explicitly labeled HISTORICAL_RESULT; exit 1 means a known safe rejection/NOT_FOUND; exit 2 means unresolved ownership requiring lookup/inspection. A historical result can describe a prior failure/interruption; inspect its `state` and nested `result`. Startup/schema failures occur before command execution and use existing fixed database diagnostics/nonzero exit.
+
+### Verification, evidence and idempotency
+
+After strict catalog validation and host-guard acquisition, V7 reservation commits the operation request/profile/host binding, epoch and exclusive owner before native verification. All native verification runs outside database transactions. The supervisor invokes only the approved Python executable with `-I -B -X utf8` and the fixed `artifact_import_verifier.py`; the environment is cleared to fixed PATH/TZ/LANG. Stdin/stdout are bounded to 512 KiB, stderr to 64 KiB and discarded. Streams drain concurrently, launch/result identities and exit codes must agree, and protocol schema/evidence inventories are checked. Duration and cleanup are bounded. Observed descendants or uncertain enumeration/termination require explicit recovery even if the direct child exits.
+
+The adapter captures exact completion bytes, all selected namespace file lengths/SHA-256 hashes, native inventory and retained dependency descriptors, directory inventories and filesystem identities/timestamps. It invokes the mandatory public native reader, captures again, and performs a separate final recheck. Missing/incomplete namespaces, unexpected files, unsupported versions/provenance, mismatched identity/profile/fingerprint, invalid schemas/counts, symlinks/hard-linked files, corruption and observed changes fail closed. No original file, marker, schema or fingerprint is written. Unavailable, invalid, changed, unsupported and resource-limit classifications remain distinct; allowlisted native failure codes are retained in failed results.
+
+A final short coordinator-first transaction checks the exact operation/process/epoch/coordinator/operation versions and selection identity. It inserts/reuses immutable artifacts, stores the result and result-digest audit, then releases this owner atomically. Any conflict or SQL/conditional failure rolls back all registry changes. These four leaf inputs have no independently registered artifact dependencies: registered raw files and reference CSV/vocabulary identities are exact descriptors in artifact evidence. `artifact_dependencies` remains available for real operational-artifact relationships; no synthetic UUIDs or batch-to-service edges are invented.
+
+A **new operation ID** always fully requalifies the selection. Identical evidence returns existing artifact IDs; different evidence under the same scoped native key or incompatible identity at a registered binding/address conflicts. Evidence includes filesystem identities and stamps, so an in-place rewrite or replacement can conflict even if logical values/bytes are restored. The native identity key excludes fingerprint and source revision: version/product/kind/format are explicit V7 scopes. Qualification timestamp is database metadata and does not change immutable evidence identity on repeat verification. Registry `verified_at` records initial qualification, not permanent readability. Future run submission must revalidate native evidence and retained dependencies.
+
+Reusing an **existing operation ID with the exact normalized request** performs historical reconciliation only, never relaunches verification. It returns HISTORICAL_RESULT with `revalidated:false`, or RECOVERY_REQUIRED for ACTIVE. A changed request under that ID is rejected. This prevents lost responses from causing a second blind operation.
+
+### Interruption and explicit import recovery
+
+Known safe failure after confirmed child cleanup atomically records FAILED/result/audit and releases ownership. Database outage, unknown commit, stale token, unexpected failure, uncertain child cleanup or abrupt importer termination leaves durable ownership blocked unless the definitive commit already succeeded. Closing the file lock, parent exit, heartbeat expiry or lost connection never clears it. Use the original catalog and stable operation ID for lookup:
+
+```sh
+DDIP_IMPORT_ACTION=inspect java -jar services/content-api/target/content-api-0.1.0-SNAPSHOT.jar \
+  --spring.main.banner-mode=off --logging.level.root=OFF
+```
+
+Only after actual installation-level old-owner/descendant/unmanaged-writer quiescence is established, use an explicit new recovery ID and confirmation:
+
+```sh
+DDIP_IMPORT_ACTION=recover \
+DDIP_IMPORT_RECOVERY_ID=40000000-0000-4000-8000-000000000002 \
+DDIP_IMPORT_QUIESCENCE_CONFIRMED=true \
+java -jar services/content-api/target/content-api-0.1.0-SNAPSHOT.jar \
+  --spring.main.banner-mode=off --logging.level.root=OFF
+```
+
+Recovery acquires the same host guard, refuses an observable surviving old process, atomically transfers occupied ownership to a fenced RECOVERY successor, then separately closes that recovery safely. It never qualifies/registers/repairs native artifacts. Confirmation is a trusted operator assertion after actual inspection, not automated proof of orphan cessation. An interrupted recovery remains occupied; set `DDIP_IMPORT_TARGET_ID` to its operation UUID and supply a new recovery UUID. Reusing the same recovery UUID looks up its exact historical result; uncertainty keeps blocking. Processing-run RECONCILE controls are not involved.
+
+### Synthetic reproduction and remaining work
+
+Run focused native tests and the PostgreSQL profile against a dedicated disposable test service with create/drop-database credentials (never an operational database):
+
+```sh
+export PYTHONPATH=processing:processing/tests
+export DDIP_TEST_PYTHON="$PWD/outputs/silver-python312/.venv/bin/python"
+"$DDIP_TEST_PYTHON" -B -m unittest processing/tests/test_artifact_import_verifier.py
+# Fixtures use actual native registrars/reference publishers solely to prepare tiny test inputs.
+# Existing test DB variables: DDIP_TEST_DB_URL, DDIP_TEST_DB_USER, DDIP_TEST_DB_PASSWORD.
+mvn -o -B -ntp -f services/content-api/pom.xml verify -Ppostgres
+mvn -o -B -ntp -f services/content-api/pom.xml verify -Pintegration \
+  -Danalytics.python="$DDIP_TEST_PYTHON"
+npm run check
+```
+
+[Fixture preparation](../../processing/tests/artifact_import_fixtures.py) creates four small synthetic native inputs; [ImportWorkflowIT](src/test/java/platform/contentapi/importing/ImportWorkflowIT.java) provisions isolated private bindings/sources and invokes real readers and the non-web role. It drops only its randomly named test database. Actual executed counts and interruption/restart evidence are recorded in the [implementation contract](../../docs/architecture/durable-execution.md#b2b-1b-a-local-validation).
+
+B2b-1B-B still requires the owner-reviewed read-only Spark qualification boundary for Silver, retained Bronze checks, complete accepted/rejected Parquet schema/provenance/count verification, stable before/after inventories and a clearly distinguished E5 inventory identity. B2b-2 must select opaque registry IDs and freshly verify retained dependencies. Neither checkpoint is implemented/authorized by this change. Worker execution and full E5 remain incomplete. Checksums/cooperative locks establish consistency on trusted local storage, not authenticity against a hostile filesystem administrator, distributed fencing, backup/restore certification or proof that every orphan is stopped. Hosted CI and other-host behavior remain pending observation.

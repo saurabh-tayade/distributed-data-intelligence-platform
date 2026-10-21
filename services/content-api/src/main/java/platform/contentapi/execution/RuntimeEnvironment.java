@@ -11,7 +11,7 @@ import org.springframework.core.env.MapPropertySource;
 public final class RuntimeEnvironment implements EnvironmentPostProcessor, Ordered {
     @Override public void postProcessEnvironment(ConfigurableEnvironment environment, SpringApplication application) {
         RuntimeRole role = RuntimeRole.from(environment);
-        if (role == RuntimeRole.WORKER || role == RuntimeRole.MIGRATE) {
+        if (role == RuntimeRole.WORKER || role == RuntimeRole.MIGRATE || role == RuntimeRole.OPERATOR_IMPORT) {
             environment.getPropertySources().addFirst(new MapPropertySource("ddipNonWebRole",
                     Map.of("spring.main.web-application-type", "none")));
         }

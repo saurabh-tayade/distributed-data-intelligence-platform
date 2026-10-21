@@ -10,6 +10,8 @@ import platform.contentapi.execution.RuntimeRole;
 public class ContentApiApplication {
     public static void main(String[] args) {
         var context = SpringApplication.run(ContentApiApplication.class, args);
-        if (RuntimeRole.from(context.getEnvironment()) == RuntimeRole.MIGRATE) context.close();
+        if (RuntimeRole.from(context.getEnvironment()) == RuntimeRole.OPERATOR_IMPORT) {
+            int code=SpringApplication.exit(context);context.close();System.exit(code);
+        } else if (RuntimeRole.from(context.getEnvironment()) == RuntimeRole.MIGRATE) context.close();
     }
 }

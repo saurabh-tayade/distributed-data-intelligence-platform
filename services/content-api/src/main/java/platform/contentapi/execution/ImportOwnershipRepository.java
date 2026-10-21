@@ -7,9 +7,10 @@ import java.util.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import platform.contentapi.management.SourceJson;
+import platform.contentapi.importing.*;
 import static platform.contentapi.execution.ImportOwnershipFailure.Code.*;
 
-/** Internal B2b-1A protocol only: no role/HTTP entry point, verifier, child launch or artifact insert. */
+/** Fenced maintenance ownership and atomic qualified-artifact finalization. No external I/O in SQL transactions. */
 public final class ImportOwnershipRepository {
     public enum Kind { IMPORT, RECOVERY }
     public enum State { ACTIVE, SUCCEEDED, FAILED, INTERRUPTED }
@@ -102,6 +103,7 @@ public final class ImportOwnershipRepository {
     }
     private void audit(UUID id,String action,String before,String after,long beforeVersion,long afterVersion,String code,UUID related) {
         var details=SourceJson.object().put("protocolVersion",1);
+        if(action.equals("IMPORT_FINISHED"))details.put("resultSha256",jdbc.queryForObject("SELECT result_sha256 FROM ddip_management.artifact_import_operations WHERE import_id=?",String.class,id));
         if(related!=null)details.put("relatedOperationId",related.toString());
         jdbc.update("INSERT INTO ddip_management.audit_events(actor_scope,import_id,action,before_state,after_state,before_version,after_version,safe_code,details_bytes) VALUES ('local-operator',?,?,?,?,?,?,?,?)",
                 id,action,before,after,beforeVersion,afterVersion,code,SourceJson.canonical(details));
@@ -145,13 +147,55 @@ public final class ImportOwnershipRepository {
         transactions.required(() -> {
             Slot s=lockSlot();Operation op=owned(guard,token,s);
             ImportOwnershipFailure.require((op.kind()==Kind.RECOVERY)==(outcome==Outcome.RECOVERY_CLOSED),INVALID_REQUEST);
-            State state=outcome==Outcome.SAFE_FAILURE?State.FAILED:State.SUCCEEDED;
-            terminal(op,state,outcome.name(),result);
-            audit(op.importId(),"IMPORT_FINISHED","ACTIVE",state.name(),op.rowVersion(),op.rowVersion()+1,outcome.name(),null);
-            int changed=jdbc.update("UPDATE ddip_management.coordinator SET active_import_id=NULL,row_version=row_version+1 WHERE singleton_id=1 AND installation_id=? " +
-                    "AND active_import_id=? AND active_attempt_id IS NULL AND epoch=? AND row_version=?",installation,op.importId(),op.epoch(),token.coordinatorVersion());
-            ImportOwnershipFailure.require(changed==1,OWNERSHIP_STALE);return null;
+            complete(op,token,outcome,result);return null;
         });
+    }
+    private void complete(Operation op,Token token,Outcome outcome,byte[] result) {
+        State state=outcome==Outcome.SAFE_FAILURE?State.FAILED:State.SUCCEEDED;
+        terminal(op,state,outcome.name(),result);
+        audit(op.importId(),"IMPORT_FINISHED","ACTIVE",state.name(),op.rowVersion(),op.rowVersion()+1,outcome.name(),null);
+        int changed=jdbc.update("UPDATE ddip_management.coordinator SET active_import_id=NULL,row_version=row_version+1 WHERE singleton_id=1 AND installation_id=? " +
+                "AND active_import_id=? AND active_attempt_id IS NULL AND epoch=? AND row_version=?",installation,op.importId(),op.epoch(),token.coordinatorVersion());
+        ImportOwnershipFailure.require(changed==1,OWNERSHIP_STALE);
+    }
+    /** Verification and child cleanup are complete before entry. Registry, result and audit commit together. */
+    public byte[] finishVerified(InstallationHostGuard guard,Token token,List<QualifiedArtifact> artifacts) {
+        outsideTransaction();guard.checkHeld(installation);
+        ImportOwnershipFailure.require(artifacts!=null && !artifacts.isEmpty() && artifacts.size()<=ImportCatalog.MAX_ARTIFACTS,INVALID_REQUEST);
+        return transactions.required(() -> {
+            Operation op=owned(guard,token,lockSlot());ImportOwnershipFailure.require(op.kind()==Kind.IMPORT,INVALID_REQUEST);
+            var result=SourceJson.object().put("protocolVersion",1).put("status","VERIFIED").put("operationId",op.importId().toString());
+            var expected=ImportCatalog.parse(op.requestBytes());
+            ImportOwnershipFailure.require(expected.operationId().equals(op.importId()) && expected.entries().size()==artifacts.size(),INVALID_REQUEST);
+            var ids=result.putArray("artifactIds");var evidence=result.putArray("artifacts");
+            for(int i=0;i<artifacts.size();i++) {
+                var artifact=artifacts.get(i);
+                ImportOwnershipFailure.require(op.importId().equals(artifact.operation()) && Arrays.equals(SourceJson.canonical(expected.entries().get(i).json()),SourceJson.canonical(artifact.selection().json())),INVALID_REQUEST);
+                UUID id=register(artifact);ids.add(id.toString());evidence.addObject().put("artifactId",id.toString()).put("evidenceSha256",SourceJson.sha(artifact.evidence()));
+            }
+            byte[] bytes=canonical(SourceJson.canonical(result));complete(op,token,Outcome.SAFE_COMPLETION,bytes);return bytes;
+        });
+    }
+    private UUID register(QualifiedArtifact qualified) {
+        var e=qualified.selection();byte[] evidence=qualified.evidence();
+        var rows=jdbc.queryForList("SELECT * FROM ddip_management.artifacts WHERE (product_id=? AND kind=? AND contract_version=? AND processor_revision=? AND native_format IS NOT DISTINCT FROM CAST(? AS varchar) AND native_identity=?) OR (storage_binding_id=? AND relative_address=?)",
+                e.product(),e.kind(),e.contract(),e.processor(),e.format(),e.nativeIdentity(),e.bindingId(),e.address());
+        if(rows.size()>1)throw new ImportFailure(ImportFailure.Code.IDENTITY_CONFLICT);
+        if(!rows.isEmpty()) {
+            var r=rows.getFirst();var id=(UUID)r.get("artifact_id");
+            if(!Objects.equals(r.get("product_id"),e.product()) || !Objects.equals(r.get("kind"),e.kind()) ||
+                    ((Number)r.get("contract_version")).intValue()!=e.contract() || ((Number)r.get("processor_revision")).intValue()!=e.processor() ||
+                    !Objects.equals(r.get("native_format"),e.format()) || !Objects.equals(r.get("native_identity"),e.nativeIdentity()) ||
+                    !Objects.equals(r.get("storage_binding_id"),e.bindingId()) || !Objects.equals(r.get("relative_address"),e.address()) ||
+                    !Arrays.equals((byte[])r.get("evidence_bytes"),evidence) || Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.artifact_dependencies WHERE artifact_id=?)",Boolean.class,id)))
+                throw new ImportFailure(ImportFailure.Code.IDENTITY_CONFLICT);
+            return id;
+        }
+        UUID id=UUID.randomUUID();
+        jdbc.update("INSERT INTO ddip_management.artifacts(artifact_id,kind,product_id,contract_version,processor_revision,native_identity,storage_binding_id,relative_address,evidence_bytes,evidence_sha256,verified_at,native_format) VALUES (?,?,?,?,?,?,?,?,?,?,clock_timestamp(),?)",
+                id,e.kind(),e.product(),e.contract(),e.processor(),e.nativeIdentity(),e.bindingId(),e.address(),evidence,SourceJson.sha(evidence),e.format());
+        // These four input kinds have retained native files, not independently registered artifact dependencies.
+        return id;
     }
     private static void requireQuiescence(Operation old,boolean confirmed) {
         ImportOwnershipFailure.require(confirmed,QUIESCENCE_REQUIRED);
