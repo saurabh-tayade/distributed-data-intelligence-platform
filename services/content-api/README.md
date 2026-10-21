@@ -403,7 +403,7 @@ The [current coordination evidence](../../docs/architecture/durable-execution.md
 
 ## Spark-free native input imports (B2b-1B-A)
 
-The owner authorized this checkpoint separately from B2b-1A. `operator-import` now provides a fixed, non-web, local operator command for existing completed inputs. It instantiates neither analytics controllers/query pools nor the idle worker lifecycle. No import HTTP route exists. Silver and derived Gold/Content/Reliability publications are excluded. No processing run, source intake, batch registration or publication is performed by this command.
+The owner authorized this checkpoint separately from B2b-1A. `operator-import` now provides a fixed, non-web, local operator command for existing completed inputs. It instantiates neither analytics controllers/query pools nor the idle worker lifecycle. No import HTTP route exists. That checkpoint excluded Silver, which is now separately supported by the [B2b-1B-B extension](#verified-silver-imports-b2b-1b-b). Derived publications remain excluded. No processing run, source intake, batch registration or publication is performed by this command.
 
 ### Private installation setup
 
@@ -549,4 +549,116 @@ npm run check
 
 [Fixture preparation](../../processing/tests/artifact_import_fixtures.py) creates four small synthetic native inputs; [ImportWorkflowIT](src/test/java/platform/contentapi/importing/ImportWorkflowIT.java) provisions isolated private bindings/sources and invokes real readers and the non-web role. It drops only its randomly named test database. Actual executed counts and interruption/restart evidence are recorded in the [implementation contract](../../docs/architecture/durable-execution.md#b2b-1b-a-local-validation).
 
-B2b-1B-B still requires the owner-reviewed read-only Spark qualification boundary for Silver, retained Bronze checks, complete accepted/rejected Parquet schema/provenance/count verification, stable before/after inventories and a clearly distinguished E5 inventory identity. B2b-2 must select opaque registry IDs and freshly verify retained dependencies. Neither checkpoint is implemented/authorized by this change. Worker execution and full E5 remain incomplete. Checksums/cooperative locks establish consistency on trusted local storage, not authenticity against a hostile filesystem administrator, distributed fencing, backup/restore certification or proof that every orphan is stopped. Hosted CI and other-host behavior remain pending observation.
+Historical follow-up from B2b-1B-A, now implemented separately below: B2b-1B-B required the owner-reviewed read-only Spark qualification boundary for Silver, retained Bronze checks, complete accepted/rejected Parquet schema/provenance/count verification, stable before/after inventories and a clearly distinguished E5 inventory identity. B2b-2 must select opaque registry IDs and freshly verify retained dependencies. Neither checkpoint was implemented/authorized by that Spark-free change. Worker execution and full E5 remain incomplete. Checksums/cooperative locks establish consistency on trusted local storage, not authenticity against a hostile filesystem administrator, distributed fencing, backup/restore certification or proof that every orphan is stopped. Hosted CI and other-host behavior remain pending observation.
+
+## Verified Silver imports (B2b-1B-B)
+
+The owner separately authorized the Silver extension after the Spark-free checkpoint. The same non-web `operator-import` role now supports one additional fixed kind, `SILVER`, for explicitly selected Content Intelligence retained history. No transformation, source fetch, publication, HTTP import route or processing run is introduced. The Spark-free kinds and their protocol remain supported.
+
+### Exact Silver selection and private bindings
+
+Catalog version remains 1; each Silver entry has the following exact fields and **no native `fingerprint` field**. This fictional example illustrates syntax only:
+
+```json
+{
+  "catalogVersion": 1,
+  "operationId": "40000000-0000-4000-8000-000000000001",
+  "executionProfileId": "silver-import-v1",
+  "controlBindingId": "installation-control",
+  "artifacts": [
+    {
+      "kind": "SILVER",
+      "productId": "content-intelligence",
+      "contractVersion": 1,
+      "processorRevision": 1,
+      "storageBindingId": "approved-silver",
+      "relativeAddress": "v1/25bf8e1a2393f1108d37029b3df5593236c755742ec93465bbafa9b290bddcf6/source_id=ZGVtbw/ingestion_date=2026-10-12/ingestion_id=50000000-0000-4000-8000-000000000001/complete.json",
+      "identity": {
+        "sourceId": "demo",
+        "ingestionId": "50000000-0000-4000-8000-000000000001",
+        "bronzeStorageBindingId": "approved-bronze",
+        "bronzeBucket": "local",
+        "bronzeMetadataKey": "bronze/rss/source_id=ZGVtbw/ingestion_date=2026-10-12/ingestion_id=50000000-0000-4000-8000-000000000001/metadata.json",
+        "bronzePayloadKey": "bronze/rss/source_id=ZGVtbw/ingestion_date=2026-10-12/ingestion_id=50000000-0000-4000-8000-000000000001/payload.xml"
+      }
+    }
+  ]
+}
+```
+
+Source encoding is native unpadded Base64URL of the exact UTF-8 source ID. The UUID is canonical, date is valid ISO UTC partition date, bucket hash is SHA-256 of the exact bucket name, and payload/metadata/marker paths must agree exactly. The native marker, not a current source revision/feed URL, establishes the original retained ingestion. Sources are nonblank scalar strings bounded to 512 UTF-8 bytes with no controls; supported approved bucket names match `[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]`. Marker addresses are bounded to 1024 bytes. Traversal, aliases, symlinks and unapproved bindings fail. There is no source scan or newest-file selection.
+
+Provision immutable, installation/profile-associated Content Intelligence SILVER and TEMP bindings using the local-root descriptor from the Spark-free guide. SILVER denotes the root above `v1/`; TEMP denotes a private canonical `0700` scratch root, disjoint from the Silver and installation CONTROL roots. Java/Python validate root device/inode identities. Native roots are never chmodded, repaired or cleaned. Scratch has at least 1 GiB free before Spark starts. Per-invocation private scratch directories are retained for operator inspection; Spark performs its ordinary runtime cleanup inside them. Manual retention remains the operator's responsibility.
+
+The BRONZE binding has this exact private configuration:
+
+```json
+{"importBronzeVersion":1,"endpoint":"http://127.0.0.1:8333","region":"us-east-1","bucket":"local","credentialsFile":"/private/approved/bronze-import-credentials.json"}
+```
+
+The credential file is canonical, regular, owned by the operator, without symlinks or group/other permissions; use `0600`. It contains exactly `{"accessKey":"<explicit local key>","secretKey":"<explicit local secret>"}` (at most 8 KiB). Credentials are read from this reviewed private location, passed only in bounded child stdin and never stored in artifact evidence/results. The existing `bronze_to_silver.local_client` still forces explicit HTTP loopback endpoints, explicit credentials/region, path-style addressing, disabled proxies/redirect escape and bounded GETs. No ambient AWS credentials, S3A, LIST/PUT/DELETE, bucket initialization or live publisher request is used. Any failed/unauthorized GET is unavailable evidence, never proof of object absence.
+
+Use an explicitly reviewed **new immutable runtime profile**, with `importProtocolVersion:2`. Preserve the existing Python/processing paths, exact Python 3.12.15/DuckDB 1.4.5 fields and module map, adding:
+
+```json
+{
+  "spark": {
+    "javaHome": "/private/approved/jdk21",
+    "javaVersion": "21",
+    "pysparkVersion": "4.0.2",
+    "scratchBindingId": "approved-silver-temp"
+  }
+}
+```
+
+The map must hash all nine original modules **and** `silver_import_qualification.py`, `silver.py`, `silver_inputs.py`, `bronze_to_silver.py`. Use existing pinned [Bronze requirements](../../processing/requirements-bronze.txt) and [analytics requirements](../../processing/requirements-analytics.txt), installed before invocation. `timeoutSeconds` is 1–900 for Silver qualification; final rechecks stay bounded to at most 120 seconds. Version-1 profiles keep their original fields and 120-second ceiling. Updating the adapter/module bytes requires a reviewed new profile/digests; no immutable database profile is rewritten automatically.
+
+### Verification extent and operational identity
+
+The fixed protocol version 2 invokes existing `silver_inputs.load_inputs(spark, root, markers=[exact_marker])`, its per-file/schema/row/count/replay checks and `verify_unchanged()`. Additional checks independently reopen the exact original metadata and payload using `bronze_to_silver.metadata/read_object/local_client`, verify original raw metadata digest, payload digest/length and exact receipt/marker/key identity, and compare every accepted/rejected row's source URI, original timestamp (native Python/Spark microsecond representation), payload length and RSS/Atom format with Bronze. The existing native rules also check source/ingestion IDs, bucket/keys/input URI, payload hash, supported warning/rejection arrays, article identity, required values and accepted/rejected conflicts.
+
+Native schemas declare nullable fields; requiredness is enforced through native row predicates. Spark infers nullable Parquet fields even when native producers write required literal columns. Qualification checks the native logical schema and required nonnull values/array elements, preserving that native compatibility; it does not invent a new universal physical OPTIONAL/REQUIRED footer rule. Empty datasets have schema/count/marker/Bronze evidence but no row provenance. These checks **do not reconstruct article semantics from Bronze XML** or prove that a self-consistent artifact was never changed before import. A missing original empty partition cannot be inferred from the original count-only marker; observed disappearance after capture is rejected.
+
+The managed capture hashes the original marker, every accepted/rejected Parquet file and native-ignored hidden bookkeeping, including bounded hidden directories. Hidden bookkeeping retains the native `.`/`_` policy; it is captured/rechecked, not treated as analytical data or assigned new CRC semantics. Visible unsupported files/nested datasets, glob metacharacters in analytical filenames, symlinks, hard-linked files, missing datasets, malformed evidence and observed substitution/membership changes fail. Admission is at most 128 analytical files per dataset, 512 captured entries, hidden nesting depth 6, 1 GiB total captured bytes per selected ingestion, 64 KiB marker and 16 MiB per bookkeeping file. Original native contracts are unchanged; these are explicit E5 resource limits.
+
+The distinct identity is **`E5_SILVER_INVENTORY_V1 = SHA256(canonical_bytes(value))`**, where `value` contains exactly:
+
+- `qualificationPolicy: "ddip-e5-silver-import"`, `qualificationRevision: 1`, `productId: "content-intelligence"`, `contractVersion: 1`, `processorRevision: 1`, exact `sourceId` and `ingestionId`.
+- `nativeCompletion: {relativeAddress, byteLength, sha256}` over original marker bytes.
+- `files`: every captured non-marker file, sorted by UTF-8 relative path, each `{path,dataset,byteLength,sha256}`; dataset is accepted, rejected or bookkeeping.
+- `bronze: {bucket,metadataKey,metadataByteLength,metadataSha256,payloadKey,payloadByteLength,payloadSha256}` over retained exact objects.
+
+Canonical encoding is the existing E5 integer-only, sorted-key, compact UTF-8 JSON encoding. Operation IDs, database IDs, qualification times, absolute paths and filesystem identity/stamps do not enter this digest. Stamps remain separate immutable capture evidence for mutation/reimport checks. Java independently verifies this fixed representation/digest before registration. The digest is never labeled a native Silver/Gold/Content publication fingerprint.
+
+Two literal compatibility vectors are in [SilverInventoryVectorTest](../../processing/tests/test_silver_import_qualification.py). These serialize metadata, not fake qualified Parquet. Base vector: source `demo`, UUID `50000000-0000-4000-8000-000000000001`, date 2026-10-12, bucket `local`, paths as above; marker length 2/hash `44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a`; accepted/a.parquet length 1/hash 64 `a` characters; rejected/r.parquet length 2/hash 64 `b` characters; Bronze metadata length 2/hash 64 `c` characters and payload length 3/hash 64 `d` characters. Its expected digest is `e7d22d80f101997d6d9e010f09dd3d13b92630688c6f6ccf8dfa9fd61123f411`. Adding accepted/_SUCCESS as bookkeeping, length 0/hash `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`, yields `4f17688a978d6e5ad6dee7463797a7a3d99696e80e751a22a858de05a92f8f32`. Ordering or machine/stamp changes do not change these values; bytes/lengths/inventory/Bronze evidence changes do.
+
+### Supervision, registration and recovery
+
+Invocation is unchanged: select `DDIP_ROLE=operator-import` and the private `DDIP_IMPORT_CATALOG`, then run the built Content API jar. Silver VERIFY alone starts fixed `local[2]` Spark 4.0.2 with approved Java 21, 512-MiB driver, 16-MiB result limit, UTC, disabled UI/event log and private scratch working/temp/warehouse locations. No native root is a writable runtime location. There is no persistent Spark service or parallel qualifier pool. Protocol stdout remains at most 512 KiB, Spark stderr is counted/discarded at 16 MiB, input is bounded to 512 KiB, and process cleanup waits are bounded. Non-Spark imports retain their existing budgets.
+
+The adapter stops Spark, shuts down Py4J, closes its gateway stdin and waits for JVM exit before reporting confirmed shutdown. Java tracks/rechecks observed descendants with a count ceiling. A timeout, overflow, interruption, malformed/ambiguous Silver result, surviving descendant or unavailable cleanup evidence retains blocked ownership; process exit alone is insufficient. Trusted fixed runtime plus explicit shutdown and observed quiescence qualify normal completion, not arbitrary descendants/hostile runtime attestation. Spark-free RECHECK recaptures Silver and reopens Bronze without launching a JVM; it must agree exactly before registry commit.
+
+V7 and the existing reservation/finalization transaction are unchanged. SILVER's native namespace key is canonical `{bucketSha256,metadataKeySha256}` (hashes of exact native bucket/key UTF-8), keeping the full bounded approved key evidence out of the 512-character relational identity field; full identities remain in immutable qualification evidence. This namespace-key encoding is separate from the operational inventory digest. Same native namespace/incompatible location/evidence conflicts; fresh identical operations requalify and reuse one artifact ID. Bronze is an exact native retained-dependency descriptor, not a fabricated operational artifact/edge. Artifact/result/audit commit atomically under exact owner/process/epoch/versions. Historical same-operation lookup is not current-readability proof. Existing explicit recovery, lost-ack lookup and no automatic takeover remain unchanged.
+
+### Silver reproduction and remaining boundary
+
+Use synthetic fixtures only for tests, with Java 21 selected and the pinned environment:
+
+```sh
+export JAVA_HOME="$(/usr/libexec/java_home -v 21)"
+export PATH="$JAVA_HOME/bin:$PATH"
+export PYSPARK_PYTHON="$PWD/outputs/silver-python312/.venv/bin/python"
+export DDIP_TEST_PYTHON="$PYSPARK_PYTHON"
+export SPARK_LOCAL_IP=127.0.0.1 TZ=UTC PYTHONPATH=processing:processing/tests
+# Gate A, before DB integration:
+"$PYSPARK_PYTHON" -B -m unittest processing/tests/test_silver_import_qualification.py \
+  processing/tests/test_artifact_import_verifier.py
+mvn -o -B -ntp -f services/content-api/pom.xml -Dtest=ImportBoundaryTest test
+# Gate B and foundation regressions; private dedicated test PostgreSQL credentials as above:
+mvn -o -B -ntp -f services/content-api/pom.xml verify -Ppostgres
+npm run check
+```
+
+The [E5 evidence record](../../docs/architecture/durable-execution.md#b2b-1b-b-local-validation) records actual counts, regressions, crash/restart probes and limitations. Tests use actual public native readers and PostgreSQL; Bronze integration uses a read-only loopback S3 HTTP fixture with the actual boto3 client, not a claim of newly observed SeaweedFS/AWS compatibility. Native Silver/Bronze publishers/readers remain unchanged.
+
+B2b-2 still needs opaque-ID submission, frozen selections, aggregate admission and independent fresh verification at submission/worker consumption. Historical `verified_at` is insufficient. No run submission, worker execution or full E5 completion is included. Hosted CI, other-host process behavior, hostile storage/runtime authenticity, exact XML-to-row semantic reconstruction and comprehensive backup/power-loss guarantees remain unverified.

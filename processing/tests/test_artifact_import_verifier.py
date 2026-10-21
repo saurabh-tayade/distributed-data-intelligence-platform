@@ -50,7 +50,7 @@ class ImportVerifierTest(unittest.TestCase):
                 r.update(mode='RECHECK',expectedCapture=e['capture'])
                 self.assertEqual(v.execute(r),('UNCHANGED',None))
                 self.assertEqual(before,{p:(p.read_bytes(),p.stat().st_mtime_ns) for p in before})
-        self.assertNotIn('pyspark',sys.modules)
+        # Spark-free isolation is asserted in a fresh process below; discovery may import other Spark tests.
 
     def test_physical_inventory_preserves_format_positions(self):
         for i in (0,1):
@@ -61,7 +61,8 @@ class ImportVerifierTest(unittest.TestCase):
 
     def test_fixed_subprocess_protocol(self):
         r=self.request(0)
-        p=subprocess.run([sys.executable,'-I','-B',str(Path(v.__file__))],input=canonical_bytes(r),capture_output=True,timeout=10)
+        bootstrap = "import sys;sys.path.insert(0," + repr(str(Path(v.__file__).parent)) + ");import artifact_import_verifier as v;code=v.main();assert 'pyspark' not in sys.modules;raise SystemExit(code)"
+        p=subprocess.run([sys.executable,'-I','-B','-c',bootstrap],input=canonical_bytes(r),capture_output=True,timeout=10)
         self.assertEqual(p.returncode,0,p.stderr)
         result=json.loads(p.stdout)
         self.assertEqual(result['status'],'VERIFIED');self.assertEqual(result['operationId'],r['operationId']);self.assertEqual(p.stderr,b'')

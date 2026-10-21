@@ -194,7 +194,7 @@ public final class ImportOwnershipRepository {
         UUID id=UUID.randomUUID();
         jdbc.update("INSERT INTO ddip_management.artifacts(artifact_id,kind,product_id,contract_version,processor_revision,native_identity,storage_binding_id,relative_address,evidence_bytes,evidence_sha256,verified_at,native_format) VALUES (?,?,?,?,?,?,?,?,?,?,clock_timestamp(),?)",
                 id,e.kind(),e.product(),e.contract(),e.processor(),e.nativeIdentity(),e.bindingId(),e.address(),evidence,SourceJson.sha(evidence),e.format());
-        // These four input kinds have retained native files, not independently registered artifact dependencies.
+        // Retained raw/reference files and Silver Bronze receipts are exact native descriptors, not fabricated registry artifacts.
         return id;
     }
     private static void requireQuiescence(Operation old,boolean confirmed) {

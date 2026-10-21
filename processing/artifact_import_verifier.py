@@ -1,4 +1,4 @@
-"""Fixed read-only E5 import qualification. No Spark, producers, network or discovery."""
+"""Fixed read-only E5 import protocol; Spark/Bronze only for explicit Silver qualification."""
 import base64
 from collections.abc import Mapping
 from hashlib import sha256
@@ -37,9 +37,11 @@ def need(condition, code='ADAPTER_INVALID'):
 
 
 def classification(code):
+    if code == 'SPARK_CLEANUP_UNCERTAIN':
+        return 'UNRESOLVED'
     if code.endswith('_CHANGED'):
         return 'CHANGED'
-    if code.endswith('_UNAVAILABLE'):
+    if code.endswith('_UNAVAILABLE') or code == 'INPUT_READ_FAILED':
         return 'UNAVAILABLE'
     if code == 'RESOURCE_LIMIT':
         return 'LIMIT'
@@ -77,19 +79,25 @@ def text(value, pattern):
 
 
 def validate(request):
-    fields(request, ('protocolVersion', 'operationId', 'selectionSha256', 'mode', 'binding', 'artifact', 'expectedCapture'))
-    need(type(request['protocolVersion']) is int and request['protocolVersion'] == 1)
+    silver = type(request) is dict and request.get('protocolVersion') == 2
+    fields(request, ('protocolVersion', 'operationId', 'selectionSha256', 'mode', 'binding', 'artifact', 'expectedCapture', *(('bronze','runtime') if silver else ())))
+    need(type(request['protocolVersion']) is int and request['protocolVersion'] in (1,2))
     text(request['operationId'], r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}')
     text(request['selectionSha256'], r'[0-9a-f]{64}')
     need(request['mode'] in ('VERIFY', 'RECHECK'))
     need((request['expectedCapture'] is None) == (request['mode'] == 'VERIFY'))
-    if request['mode'] == 'RECHECK':
+    if request['mode'] == 'RECHECK' and not silver:
         fields(request['expectedCapture'], ('files', 'directories', 'guards', 'completionBase64'))
         need(type(request['expectedCapture']['directories']) is list and 1 <= len(request['expectedCapture']['directories']) <= 2)
     b, a = request['binding'], request['artifact']
     fields(b, ('root', 'rootDevice', 'rootInode'))
     for n in ('rootDevice', 'rootInode'):
         text(b[n], r'-?[0-9]{1,20}')
+    if silver:
+        from silver_import_qualification import selection
+        selection(a)
+        need(sha256(canonical_bytes(a)).hexdigest() == request['selectionSha256'])
+        return a,b
     fields(a, ('kind', 'productId', 'storageBindingId', 'relativeAddress', 'contractVersion', 'processorRevision', 'identity', 'fingerprint'))
     need(sha256(canonical_bytes(a)).hexdigest() == request['selectionSha256'])
     text(a['fingerprint'], r'[0-9a-f]{64}')
@@ -256,6 +264,9 @@ def execute(request):
     a, binding = validate(request)
     import duckdb
     need(sys.version_info[:3] == (3, 12, 15) and duckdb.__version__ == '1.4.5', 'RUNTIME_INCOMPATIBLE')
+    if request['protocolVersion'] == 2:
+        from silver_import_qualification import execute as silver_execute
+        return silver_execute(request)
     before = capture(a, binding, request['expectedCapture'])
     if request['mode'] == 'RECHECK':
         need(before == request['expectedCapture'], 'EVIDENCE_CHANGED')
@@ -272,7 +283,7 @@ def main():
     try:
         request = parse(sys.stdin.buffer.read(PROTOCOL_LIMIT + 1))
         a, _ = validate(request)
-        result.update(operationId=request['operationId'], selectionSha256=request['selectionSha256'], mode=request['mode'])
+        result.update(protocolVersion=request['protocolVersion'], operationId=request['operationId'], selectionSha256=request['selectionSha256'], mode=request['mode'])
         status, evidence = execute(request)
         result.update(status=status, code=None, classification=None, evidence=evidence)
         raw = canonical_bytes(result)
@@ -281,7 +292,11 @@ def main():
         return 0
     except Exception as error:
         code = getattr(error, 'code', None)
-        if code not in CODES:
+        allowed = CODES
+        if type(request) is dict and request.get('protocolVersion') == 2:
+            from silver_import_qualification import CODES as SILVER_CODES
+            allowed = allowed | SILVER_CODES
+        if code not in allowed:
             code = 'EVIDENCE_UNAVAILABLE' if isinstance(error, OSError) else 'ADAPTER_INVALID'
         result.update(status='FAILED', code=code, classification=classification(code), evidence=None)
         sys.stdout.buffer.write(canonical_bytes(result))
@@ -289,4 +304,5 @@ def main():
 
 
 if __name__ == '__main__':
+    sys.modules['artifact_import_verifier'] = sys.modules[__name__]
     raise SystemExit(main())

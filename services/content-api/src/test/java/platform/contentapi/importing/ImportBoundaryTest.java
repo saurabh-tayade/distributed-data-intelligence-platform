@@ -11,7 +11,7 @@ class ImportBoundaryTest {
     @Test void validCatalogIsNormalizedAndDefensive(){var c=ImportCatalog.parse(catalog("reference_id=test/revision=r1","PUBLISHER_REFERENCE"));assertThat(c.entries()).hasSize(1);byte[] before=c.requestBytes();c.requestBytes()[0]=0;assertThat(c.requestBytes()).isEqualTo(before);assertThat(c.toString()).doesNotContain("reference_id");}
     @ParameterizedTest @ValueSource(strings={"/private/path","../test","reference_id=test/revision=r1/..","reference_id=test/revision=*","reference_id=test/revision=r2"})
     void unsafeOrInexactAddress(String address){assertThatThrownBy(()->ImportCatalog.parse(catalog(address,"PUBLISHER_REFERENCE"))).hasMessage("INVALID_CATALOG").hasNoCause();}
-    @ParameterizedTest @ValueSource(strings={"SILVER","GOLD","CONTENT","RELIABILITY_V2","unknown"})
+    @ParameterizedTest @ValueSource(strings={"GOLD","CONTENT","RELIABILITY_V2","unknown"})
     void excludedKinds(String kind){assertThatThrownBy(()->ImportCatalog.parse(catalog("reference_id=test/revision=r1",kind))).hasMessage("INVALID_CATALOG");}
     @Test void strictUnknownDuplicateAndSize(){for(byte[] raw:List.of("{\"a\":1,\"a\":2}".getBytes(),new byte[65537],"{} {}".getBytes(),"{\"x\":1.2}".getBytes()))assertThatThrownBy(()->ImportCatalog.parse(raw)).hasMessage("INVALID_CATALOG");}
     @Test void duplicateSelectionsRejected(){var n=SourceJson.parse(catalog("reference_id=test/revision=r1","PUBLISHER_REFERENCE"));var array=(tools.jackson.databind.node.ArrayNode)n.get("artifacts");array.add(array.get(0).deepCopy());assertThatThrownBy(()->ImportCatalog.parse(SourceJson.canonical(n))).hasMessage("INVALID_CATALOG");}
@@ -27,6 +27,15 @@ class ImportBoundaryTest {
         Thread owner=Thread.ofPlatform().start(()->{try{new NativeImportProcess().run(command("wait"),Path.of("."),10,new byte[0]);}catch(ImportFailure f){observed.set(f);interrupted.set(Thread.currentThread().isInterrupted());}});
         Thread.sleep(250);owner.interrupt();owner.join(java.time.Duration.ofSeconds(5));assertThat(owner.isAlive()).isFalse();
         assertThat(observed.get().code()).isEqualTo(ImportFailure.Code.INTERRUPTED);assertThat(observed.get().quiescent()).isTrue();assertThat(interrupted).isTrue();
+    }
+
+    @Test void sparkPathAcceptsReapedChildOnly() {
+        var r=new NativeImportProcess().runSpark(command("joined"),Path.of("."),3,new byte[0],Path.of(System.getProperty("java.home")));assertThat(r.exitCode()).isZero();
+    }
+    @ParameterizedTest @ValueSource(strings={"wait","large","fork"})
+    void sparkInterruptedOrOverflowedProcessRemainsUncertain(String mode) {
+        assertThatThrownBy(()->new NativeImportProcess().runSpark(command(mode),Path.of("."),1,new byte[0],Path.of(System.getProperty("java.home"))))
+            .isInstanceOf(ImportFailure.class).satisfies(e->assertThat(((ImportFailure)e).quiescent()).isFalse());
     }
 
 }

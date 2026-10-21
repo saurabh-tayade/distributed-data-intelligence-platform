@@ -7,10 +7,19 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 import static platform.contentapi.importing.ImportFailure.Code.*;
 
-/** One fixed, non-forking read-only verifier invocation. Streams/termination are never public diagnostics. */
+/** Fixed read-only verifier invocation. Spark descendants require explicit shutdown and observed quiescence. */
 public class NativeImportProcess {
     public record Result(int exitCode,byte[] stdout) { }
     public Result run(List<String> command,Path directory,int timeoutSeconds,byte[] request) {
+        return execute(command,directory,timeoutSeconds,request,null);
+    }
+    /** Called only for the fixed Silver VERIFY operation with a reviewed Java home. */
+    public Result runSpark(List<String> command,Path directory,int timeoutSeconds,byte[] request,Path javaHome) {
+        ImportFailure.require(javaHome!=null && javaHome.isAbsolute(),RUNTIME_INVALID);
+        return execute(command,directory,timeoutSeconds,request,javaHome);
+    }
+    private Result execute(List<String> command,Path directory,int timeoutSeconds,byte[] request,Path javaHome) {
+        boolean spark=javaHome!=null;
         ImportFailure.require(request.length<=ImportJson.PROTOCOL_LIMIT,RESULT_INVALID);
         Process p=null;Drain out=null,err=null;Thread writer=null;boolean uncertain=false,interrupted=false;ImportFailure failure=null;Result result=null;
         Set<ProcessHandle> descendants=new HashSet<>();
@@ -18,10 +27,11 @@ public class NativeImportProcess {
             if(Thread.currentThread().isInterrupted())throw new InterruptedException();
             long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(timeoutSeconds);
             var builder=new ProcessBuilder(command).directory(directory.toFile());builder.environment().clear();builder.environment().putAll(Map.of("PATH","/usr/bin:/bin","TZ","UTC","LANG","C.UTF-8"));
-            p=builder.start();out=new Drain(p.getInputStream(),ImportJson.PROTOCOL_LIMIT,true);err=new Drain(p.getErrorStream(),65536,false);out.start();err.start();
+            if(spark)builder.environment().putAll(Map.of("JAVA_HOME",javaHome.toString(),"PYSPARK_PYTHON",command.getFirst(),"SPARK_LOCAL_IP","127.0.0.1"));
+            p=builder.start();out=new Drain(p.getInputStream(),ImportJson.PROTOCOL_LIMIT,true);err=new Drain(p.getErrorStream(),spark?16*1024*1024:65536,false);out.start();err.start();
             Process child=p;writer=Thread.ofVirtual().start(() -> {try(var stream=child.getOutputStream()){stream.write(request);}catch(IOException ignored){}});
             while(true) {
-                try {var observed=p.descendants().limit(33).toList();if(!observed.isEmpty())uncertain=true;descendants.addAll(observed);}catch(RuntimeException e){uncertain=true;}
+                try {var observed=p.descendants().limit(33).toList();if(observed.size()>=33 || (!spark && !observed.isEmpty()))uncertain=true;descendants.addAll(observed);}catch(RuntimeException e){uncertain=true;}
                 if(out.failed || err.failed)throw new ImportFailure(RESULT_INVALID);
                 if(!p.isAlive() && out.done && err.done && !writer.isAlive()){result=new Result(p.exitValue(),out.bytes.toByteArray());break;}
                 if(System.nanoTime()>=deadline)throw new ImportFailure(TIMEOUT);
@@ -34,9 +44,10 @@ public class NativeImportProcess {
         finally {
             interrupted|=Thread.interrupted();
             if(p!=null) {
+                if(spark && failure!=null)uncertain=true;
                 try {
                     var last=p.descendants().limit(33).toList();if(!last.isEmpty())uncertain=true;descendants.addAll(last);
-                    for(var d:descendants)if(d.isAlive())d.destroyForcibly();
+                    for(var d:descendants)if(d.isAlive()){if(spark)uncertain=true;d.destroyForcibly();}
                     if(p.isAlive())p.destroyForcibly();
                     if(!p.waitFor(1,TimeUnit.SECONDS))uncertain=true;
                     long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(1);
@@ -50,7 +61,7 @@ public class NativeImportProcess {
             }
             if(interrupted)Thread.currentThread().interrupt();
         }
-        if(uncertain)throw new ImportFailure(CLEANUP_UNCERTAIN,false);
+        if(uncertain)throw new ImportFailure(spark && failure!=null?failure.code():CLEANUP_UNCERTAIN,false);
         if(failure!=null)throw failure;
         return result;
     }

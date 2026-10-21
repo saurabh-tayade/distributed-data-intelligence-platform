@@ -27,6 +27,7 @@ public final class OperatorImportService {
         if(ownership.lookup(catalog.operationId(),catalog.requestBytes()).isPresent())return inspect(catalog,catalog.operationId());
         var runtime=bindings.runtime(catalog.profileId());runtime.check();
         var control=bindings.control(catalog.controlBindingId(),catalog.profileId());
+        if(runtime.spark()!=null)runtime.spark().disjoint(control.root());
         try(var guard=InstallationHostGuard.acquire(control)) {
             var token=ownership.reserve(guard,new ImportOwnershipRepository.Reservation(catalog.operationId(),runtime.id(),runtime.digest(),catalog.requestBytes()));
             try {

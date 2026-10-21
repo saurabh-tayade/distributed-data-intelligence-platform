@@ -12,6 +12,7 @@ final class ImportEvidence {
     private static long number(JsonNode n,long max){need(n!=null && n.isIntegralNumber() && n.canConvertToLong() && n.longValue()>=0 && n.longValue()<=max);return n.longValue();}
     private static void stamp(JsonNode n,int count){array(n,count,count);for(var v:n)ImportJson.match(v,"-?[0-9]{1,20}");}
     static void validate(ImportCatalog.Entry e,JsonNode evidence) {
+        if(e.silver()){SilverImportEvidence.validate(e,evidence);return;}
         ImportJson.fields(evidence,"evidenceVersion","native","capture");ImportJson.integer(evidence.get("evidenceVersion"),1,1);
         var capture=evidence.get("capture");ImportJson.fields(capture,"files","directories","guards","completionBase64");
         var files=capture.get("files");boolean batch=e.format()!=null;array(files,batch?3:4,batch?18:4);Map<String,JsonNode> inventory=new HashMap<>();

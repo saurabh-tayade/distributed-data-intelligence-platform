@@ -14,7 +14,7 @@ import static platform.contentapi.importing.ImportFailure.Code.*;
 final class ImportJson {
     static final int PROTOCOL_LIMIT=512*1024;
     private static final JsonMapper JSON=JsonMapper.builder(JsonFactory.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
-            .streamReadConstraints(StreamReadConstraints.builder().maxNestingDepth(16).maxStringLength(65536).maxNumberLength(20).build()).build())
+            .streamReadConstraints(StreamReadConstraints.builder().maxNestingDepth(16).maxStringLength(131072).maxNumberLength(20).build()).build())
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build();
     static JsonNode parse(byte[] bytes,int max) {
         try {

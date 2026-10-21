@@ -12,16 +12,19 @@ public record ImportCatalog(UUID operationId,String profileId,String controlBind
     public record Entry(String kind,String product,String bindingId,String address,int contract,int processor,JsonNode identity,String fingerprint) {
         public Entry {identity=identity.deepCopy();}
         @Override public JsonNode identity(){return identity.deepCopy();}
+        public boolean silver(){return kind.equals("SILVER");}
         public String format(){return kind.equals("RELIABILITY_BATCH_V2")?identity.get("inputFormat").stringValue():null;}
         public String nativeIdentity() {
             var n=SourceJson.object();
             if(format()!=null)n.put("sourceId",identity.get("sourceId").stringValue()).put("batchId",identity.get("batchId").stringValue());
+            else if(silver())n.put("bucketSha256",SourceJson.sha(identity.get("bronzeBucket").stringValue().getBytes(java.nio.charset.StandardCharsets.UTF_8))).put("metadataKeySha256",SourceJson.sha(identity.get("bronzeMetadataKey").stringValue().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
             else n.put("referenceId",identity.get("referenceId").stringValue()).put("revision",identity.get("revision").stringValue());
             return new String(SourceJson.canonical(n),java.nio.charset.StandardCharsets.UTF_8);
         }
         public JsonNode json() {
             var n=SourceJson.object().put("kind",kind).put("productId",product).put("storageBindingId",bindingId).put("relativeAddress",address)
-                    .put("contractVersion",contract).put("processorRevision",processor).put("fingerprint",fingerprint);n.set("identity",identity.deepCopy());return n;
+                    .put("contractVersion",contract).put("processorRevision",processor);
+            if(!silver())n.put("fingerprint",fingerprint);n.set("identity",identity.deepCopy());return n;
         }
         public String digest(){return SourceJson.sha(SourceJson.canonical(json()));}
         @Override public String toString(){return "ImportSelection[redacted]";}
@@ -47,6 +50,7 @@ public record ImportCatalog(UUID operationId,String profileId,String controlBind
         return new ImportCatalog(id,profile,control,entries,request);
     }
     static Entry entry(JsonNode n) {
+        if(n!=null && n.has("kind") && ImportJson.text(n.get("kind")).equals("SILVER"))return silverEntry(n);
         ImportJson.fields(n,"kind","productId","storageBindingId","relativeAddress","contractVersion","processorRevision","identity","fingerprint");
         String kind=ImportJson.text(n.get("kind")),product=ImportJson.text(n.get("productId")),binding=ImportJson.token(n.get("storageBindingId")),address=ImportJson.text(n.get("relativeAddress"));
         int contract=ImportJson.integer(n.get("contractVersion"),1,2),processor=ImportJson.integer(n.get("processorRevision"),1,2);
@@ -64,6 +68,25 @@ public record ImportCatalog(UUID operationId,String profileId,String controlBind
             expected="reference_id="+ref+"/revision="+revision;
         }
         ImportFailure.require(address.equals(expected),INVALID_CATALOG);return new Entry(kind,product,binding,address,contract,processor,i,fingerprint);
+    }
+    private static Entry silverEntry(JsonNode n) {
+        ImportJson.fields(n,"kind","productId","storageBindingId","relativeAddress","contractVersion","processorRevision","identity");
+        ImportFailure.require(ImportJson.text(n.get("productId")).equals("content-intelligence"),INVALID_CATALOG);
+        ImportJson.integer(n.get("contractVersion"),1,1);ImportJson.integer(n.get("processorRevision"),1,1);
+        var i=n.get("identity");ImportJson.fields(i,"sourceId","ingestionId","bronzeStorageBindingId","bronzeBucket","bronzeMetadataKey","bronzePayloadKey");
+        String source=ImportJson.text(i.get("sourceId"));ImportFailure.require(!source.isBlank() && source.getBytes(java.nio.charset.StandardCharsets.UTF_8).length<=512 && source.codePoints().noneMatch(c->Character.isISOControl(c)),INVALID_CATALOG);
+        String ingestion=ImportJson.uuid(i.get("ingestionId")).toString();ImportJson.token(i.get("bronzeStorageBindingId"));
+        String bucket=ImportJson.match(i.get("bronzeBucket"),"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]");
+        String key=ImportJson.text(i.get("bronzeMetadataKey")),payload=ImportJson.text(i.get("bronzePayloadKey"));
+        String encoded=Base64.getUrlEncoder().withoutPadding().encodeToString(source.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String prefix="bronze/rss/source_id="+encoded+"/ingestion_date=";
+        ImportFailure.require(key.length()>=prefix.length()+("/ingestion_id="+ingestion+"/metadata.json").length() && key.startsWith(prefix) && key.endsWith("/ingestion_id="+ingestion+"/metadata.json"),INVALID_CATALOG);
+        String date=key.substring(prefix.length(),key.length()-("/ingestion_id="+ingestion+"/metadata.json").length());
+        try {ImportFailure.require(date.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}") && java.time.LocalDate.parse(date).toString().equals(date),INVALID_CATALOG);}catch(RuntimeException ex){throw new ImportFailure(INVALID_CATALOG);}
+        ImportFailure.require(payload.equals(key.substring(0,key.length()-"metadata.json".length())+"payload.xml"),INVALID_CATALOG);
+        String address="v1/"+SourceJson.sha(bucket.getBytes(java.nio.charset.StandardCharsets.UTF_8))+"/"+key.substring("bronze/rss/".length(),key.length()-"metadata.json".length())+"complete.json";
+        ImportFailure.require(address.length()<=1024 && ImportJson.text(n.get("relativeAddress")).equals(address),INVALID_CATALOG);
+        return new Entry("SILVER","content-intelligence",ImportJson.token(n.get("storageBindingId")),address,1,1,i,null);
     }
     @Override public String toString(){return "ImportCatalog[redacted]";}
 }
