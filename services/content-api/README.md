@@ -4,8 +4,9 @@ This Java 21 module implements `GET /api/v1/publishers`, `/api/v1/articles`, `/a
 
 E5's current worker entry point is the [active Reliability worker](#c2b-2-active-reliability-worker).
 The passive-worker sections below describe earlier checkpoints. [C3a control admission](#c3a-reconciliation-intent-only)
-records an explicit recovery request; execution-owner recovery/handoff and Content execution remain
-deferred. Analytics-only startup and its publication selection are unchanged.
+records recovery intent. [C3b internal handoff](#c3b-internal-recovery-handoff) is tested without
+enabling an operational recovery invocation; C3c native reconciliation/closure and Content execution
+remain deferred. Analytics-only startup and its publication selection are unchanged.
 
 ## Acceptance and structure
 
@@ -1371,7 +1372,8 @@ recovery intent is durable; reconciliation has not started and the old occupied 
 There is no recovery worker, force-clear command, automated process killer or takeover endpoint.
 CANCEL, RETRY, PAUSE and RESUME are unsupported (400, no durable control). The active Reliability
 worker still refuses any occupied execution/import slot. Do not restart it expecting admission to
-recover a crashed run. C3b must be separately authorized and implemented.
+recover a crashed run. The internal C3b handoff is described below; C3c must be separately authorized
+before an operational recovery lifecycle is enabled.
 
 ### Operator safety checklist
 
@@ -1470,7 +1472,98 @@ mvn -q -f services/content-api/pom.xml -Ppostgres \
 A test-container controller may use `-Dddip.test.control-restart-signal=/private/tmp/ddip-c3a-control-restart`
 to wait for READY, restart that disposable PostgreSQL server and create its `.done` acknowledgment.
 Omit the flag without a controller. It is a test barrier, not an operational API or worker property.
-C3b must implement fresh guard/quiescence qualification, exact stale-control rejection, atomic
-occupied-to-occupied fenced handoff, idempotent commit reconciliation, native read-only result
-qualification and final control/attempt/run disposition. None of these is performed by C3a.
+C3b now supplies the internal fresh qualification and atomic handoff seam described below. C3c
+must integrate validated restart bootstrap, native read-only result qualification and final
+control/attempt/run disposition. None of these is performed by C3a admission.
 E5 remains incomplete; no new run execution/control functionality is inferred from REQUESTED.
+
+## C3b internal recovery handoff
+
+**There is no production recovery invocation or resolver yet.** The normal active Reliability
+worker is unchanged and still refuses an occupied/recovery-only slot. Do not start another worker,
+clear SQL pointers, change epochs or bypass host.guard to recover a run. C3a 202/REQUESTED remains
+intent only. C3b's package-private test seam transfers ownership but does not inspect a native
+publication, apply the control, finish the run or release ownership. C3c requires separate approval.
+
+### Fresh inspection before any future handoff
+
+Use the C3a [operator checklist](#operator-safety-checklist), then independently requalify the exact
+control/old attempt/worker/epoch and frozen profile/evidence. Required facts are cumulative:
+
+1. Acquire and validate the original installation CONTROL root, persistent guard file and
+   installation.id identities without recreating them. Register a separate RECOVERY_ONLY instance.
+   Guard acquisition, PID absence, old heartbeat or STOPPED status alone grants no recovery authority.
+2. Verify the committed REQUESTED RECONCILE control, original true assertion, expected run version
+   and occupied target. Reject stale/changed requests; never retarget K to a new attempt.
+3. Confirm old execution handlers, unmanaged writers and Python/JVM/Py4J orphan concerns have been
+   inspected and resolved. Review every unresolved stage checkpoint, including missing-child and
+   uncertain-launch gaps. Record known descendants with original PID/start identity. Matching live
+   processes or unavailable inspection veto. A PID-only gateway hint without retained original start
+   identity remains unresolved; any live PID is ambiguous in that case, even apparent reuse.
+4. Validate the original captured run/source/input/configuration bytes/digests and approved storage/
+   host/runtime profile membership. Current source edits/disablement must not replace frozen inputs.
+   The current internal seam supports original Reliability JSONL/Parquet deployments only.
+5. Validate exact private command/result sidecars and original module/root identities read-only.
+   C3b checks Java 21, pinned manifest/deployment and fixed module bytes; it launches no Python package
+   probe or native verifier. C3c must validate actual runtime readiness before native consumption.
+6. Bind an explicit fresh review to the exact private metadata snapshot. Its 60-second qualification
+   window is a conservative check-freshness bound, not an ownership lease. Expiry leaves ownership
+   occupied. Recheck guard, processes, runtime and sidecar inventory immediately before transfer.
+
+The current seam retains a private, canonical, at-most-1-MiB qualification packet under
+CONTROL/recovery/{controlId}/{qualificationId}/qualification.json. Mode 0600/private parents apply;
+the packet records IDs/versions/digests, operator review and private operational file inventory.
+It contains no raw native payload. Retain it and original native/private evidence after failure;
+there is no automatic cleanup. Audit stores its approved relative reference/hash. These checks
+cannot prove universal orphan termination or fence hostile/unmanaged filesystem writers.
+
+### What an internal handoff changes
+
+One coordinator-first transaction rechecks the exact original owner/version, run, attempt, control,
+worker/profile/evidence and capacities. It interrupts only active old attempts, marks only unfinished
+INTENT/RUNNING stages UNKNOWN and preserves terminal history. It creates RECONCILE/CLAIMED with
+**attempt UUID equal to control UUID**, increments epoch, and replaces the occupied pointer directly.
+Run becomes RECOVERY_REQUIRED, coordinator stays occupied in RECOVERY_ONLY, and K stays REQUESTED.
+Frozen selections and native artifacts do not change. Audit preserves an original CANCEL_REQUESTED
+context; no cancellation is applied. A handoff is not a recovered publication.
+
+Only confirmed commit yields the internal owner token. Subsequent metadata heartbeats require the
+exact current recovery binding and row versions. Old READY worker heartbeat/launch/process/result/
+completion/release predicates fail. No ordinary worker may claim unrelated work while this slot is
+occupied. No new control state is synthesized to make that possible.
+
+Lost acknowledgment lookup takes the coordinator lock and compares K, successor K, epoch/instance,
+original history and exact audit evidence. It returns CONFIRMED_HANDOFF, CONFIRMED_ROLLBACK or
+UNRESOLVED facts, never a renewed owner token. A used qualification is not retried after rollback;
+fresh qualification of the same K is required. A repeated committed invocation creates nothing.
+Outage/timeout/new owner/inconsistent evidence remains blocked. A crashed successor needs another
+explicit control targeting the newer occupied attempt. The existing control/detail/attempt/event
+GETs inspect committed metadata without native verification or private process/evidence disclosure.
+
+### Test reproduction and next boundary
+
+Only isolated tests may invoke the C3b seam. Their small retained inputs/deployment are fixture setup;
+qualification and handoff launch no native verifier, publisher, RSS fetch or transformation. The
+[implementation evidence](../../docs/architecture/durable-execution.md#c3b-validation-and-c3c-prerequisites)
+records exact commands and **323 Java, 517 PostgreSQL and 20 analytics HTTP/Python cases passed**
+in the C3b regression. The 15 new unit and 64 new PostgreSQL cases are included, not added again.
+Six actual PostgreSQL restarts were observed. Hosted CI remains unverified.
+
+```sh
+export JAVA_HOME=$(/usr/libexec/java_home -v 21)
+export DDIP_TEST_PYTHON="$PWD/outputs/silver-python312/.venv/bin/python"
+# Supply private DDIP_TEST_DB_URL/USER/PASSWORD for disposable PostgreSQL.
+mvn -q -f services/content-api/pom.xml -Ppostgres \
+  -Dtest=RecoveryQuiescenceTest -Dit.test=RecoveryHandoffIT verify
+```
+
+The optional test-only `-Dddip.test.recovery-restart-signal=/private/tmp/ddip-c3b-recovery-restart`
+barrier needs an external controller to restart only that disposable server after READY and write
+its `.done` acknowledgment. Omit the flag without a controller. This is not worker configuration.
+
+C3c must supply the complete operational recovery lifecycle: fresh operator qualification and
+retained-packet bootstrap, confirmed live recovery authority, stage intent/launch fencing, actual
+runtime readiness and full native read-only reconciliation, then verified result/control/attempt/run
+finalization and conditional release. Uncertainty must keep the slot occupied. Cancellation, retry,
+automatic takeover/repair, Content execution and E5 completion remain deferred. No production
+handoff command is documented because none is enabled.

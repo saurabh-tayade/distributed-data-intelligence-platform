@@ -2,7 +2,7 @@
 
 Status: **Accepted — October 20, 2026**, with the Stage A.1 refinements, under [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md). The owner accepted additive [ADR 0011](../adr/0011-artifact-import-maintenance-ownership.md) on October 21. Architecture acceptance alone passes no E5 test group. Current implementation and authorization are recorded below; earlier checkpoint status paragraphs and counts remain historical. Accepted ADRs and native data contracts are unchanged.
 
-Current authorization: B1–B2, C1, C2a, C2b-1 and C2b-2 are owner-committed. The fixed Reliability worker remains active with one pinned profile per startup. The owner has authorized **C3a reconciliation control admission only**; its [implementation boundary](#c3a-reconciliation-control-admission) records REQUESTED intent without changing execution ownership. C3b recovery/handoff, Content execution and CANCEL/RETRY remain deferred. Earlier checkpoint status paragraphs and counts are historical.
+Current authorization: B1–B2, C1, C2a, C2b-1, C2b-2 and C3a are owner-committed. The fixed Reliability worker remains active with one pinned profile per startup. The owner has authorized **C3b internal fenced recovery handoff only**. [C3a admission](#c3a-reconciliation-control-admission) still records REQUESTED intent; the [C3b seam](#c3b-fenced-execution-recovery-handoff) can transfer that occupied slot in isolated tests after fresh qualification. No production recovery invocation/resolver is enabled. C3c native reconciliation/closure, Content execution and CANCEL/RETRY remain deferred. Earlier checkpoint status paragraphs and counts are historical.
 
 ## Boundary and invariants
 
@@ -2115,3 +2115,284 @@ ControlController.java; API wiring in ManagementConfiguration.java/SourceAdvice.
 in services/content-api/pom.xml; ControlCommandsTest.java, ControlAdmissionIT.java,
 ControlTestProcess.java, WorkerTestSupport.java and the obsolete-route assertion in RunSubmissionIT.java;
 this contract and services/content-api/README.md. No new dependency, table, migration or native contract.
+
+## C3b fenced execution recovery handoff
+
+**Implemented:** internal fresh quiescence qualification, atomic occupied-to-occupied execution
+handoff, acknowledgment lookup and fenced recovery-only heartbeat. Baseline is clean owner commit
+`cac10709353bed7b2a970c951870adba5d91ae16` on the prepared E5 branch. This implements the accepted
+transactional handoff above, without changing ADR 0010/0011, V1–V7 or native contracts.
+**No production recovery resolver or invocation is active.** A successful internal handoff is not
+native publication recovery. No C3b method verifies an output, records a final run outcome, applies
+a control or releases the slot.
+
+### Internal authority and qualification
+
+RecoveryHandoff, RecoveryQuiescence, RecoveryFiles and RecoveryFailure are package-private and are
+not Spring components, runtime roles, HTTP routes, CLI commands or dispatcher options. There is no
+operator property enabling handoff. Tests call the fixed seam directly in disposable databases.
+Production WorkerIdleLifecycle and WorkerRepository dispatch behavior remain unchanged. Ordinary
+workers still refuse occupied/RECOVERY_ONLY ownership; no new automatic takeover/retry exists.
+
+The caller acquires the existing InstallationHostGuard with its approved CONTROL binding. Existing
+private POSIX ownership/permissions, root/device/inode, guard-file/link and installation.id byte
+checks apply. Never unlink, recreate or bypass the guard. WorkerRepository.register creates a
+separate immutable process-instance identity under that guard and records RECOVERY_ONLY because
+the original slot remains occupied. Registration changes no coordinator pointer, epoch or run.
+There must be two distinct instance identities; a matching live original JVM vetoes qualification,
+even if someone asserts that its old execution handlers stopped.
+
+The internal sequence is inspect -> explicit Review -> qualify -> transfer. inspect locks the
+coordinator, then original run/attempt/control and dependent evidence; it captures an exact target
+SHA over the private metadata projection, including versions/process identities and frozen byte
+digests. Review must bind that SHA, an inspection UTC instant, explicit assertions that old handlers and unmanaged writers stopped and orphan concerns were reviewed, the exact set of unresolved checkpoint UUIDs, and up to 32 reviewed
+descendant PID/start identities. INTENT/RUNNING/UNKNOWN checkpoints all require explicit review;
+a missing child PID is an uncertain launch gap, not evidence that no child started. Review is an
+operator assertion, not automated universal orphan proof. There is no default-true production review.
+
+Qualification requires:
+
+- Exact REQUESTED/RECONCILE C3a control, original target and expected run version, local-operator
+  assertion and canonical normalized request bytes/hash. Run/current attempt must match the occupied
+  A/W/E binding. Modes READY/RECOVERY_ONLY are eligible; STOPPING/import ownership are not.
+- Matching installation, immutable CONTROL binding and registered RECOVERY_ONLY process identity.
+  Original and recovery profiles/digests must match the exact captured run profile/deployment.
+  Reuse FrozenRunSelection validation against immutable source revisions, run inputs, registered
+  qualification descriptors and storage/profile associations. Current source enablement is not a
+  recovery re-selection gate. Captured configurations/inputs remain unchanged.
+- The fixed existing ReliabilityRuntime loader/checker must accept the reviewed execution-only
+  descriptor, Java 21, original deployment revision/module digests and approved disjoint root
+  identities. Both frozen JSONL-v2 and Parquet-v1 profiles are supported. C3b supports the current
+  Reliability verifier deployment only; Content/alternate-runtime compatibility is not invented.
+  These checks read metadata/modules/roots. C3b deliberately does not call runtime.readiness or
+  launch Python to probe installed packages. Fresh actual interpreter/package qualification and
+  native consumption are C3c launch responsibilities; manifest version claims alone are not that proof.
+- Every recorded old worker/child PID and microsecond start identity, plus explicitly reported
+  descendants, is observed again. Matching live or unavailable/denied inspection vetoes. Reused
+  recorded PIDs are distinguished by start identity, but are never affirmative proof of quiescence.
+  Private gateway PID-only hints require an additional reviewed original start identity; any live
+  PID remains ambiguous when native start evidence is absent, including apparent reuse. Missing
+  original descendant identity fails closed. Neither historical cleanup assertions nor missing PIDs
+  replace the manual orphan/unmanaged-writer inspection.
+- Read only exact private operational sidecars for persisted stages under the held CONTROL root.
+  Validate fixed command run/attempt/checkpoint/stage/epoch/config/runtime binding, recorded hashes,
+  approved relative addresses and symlink/private-file policy. Capture explicit command/selection/
+  retained/result/evidence/verified sidecar presence, length, SHA-256, device/inode and mtime, including
+  incomplete private bytes where allowed. No native-root scan, artifact inventory rehash, Bronze GET
+  or publication outcome interpretation occurs. A PID hint is inspected only as process metadata.
+
+A canonical E5_EXECUTION_QUIESCENCE_V1 packet (at most 1 MiB) is retained with mode 0600 under private
+CONTROL/recovery/{controlId}/{qualificationId}/qualification.json, with private parent directories.
+It records the unique qualification ID, exact original metadata projection, control/old owner/epoch/
+versions, recovery instance, host/profile/runtime/selection digests, explicit review and private
+sidecar inventory. Raw source data/full native manifests are not copied into this packet or audit.
+Canonical byte columns in the projection are represented by length/SHA-256, not their payloads.
+Audit retains only fixed fields, opaque IDs/versions and this approved relative packet reference/hash.
+Private qualification files are retained on failure as well; there is no automatic deletion/repair.
+
+A fixed **60-second qualification freshness window** bounds the review and qualified receipt.
+It is a conservative internal admission policy, not a lease or heartbeat death threshold. Expiry
+requires fresh qualification and never frees ownership. Immediately before transfer, revalidate the
+held guard, fresh review/process observations, runtime, packet digest and all captured private file
+evidence. SQL never spans filesystem/process observation. An ambient caller transaction is rejected.
+The final short SQL transaction compares the original snapshot and freshness again; changed evidence
+rejects instead of adopting newer versions. Local filesystem checks remain cooperative, not hard
+I/O deadlines, hostile-administrator protection or universal process containment.
+
+### Atomic transfer and fences
+
+One transaction takes the existing coordinator lock first, then R, A, K, worker instances in UUID
+order and original stage rows in stage/item order. Targets are immutable; reading K's IDs after the
+coordinator lock only resolves which R/A to lock. All SQL is parameterized and projections are
+explicit. Bounds remain 20 attempts/run, 128 controls/run, 512 total stage invocations/run and the
+existing million-event audit ceiling/reserved lifecycle capacity. No new table/index/migration.
+
+For a new transfer, compare exact installation/A/W/E/coordinator version, current run/expected K
+version, control type/state/assertion, worker/profile/host binding, frozen selection and original
+process/stage/history evidence. The successor UUID must be unused and equals K.control_id; next
+attempt_no is allocated under these locks. The transaction then:
+
+1. Conditionally closes CLAIMED/RUNNING A as INTERRUPTED, recording clock_timestamp when interruption
+   is established, outcome INTERRUPTED and row version +1. An already INTERRUPTED predecessor, or
+   eligible failed RECONCILE under RECOVERY_REQUIRED, retains its exact terminal outcome/version.
+   Other terminal combinations fail closed.
+2. Changes only A's INTENT/RUNNING stages to UNKNOWN/RECOVERY_HANDOFF with version +1. VERIFIED,
+   FAILED and already UNKNOWN histories, IDs, private bytes and native fingerprints are preserved.
+3. Inserts K.control_id as one RECONCILE/CLAIMED attempt, instance N, epoch E+1, version 0 and next
+   attempt number. Closing an active A first satisfies the existing single-active-attempt index.
+4. Conditionally replaces coordinator A/W/E/version with K/N/E+1/version+1 and RECOVERY_ONLY. The
+   pointer is never set null, even within the transaction. The deferred composite FK validates the
+   new attempt/instance/epoch at commit.
+5. Conditionally sets R to RECOVERY_REQUIRED/current_attempt=K/version+1, fixed recovery outcome and
+   retry-ineligible. Frozen sources/inputs/submission identity and original current-stage context
+   remain. A prior CANCEL_REQUESTED state is retained in the handoff audit; pending controls are
+   untouched. There is no automatic retry, resume or next-stage permission.
+6. Appends exact ATTEMPT_INTERRUPTED where applicable, STAGE_UNKNOWN for changed stages,
+   ATTEMPT_CLAIMED and RECOVERY_HANDOFF records linked to R/A-or-K/K. The audit references the retained
+   qualification packet. K remains REQUESTED with its original expected version and row version.
+
+All related writes roll back on any zero-row conditional update, constraint or audit failure. There
+is no committed idle interval. Confirmed commit returns a recovery Owner token bound to N/K/E+1 and
+run/attempt/control/worker/coordinator versions. No native result or success is implied. The only
+new owner mutation is a short recovery-only heartbeat that rechecks all those bindings plus the
+immutable handoff audit anchor, updates worker/coordinator heartbeat versions and returns the exact
+new token. There is no heartbeat scheduler here, and no control/stage/run transition or slot release.
+Stale tokens are rejected without refreshing or adopting another owner. Existing READY-only worker
+mutations cannot operate on this RECOVERY_ONLY binding.
+
+This fixed helper deliberately consumes existing worker/guard/coordinator records instead of
+loosening WorkerRepository's READY checks or generalizing the import/execution owners into another
+locking framework. No production dispatcher or native supervisor refactor is needed.
+
+### Rollback, acknowledgment and interruption
+
+Each qualification can enter the transfer transaction at most once. A definitive rollback leaves
+all original SQL records unchanged. After a failed/unknown call, never blindly call another transfer
+with a refreshed token. resolve reads K and attempt ID K.control_id under the coordinator lock:
+
+- CONFIRMED_HANDOFF requires the exact successor/run/instance/epoch/versions, preserved original
+  attempt/stage/history, REQUESTED K and exact ordered interruption/stage/claim/handoff audit evidence.
+- CONFIRMED_ROLLBACK requires no successor plus the unchanged original full metadata snapshot and
+  REQUESTED control. Its receipt identifies the original A/W/E. Only fresh qualify of the same K
+  can permit another attempt at that transaction.
+- UNRESOLVED covers timeout/outage, changed/new owner, inconsistent records/audit or inconclusive
+  evidence. Its receipt contains no claimed owner binding. Nothing is cleared or rejected as a
+  purported safe resolution.
+
+Receipts are historical facts and never contain an executable owner/session. A repeated successful
+transfer returns only CONFIRMED_HANDOFF and no Owner; no duplicate attempt/epoch/audit is created.
+Only the initial confirmed commit returns a token. Lost commit acknowledgment therefore produces
+no token; resolve may establish committed facts after PostgreSQL returns, but does not silently
+renew execution authority. A heartbeat/version change makes that old exact lookup inconclusive,
+not permission to adopt new versions. The canonical private packet and audit retain recovery
+context across process interruption; C3c must implement validated packet bootstrap and explicit live
+owner authorization before any read-only child. This checkpoint's resolve accepts the internal
+Qualified handle; it is not a restart/takeover CLI. A crashed successor still occupies the slot;
+recovering that newer owner requires a new explicit C3a control targeting it and fresh qualification.
+
+Control GET/latestControl/events expose REQUESTED, RECOVERY_REQUIRED and actual persisted attempts/
+stage history without private packet, process identity, paths or attestation fields. Historical
+successful stage evidence is not current artifact readability. A failed handoff says nothing about
+whether native publication completed. No handoff outcome activates ANALYTICS_PUBLICATION.
+
+### C3b validation and C3c prerequisites
+
+**Tested locally in C3b:** **323 Java unit/component tests, 517 PostgreSQL integration cases and
+20 actual analytics HTTP/Python compatibility cases passed**, with zero failures/errors/skips in
+the final integrated runs. The 15 new unit cases and 64 new PostgreSQL cases are subsets of those
+totals; repeated focused runs are not added. The historical C3a totals were not used as rerun evidence.
+
+**Gate A:** all 15 RecoveryQuiescenceTest cases and 22 tagged RecoveryHandoffIT cases passed.
+They cover exact review/target/checkpoint binding, freshness (including future/stale times), missing
+handler/unmanaged/orphan confirmation, actual live/exited/reused JVM identities, live recorded worker,
+JVM and controlled Python children, denied/unavailable inspection, changed process/installation/
+private-file evidence, missing/changed deployment modules, approved Parquet profile, guard competition
+with a separate JVM/importer, PID-only descendant ambiguity and no production activation surface.
+The controlled processes are test fixtures, not native verification or process-killing functionality.
+A recorded JVM exit is only observed local evidence, not universal descendant proof.
+
+**Gate B:** all 42 other RecoveryHandoffIT cases passed with actual PostgreSQL transactions/constraints.
+CLAIMED/RUNNING, already INTERRUPTED and failed RECONCILE predecessors produce successor UUID=control
+UUID, next attempt number, E+1 and exact version changes. Unfinished stages become UNKNOWN; terminal
+history, controls and frozen input/source bytes remain unchanged. Native input/output byte/hash/size/
+mtime snapshots remain identical for both format profiles. Existing history APIs report actual new
+attempt/audit state with null publication result, without private packet/process data. Current source
+disablement does not substitute frozen selection.
+
+Deterministic faults roll back after old-attempt closure, stage changes, successor insertion,
+coordinator replacement, run update and first/partial audit insertion. A real audit constraint failure
+also rolls back all state. A connection proxy throws only after the real PostgreSQL commit to simulate
+lost acknowledgment: locked lookup confirms exactly one successor/audit/epoch with no duplicate writer
+or token renewal. Same-control competing transactions have one winner; different qualification receipts
+cannot adopt the winner. Stale run/control/coordinator/attempt/worker/process versions reject. Active
+import replacement and STOPPING are never cleared. Attempt/control/stage history exhaustion is checked
+against real small SQL fixtures. Audit-reserve exhaustion uses an explicitly injected count response
+with real transaction/unchanged-record assertions plus the existing pure budget vectors; no million-
+event workload is materialized.
+
+A transaction barrier after the uncommitted coordinator replacement lets another connection observe
+the still-occupied old binding, then the occupied new one after commit. A test-only trigger also vetoes
+any intermediate null pointer. Deferred FK and active-attempt unique-index violations are asserted
+against PostgreSQL. Stale A/W/E/version heartbeat/release and old stage authorization/process/verification/
+run-completion predicates update zero rows; the actual old-owner stage callback/publication-persistence
+entry is rejected before side effects. The normal packaged Reliability capability cannot claim through
+the recovery binding. Fenced recovery heartbeats increment only worker/coordinator versions, generate
+no audit stream and reject the stale token. Outages and changed records keep lookup UNRESOLVED.
+
+The full regression reran B1, source management, import ownership/workflow, submission/history, C3a,
+C1/C2 lifecycle/execution suites and all **23 Spark-backed Silver import cases**, with pinned Java 21
+and matching Python 3.12 driver/worker paths. The PostgreSQL total includes 52 C3a, 56 C1 coordination,
+41 preflight, 27 Reliability execution and 20 production-worker cases. Six actual dedicated-container
+restarts were observed at worker, history, C3a control, Reliability-result, production-result and C3b
+handoff barriers. The C3b case preserves the exact transferred coordinator/epoch, original and successor
+attempts, REQUESTED control, audit and frozen evidence across restart, and confirms the same receipt.
+Existing native publication occurs only in those existing bounded regression fixtures; no C3b operation
+publishes or independently verifies native output. Standalone native Python suites were not rerun.
+
+Exact underlying commands (private DDIP_TEST_DB_* supplied by the disposable-container harness):
+
+~~~sh
+export JAVA_HOME=$(/usr/libexec/java_home -v 21)
+export DDIP_TEST_PYTHON="$PWD/outputs/silver-python312/.venv/bin/python"
+export PYSPARK_PYTHON="$DDIP_TEST_PYTHON"
+export PYSPARK_DRIVER_PYTHON="$DDIP_TEST_PYTHON"
+export SPARK_LOCAL_IP=127.0.0.1
+
+# Final focused gates: 15 Java + 64 PostgreSQL cases passed.
+mvn -q -f services/content-api/pom.xml -Ppostgres \
+  -Dtest=RecoveryQuiescenceTest -Dit.test=RecoveryHandoffIT verify
+
+# Full regression: 323 Java + 517 PostgreSQL cases passed.
+# External controller restarts only the disposable server at READY and writes each .done file.
+mvn -q -f services/content-api/pom.xml -Ppostgres \
+  -Dddip.test.worker-restart-signal=/private/tmp/ddip-c3b-worker-restart \
+  -Dddip.test.history-restart-signal=/private/tmp/ddip-c3b-history-restart \
+  -Dddip.test.reliability-restart-signal=/private/tmp/ddip-c3b-reliability-restart \
+  -Dddip.test.production-restart-signal=/private/tmp/ddip-c3b-production-restart \
+  -Dddip.test.control-restart-signal=/private/tmp/ddip-c3b-control-restart \
+  -Dddip.test.recovery-restart-signal=/private/tmp/ddip-c3b-recovery-restart verify
+
+# Twenty actual HTTP/Python compatibility cases passed; Java cases are not repeated here.
+mvn -q -f services/content-api/pom.xml -Pintegration \
+  -Dtest=NoTests -Dsurefire.failIfNoSpecifiedTests=false \
+  -Danalytics.python="$DDIP_TEST_PYTHON" verify
+npm run check
+git diff --check
+git diff --cached --check
+~~~
+
+Restart properties are test barriers, never runtime recovery flags. Omit them without a controller.
+Initial focused iterations exposed the need for a distinct immutable qualification ID and conservative
+PID-only descendant treatment; both were corrected and the final focused/full runs pass. Markdown/
+local links (44 files) and hygiene passed. The production JAR excludes all recovery test classes and
+test capability/process helpers. No CI configuration change; hosted CI remains unverified. The test
+container is returned to its initial stopped state with its volume retained. The owner branch/index
+are preserved; no Git/GitHub mutation was performed.
+
+Changed files: RecoveryFailure.java, RecoveryQuiescence.java, RecoveryFiles.java and
+RecoveryHandoff.java in the existing execution package; RecoveryQuiescenceTest.java and
+RecoveryHandoffIT.java; the PostgreSQL test include in services/content-api/pom.xml; this contract
+and services/content-api/README.md. No migration/dependency/native-module/accepted-ADR change.
+
+**Known limitations:** metadata fencing does not stop external writers; local cooperative guard and
+trusted manual orphan/unmanaged-writer inspection remain necessary. Some existing gateway evidence
+retains PID without original start instant: if that identity cannot be established, or any such PID
+is live/ambiguous, C3b deliberately refuses transfer. It never invents missing process evidence or
+repairs it. Missing/corrupt/changed required private command/runtime evidence also remains blocked,
+even if native output might independently exist. There is no universal process containment, hard
+filesystem I/O deadline, distributed failover or database/filesystem atomicity/power-loss guarantee.
+Qualified-handle lookup tests prove in-process ambiguous-commit resolution and actual database restart;
+validated packet bootstrap after recovery-JVM restart and operational closure remain C3c work.
+
+**Planned, not implemented:** C3c must integrate an explicit operator workflow for fresh qualification,
+validated retained-packet bootstrap/commit reconciliation, live RECOVERY_ONLY owner authorization
+and coordinated heartbeats, stage INTENT/single-use launch fencing, actual runtime readiness, bounded
+independent native read-only verification of exact frozen dependencies/output, safe result matrix,
+atomic final control/attempt/run/artifact disposition and conditional slot release. A valid completed
+result may win an interruption race; incomplete/unavailable/changed evidence must retain the accepted
+classifications. A changed/dead recovery owner needs a new control and guarded handoff, never token
+adoption. C3b internal tests do not authorize this production workflow.
+
+**Deferred:** native reconciliation or final SUCCEEDED/FAILED/CANCELLED/APPLIED processing, owner
+release, new CANCEL/RETRY behavior, automatic takeover/retry, process killing, native repair/cleanup/
+republishing, Content/RSS, UI, AWS and full E5 completion. Stop after C3b.
