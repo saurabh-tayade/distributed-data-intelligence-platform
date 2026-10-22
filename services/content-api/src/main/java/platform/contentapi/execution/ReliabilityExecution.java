@@ -10,7 +10,7 @@ import tools.jackson.databind.JsonNode;
 import static platform.contentapi.execution.PreflightFailure.Code.*;
 import static platform.contentapi.execution.PreflightFailure.need;
 
-/** Fixed C2b-1 adapter. No bean, dispatcher, activation flag or production execution capability. */
+/** Fixed Reliability adapter. Publication activation and recovery remain separate operations. */
 public final class ReliabilityExecution {
     public record Completed(UUID artifactId,WorkerRepository.Session worker) { }
     private final JdbcTemplate jdbc;private final ManagementTransactions tx;private final WorkerRepository workers;
@@ -77,9 +77,12 @@ public final class ReliabilityExecution {
             return new Finished(current.stage,evidence,hash);
         }catch(PreflightFailure ex) {
             if(name.equals("PUBLISH_RELIABILITY") && ex.code()==PROCESS_START_FAILED && ex.quiescent()) {
+                boolean interrupted=Thread.interrupted();
+                try {
                 var fail=SourceJson.canonical(SourceJson.object().put("code","PROCESS_START_FAILED"));files.write("verified.json",fail,PreflightFiles.SMALL);
                 var released=workers.failReliability(guard,current.stage.owner(),current.stage,"PROCESS_START_FAILED",SourceJson.sha(fail));
                 throw new DefinitiveFailure("PROCESS_START_FAILED",released);
+                }finally{if(interrupted)Thread.currentThread().interrupt();}
             } else workers.blockReliability(guard,current.stage);
             throw ex;
         }

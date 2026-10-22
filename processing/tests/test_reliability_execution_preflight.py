@@ -229,6 +229,29 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(r['evidenceId'],self.f['command']['checkpointId'])
         self.assertNotIn('reliability_format_processing', sys.modules)
 
+    def test_startup_probe_checks_actual_runtime_without_run_or_native_writes(self):
+        stage=self.base/'startup';stage.mkdir(mode=0o700)
+        runtime=self.f['command']['runtime'];raw=canonical_bytes(runtime)
+        descriptor=stage/'runtime.json';descriptor.write_bytes(raw);descriptor.chmod(0o600)
+        roots=self.f['bundle']['bindings']
+        def snapshot():
+            return {str(p):(p.stat().st_mtime_ns,sha256(p.read_bytes()).hexdigest())
+                    for role in ('batch','reference','output') for p in Path(roots[role]['root']).rglob('*') if p.is_file()}
+        before=snapshot()
+        result=subprocess.run([sys.executable,'-I','-B',str(Path(runtime['configuration']['processingRoot'])/'reliability_execution_preflight.py'),'--runtime-check',str(descriptor)],
+                              env=dict(PATH='/usr/bin:/bin',TZ='UTC',LANG='C.UTF-8'),stdin=subprocess.DEVNULL,capture_output=True,timeout=15)
+        self.assertEqual((result.returncode,result.stdout,result.stderr),(0,b'',b''))
+        self.assertEqual(json.loads((stage/'result.json').read_bytes()),dict(protocolVersion=1,runtimeSha256=sha256(raw).hexdigest(),status='READY'))
+        self.assertEqual(snapshot(),before)
+
+    def test_startup_probe_rejects_changed_deployment_without_result(self):
+        stage=self.base/'startup';stage.mkdir(mode=0o700);runtime=self.f['command']['runtime']
+        descriptor=stage/'runtime.json';descriptor.write_bytes(canonical_bytes(runtime));descriptor.chmod(0o600)
+        (Path(runtime['configuration']['processingRoot'])/'service_reference.py').write_text('changed')
+        result=subprocess.run([sys.executable,'-I','-B',str(Path(runtime['configuration']['processingRoot'])/'reliability_execution_preflight.py'),'--runtime-check',str(descriptor)],
+                              env=dict(PATH='/usr/bin:/bin',TZ='UTC',LANG='C.UTF-8'),stdin=subprocess.DEVNULL,capture_output=True,timeout=15)
+        self.assertEqual(result.returncode,1);self.assertEqual((result.stdout,result.stderr),(b'',b''));self.assertFalse((stage/'result.json').exists())
+
     def test_strict_command_and_canonical_protocol(self):
         for raw in (b'{"x":1,"x":2}',b'{"x":1.0}',b'{} {}',b'\xef\xbb\xbf{}'):
             with self.assertRaises(self.p.Failure):

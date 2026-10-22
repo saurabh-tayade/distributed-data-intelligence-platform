@@ -98,4 +98,27 @@ class ReliabilityPreflightIT extends ReliabilityExecutionFixtures {
         };
         assertThatThrownBy(()->service(process).verify(guard,owner,RUNTIME,checkpoint)).hasMessage("TERMINATION_UNCONFIRMED");assertThat(stage().get("state")).isEqualTo("UNKNOWN");assertThat(state()).isEqualTo("RECOVERY_REQUIRED");occupied();
     }
+    @Test void productionClosureRollsBackStageAttemptRunAndReleaseIfAuditFails()throws Exception {
+        Files.writeString(nativeRaw(),"corrupt");jdbc.execute("ALTER TABLE ddip_management.audit_events ADD CONSTRAINT reject_failure CHECK(action<>'RUN_FAILED')");
+        assertThatThrownBy(()->service().verifyForExecution(guard,owner,RUNTIME,checkpoint)).hasMessage("STATE_CONFLICT");assertThat(stage().get("state")).isEqualTo("RUNNING");assertThat(jdbc.queryForObject("SELECT state FROM ddip_management.attempts",String.class)).isEqualTo("RUNNING");occupied();
+    }
+    @Test void confirmedFailureReturnsCurrentHeartbeatToken() {
+        var process=new ReadOnlyVerifierProcess(){Result run(List<String> c,Map<String,String> e,Path d,Duration t,Observer observer){return super.run(VerifierProcessTest.command("native-failed",c.getLast()),e,d,t,new Observer(){public void beforeStart(){observer.beforeStart();}public void started(InstallationHostGuard.ProcessIdentity p){observer.started(p);observer.heartbeat();observer.heartbeat();}public void heartbeat(){observer.heartbeat();}});}};
+        var failure=catchThrowable(()->service(process).verifyForExecution(guard,owner,RUNTIME,checkpoint));assertThat(failure).isInstanceOf(ReliabilityPreflight.DefinitiveFailure.class);var released=((ReliabilityPreflight.DefinitiveFailure)failure).worker();assertThat(released.workerVersion()).isEqualTo(2);assertThat(workers.heartbeatIdle(guard,released).workerVersion()).isEqualTo(3);assertThat(state()).isEqualTo("FAILED");assertThat(jdbc.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isNull();
+    }
+    @Test void preIntentRuntimeFailureCanCloseOnlyOriginalClaim()throws Exception {
+        Files.writeString(work.resolve("deployment/service_reference.py"),"changed");assertThatThrownBy(()->service().verifyForExecution(guard,owner,RUNTIME,checkpoint)).isInstanceOf(ReliabilityPreflight.DefinitiveFailure.class).hasMessage("RUNTIME_MISMATCH");assertThat(state()).isEqualTo("FAILED");assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.stage_invocations",Long.class)).isZero();assertThat(jdbc.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isNull();
+    }
+    @Test void failedClosureAcknowledgmentNeverReturnsReleasedAuthority()throws Exception {
+        Files.writeString(nativeRaw(),"corrupt");
+        // Inject at the exact failure audit; completion may commit, but the old repository is fenced.
+        var data=new org.springframework.jdbc.datasource.AbstractDataSource(){public Connection getConnection()throws SQLException{var real=jdbc.getDataSource().getConnection();var match=new AtomicBoolean();return(Connection)Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{Connection.class},(p,m,a)->{try{if(m.getName().equals("prepareStatement") && a[0] instanceof String sql && sql.contains("UPDATE ddip_management.runs SET state='FAILED'"))match.set(true);var result=m.invoke(real,a);if(m.getName().equals("commit") && match.get())throw new SQLException("PRIVATE","08006");return result;}catch(InvocationTargetException ex){throw ex.getCause();}});}public Connection getConnection(String u,String p)throws SQLException{return getConnection();}};
+        var fault=new JdbcTemplate(data);var repository=WorkerTestSupport.enabled(fault,transactions(fault),INSTALL);assertThatThrownBy(()->new ReliabilityPreflight(fault,transactions(fault),repository).verifyForExecution(guard,owner,RUNTIME,checkpoint)).hasMessage("MANAGEMENT_UNAVAILABLE");assertThat(state()).isEqualTo("FAILED");assertThat(stage().get("state")).isEqualTo("FAILED");assertThatThrownBy(()->repository.heartbeatIdle(guard,owner.worker())).hasMessage("OWNERSHIP_LOST");
+    }
+
+    @Test void confirmedShutdownBeforeLaunchClosesWithoutInventingAChild() {
+        Throwable failure;try{failure=catchThrowable(()->service(new ReadOnlyVerifierProcess(false,()->true)).verifyForExecution(guard,owner,RUNTIME,checkpoint));}finally{Thread.interrupted();}
+        assertThat(failure).isInstanceOf(ReliabilityPreflight.DefinitiveFailure.class).hasMessage("PROCESS_START_FAILED");assertThat(stage().get("state")).isEqualTo("FAILED");assertThat(stage().get("child_pid")).isNull();assertThat(state()).isEqualTo("FAILED");assertThat(jdbc.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isNull();assertThat(workers.heartbeatIdle(guard,((ReliabilityPreflight.DefinitiveFailure)failure).worker()).status()).isEqualTo("READY");
+    }
+
 }

@@ -46,6 +46,16 @@ class VerifierProcessTest {
         var observer=new Observer();assertThatThrownBy(()->denied.run(command("hang","unused"),Map.of(),temp,Duration.ofSeconds(5),observer)).hasMessage("TERMINATION_UNCONFIRMED");
         assertThat(ProcessHandle.of(observer.child.pid()).map(ProcessHandle::isAlive).orElse(false)).isFalse();
     }
+    @Test void persistentStopSignalPreventsLaunchEvenWithClearedInterrupt(){
+        var stopping=new java.util.concurrent.atomic.AtomicBoolean(true);var observer=new Observer();Thread.interrupted();
+        assertThatThrownBy(()->new ReadOnlyVerifierProcess(false,stopping::get).run(command("marker",temp.resolve("marker").toString()),Map.of(),temp,Duration.ofSeconds(5),observer)).hasMessage("PROCESS_START_FAILED");
+        assertThat(observer.authorizations).isZero();assertThat(Files.exists(temp.resolve("marker"))).isFalse();Thread.interrupted();
+    }
+    @Test void stopBetweenAuthorizationAndLaunchPreventsChild(){
+        var stopping=new java.util.concurrent.atomic.AtomicBoolean();var observer=new Observer(){public void beforeStart(){super.beforeStart();stopping.set(true);}};
+        assertThatThrownBy(()->new ReadOnlyVerifierProcess(false,stopping::get).run(command("marker",temp.resolve("marker").toString()),Map.of(),temp,Duration.ofSeconds(5),observer)).hasMessage("PROCESS_START_FAILED");
+        assertThat(observer.child).isNull();assertThat(Files.exists(temp.resolve("marker"))).isFalse();Thread.interrupted();
+    }
     public static final class Child {
         public static void main(String[] args)throws Exception {
             switch(args[0]) {

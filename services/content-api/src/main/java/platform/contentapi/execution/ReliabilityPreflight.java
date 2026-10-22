@@ -10,15 +10,28 @@ import tools.jackson.databind.JsonNode;
 import static platform.contentapi.execution.PreflightFailure.Code.*;
 import static platform.contentapi.execution.PreflightFailure.need;
 
-/** Internal C2a operation only: no bean, runner, HTTP route, publisher or production capability. */
+/** Fixed read-only preflight; production closure returns only a transaction-confirmed session. */
 public final class ReliabilityPreflight {
     public record Verified(WorkerRepository.CheckInputs stage,String evidenceSha256,String nativeDependencyFingerprint) { }
     private final JdbcTemplate jdbc;private final ManagementTransactions tx;private final WorkerRepository workers;private final ReadOnlyVerifierProcess process;
     public ReliabilityPreflight(JdbcTemplate jdbc,ManagementTransactions tx,WorkerRepository workers){this(jdbc,tx,workers,new ReadOnlyVerifierProcess());}
     ReliabilityPreflight(JdbcTemplate jdbc,ManagementTransactions tx,WorkerRepository workers,ReadOnlyVerifierProcess process){this.jdbc=jdbc;this.tx=tx;this.workers=workers;this.process=process;}
     public Verified verify(InstallationHostGuard guard,WorkerRepository.Owner owner,String runtimeId,UUID checkpoint) {
+        return verify(guard,owner,runtimeId,checkpoint,false);
+    }
+    public Verified verifyForExecution(InstallationHostGuard guard,WorkerRepository.Owner owner,String runtimeId,UUID checkpoint) {
+        return verify(guard,owner,runtimeId,checkpoint,true);
+    }
+    public static final class DefinitiveFailure extends RuntimeException {
+        private final WorkerRepository.Session worker;
+        private DefinitiveFailure(String code,WorkerRepository.Session worker){super(code,null,false,false);this.worker=worker;}
+        public WorkerRepository.Session worker(){return worker;}
+    }
+    private Verified verify(InstallationHostGuard guard,WorkerRepository.Owner owner,String runtimeId,UUID checkpoint,boolean closeFailure) {
         need(checkpoint!=null,RUNTIME_MISMATCH);
         if(!workers.executionAvailable())throw new WorkerFailure(WorkerFailure.Code.WORKER_NOT_READY);
+        var state=new Current(null);
+        try {
         JsonNode frozen=workers.frozenReliability(guard,owner);
         ReliabilityRuntime runtime=ReliabilityRuntime.load(jdbc,tx,guard,owner,runtimeId,frozen);runtime.admission();
         var files=new PreflightFiles(guard,owner.runId(),owner.attemptId(),checkpoint);
@@ -26,7 +39,7 @@ public final class ReliabilityPreflight {
         String selectionSha=SourceJson.sha(SourceJson.canonical(frozen));
         var command=SourceJson.object().put("protocolVersion",1).put("runId",owner.runId().toString()).put("attemptId",owner.attemptId().toString()).put("ownerEpoch",Long.toString(owner.worker().epoch())).put("stage","CHECK_INPUTS").put("itemOrdinal",0).put("capturedConfigSha256",selectionSha).put("checkpointId",checkpoint.toString()).put("selection","selection.json").put("bundleSha256",SourceJson.sha(selected));command.set("runtime",runtime.json());
         byte[] request=SourceJson.canonical(command);files.write("selection.json",selected,PreflightFiles.LARGE);files.write("command.json",request,PreflightFiles.SMALL);
-        var state=new Current(workers.beginCheckInputs(guard,owner,checkpoint,SourceJson.sha(request),selectionSha));
+        state.stage=workers.beginCheckInputs(guard,owner,checkpoint,SourceJson.sha(request),selectionSha);
         var once=new AtomicBoolean();
         try {
             var result=process.run(runtime.command(files.directory.resolve("command.json")),runtime.environment(),runtime.scratch(),Duration.ofSeconds(runtime.seconds()),new ReadOnlyVerifierProcess.Observer(){
@@ -48,10 +61,25 @@ public final class ReliabilityPreflight {
             return new Verified(state.stage,SourceJson.sha(evidence),qualified.get("nativeDependencyFingerprint").stringValue());
         }catch(PreflightFailure ex) {
             if(ex.quiescent() && ex.code()!=RESULT_INVALID && ex.code()!=INTERRUPTED) {
+                // Supervisor restored interruption after proving no child launch. Permit bounded journal/SQL
+                // closure, then restore the signal; the persistent lifecycle stop gate still forbids launches.
+                boolean interrupted=Thread.interrupted();
+                try {
                 var failure=SourceJson.object().put("protocolVersion",1).put("checkpointId",checkpoint.toString()).put("commandSha256",SourceJson.sha(request)).put("code",publicCode(ex.code()));
                 byte[] anchor=SourceJson.canonical(failure);files.write("verified.json",anchor,PreflightFiles.SMALL);
+                if(closeFailure)throw new DefinitiveFailure(publicCode(ex.code()),workers.failCheckInputs(guard,state.stage.owner(),state.stage,publicCode(ex.code()),SourceJson.sha(anchor)));
                 workers.finishCheckInputs(guard,state.stage,false,publicCode(ex.code()),SourceJson.sha(anchor),SourceJson.canonical(SourceJson.object()));
+                }finally{if(interrupted)Thread.currentThread().interrupt();}
             } else workers.blockCheckInputs(guard,state.stage);
+            throw ex;
+        }
+        }catch(PreflightFailure ex) {
+            // Before INTENT no child could have been authorized. Never apply this to unknown exceptions.
+            if(closeFailure && state.stage==null && ex.quiescent() && ex.code()!=INTERRUPTED && ex.code()!=RESULT_INVALID) {
+                boolean interrupted=Thread.interrupted();
+                try{throw new DefinitiveFailure(publicCode(ex.code()),workers.failCheckInputs(guard,owner,null,publicCode(ex.code()),null));}
+                finally{if(interrupted)Thread.currentThread().interrupt();}
+            }
             throw ex;
         }
         // Database/ownership failures deliberately escape: never release or refresh/adopt a token.

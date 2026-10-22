@@ -278,6 +278,15 @@ def main(argv=None):
     c = None
     try:
         args = sys.argv[1:] if argv is None else argv
+        if len(args) == 2 and args[0] == '--runtime-check':
+            # Fixed startup probe: no native inputs, Spark session, run or publication namespace.
+            descriptor = Path(args[1])
+            raw = read(descriptor, COMMAND_LIMIT, private=True)
+            runtime = parse(raw, COMMAND_LIMIT)
+            verify_runtime(runtime)
+            write_new(descriptor.parent/'result.json', canonical_bytes(dict(
+                protocolVersion=1, runtimeSha256=sha256(raw).hexdigest(), status='READY')), COMMAND_LIMIT)
+            return 0
         need(len(args) == 1)
         command = Path(args[0])
         raw = read(command, COMMAND_LIMIT, private=True)

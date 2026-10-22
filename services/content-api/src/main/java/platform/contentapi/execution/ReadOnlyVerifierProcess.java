@@ -19,9 +19,11 @@ class ReadOnlyVerifierProcess {
     }
     record Result(int exitCode,InstallationHostGuard.ProcessIdentity child,long stdoutBytes,long stderrBytes,Set<String> descendants) { }
     private record Observed(ProcessHandle handle,Instant start) { }
+    private java.util.function.BooleanSupplier stopping=()->false;
     private final boolean spark;private final int outputLimit;private final Duration graceful,forced,drain;
     ReadOnlyVerifierProcess(){this(false);}
     ReadOnlyVerifierProcess(boolean spark){this(spark,16*1024*1024,Duration.ofSeconds(5),Duration.ofSeconds(5),Duration.ofSeconds(5));}
+    ReadOnlyVerifierProcess(boolean spark,java.util.function.BooleanSupplier stopping){this(spark);this.stopping=Objects.requireNonNull(stopping);}
     /** Narrow test constructor; production caps cannot be raised by a profile or environment. */
     ReadOnlyVerifierProcess(int limit,Duration graceful,Duration forced,Duration drain) {
         this(false,limit,graceful,forced,drain);
@@ -37,10 +39,10 @@ class ReadOnlyVerifierProcess {
         RuntimeException failure=null;Result result=null;Map<Long,Observed> observed=new HashMap<>();
         long deadline=System.nanoTime()+timeout.toNanos();
         try {
-            if(Thread.currentThread().isInterrupted())throw new InterruptedException();
+            if(stopping.getAsBoolean() || Thread.currentThread().isInterrupted())throw new InterruptedException();
             var builder=new ProcessBuilder(command).directory(directory.toFile());builder.environment().clear();builder.environment().putAll(environment);
             observer.beforeStart(); // Last fenced transaction. Its failure must precede ProcessBuilder.start().
-            if(Thread.currentThread().isInterrupted())throw new InterruptedException();
+            if(stopping.getAsBoolean() || Thread.currentThread().isInterrupted())throw new InterruptedException();
             if(System.nanoTime()>=deadline)throw new PreflightFailure(STAGE_TIMEOUT);
             p=builder.start();p.getOutputStream().close();
             out=new Drain(p.getInputStream(),outputLimit);err=new Drain(p.getErrorStream(),outputLimit);out.start();err.start();
@@ -49,7 +51,7 @@ class ReadOnlyVerifierProcess {
             observer.started(identity);
             long nextHeartbeat=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);
             while(true) {
-                if(Thread.currentThread().isInterrupted())throw new InterruptedException();
+                if(stopping.getAsBoolean() || Thread.currentThread().isInterrupted())throw new InterruptedException();
                 var children=descendants(p);
                 if((!spark && !children.isEmpty()) || children.size()>32)uncertain=true; // Read-only children may not spawn; Spark observations remain bounded.
                 for(var child:children)if(observed.size()<32)observed.putIfAbsent(child.pid(),new Observed(child,child.info().startInstant().orElse(null)));
@@ -60,7 +62,11 @@ class ReadOnlyVerifierProcess {
                 if(System.nanoTime()>=nextHeartbeat){observer.heartbeat();nextHeartbeat=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);}
                 TimeUnit.MILLISECONDS.sleep(5);
             }
-        }catch(InterruptedException ex){interrupted=true;failure=new PreflightFailure(INTERRUPTED,false);}
+        }catch(InterruptedException ex){
+            interrupted=true;
+            // These checks precede ProcessBuilder.start when p is null. No writer was launched.
+            failure=new PreflightFailure(p==null?PROCESS_START_FAILED:INTERRUPTED,p==null);
+        }
         catch(IOException ex){failure=new PreflightFailure(p==null?PROCESS_START_FAILED:RESULT_INVALID);}
         catch(RuntimeException ex){failure=ex;}
         finally {

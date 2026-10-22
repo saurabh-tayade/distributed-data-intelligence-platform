@@ -20,13 +20,27 @@ public final class ReliabilityRuntime {
         python=Path.of(config.get("python").stringValue());processing=Path.of(config.get("processingRoot").stringValue());javaHome=Path.of(config.get("javaHome").stringValue());
     }
     public static ReliabilityRuntime load(JdbcTemplate jdbc,ManagementTransactions tx,InstallationHostGuard guard,WorkerRepository.Owner owner,String id,JsonNode frozen) {
+        return load(jdbc,tx,guard,owner.worker().profileId(),owner.worker().profileDigest(),owner.worker().deploymentDigest(),id,frozen);
+    }
+    /** Startup resolves only approved profile/binding metadata. No run or attempt is fabricated. */
+    static ReliabilityRuntime startup(JdbcTemplate jdbc,ManagementTransactions tx,InstallationHostGuard guard,String profile,String digest,String deployment,String id) {
+        var selected=SourceJson.object().put("pipeline","RELIABILITY_V2");
+        selected.putObject("executionProfile").put("profileId",profile).put("configurationSha256",digest);
+        selected.putArray("inputs");var storage=selected.putArray("storageBindings");
+        for(var row:tx.required(()->jdbc.queryForList("SELECT b.binding_id,b.role,b.configuration_bytes,b.configuration_sha256 FROM ddip_management.execution_profile_storage p JOIN ddip_management.storage_bindings b USING(binding_id) WHERE p.profile_id=? AND b.installation_id=? ORDER BY b.binding_id",profile,guard.binding().installationId()))) {
+            var entry=storage.addObject().put("bindingId",(String)row.get("binding_id")).put("role",(String)row.get("role")).put("configurationSha256",(String)row.get("configuration_sha256"));
+            entry.set("configuration",FrozenRunSelection.canonical((byte[])row.get("configuration_bytes"),(String)row.get("configuration_sha256"),65536));
+        }
+        return load(jdbc,tx,guard,profile,digest,deployment,id,selected);
+    }
+    private static ReliabilityRuntime load(JdbcTemplate jdbc,ManagementTransactions tx,InstallationHostGuard guard,String profile,String profileDigest,String deploymentDigest,String id,JsonNode frozen) {
         try {
             need(id!=null && id.matches("[A-Za-z0-9_-]{1,128}"),RUNTIME_MISMATCH);
             var rows=tx.required(()->jdbc.queryForList("SELECT configuration_bytes,configuration_sha256 FROM ddip_management.execution_profiles WHERE profile_id=?",id));
             need(rows.size()==1,RUNTIME_MISMATCH);byte[] raw=(byte[])rows.getFirst().get("configuration_bytes");String hash=(String)rows.getFirst().get("configuration_sha256");
             var c=FrozenRunSelection.canonical(raw,hash,65536);
             SourceJson.fields(c,"executionRuntimeVersion","pipeline","runProfileId","runProfileSha256","python","javaHome","processingRoot","deploymentSha256","deploymentRevision","bindings","verificationSeconds");
-            need(integer(c,"executionRuntimeVersion")==1 && text(c,"pipeline").equals("RELIABILITY_V2") && text(c,"runProfileId").equals(owner.worker().profileId()) && text(c,"runProfileSha256").equals(owner.worker().profileDigest()) && text(c,"deploymentSha256").equals(owner.worker().deploymentDigest()) && text(c,"deploymentRevision").matches("[0-9a-f]{40}") && integer(c,"verificationSeconds")>=1 && integer(c,"verificationSeconds")<=900,RUNTIME_MISMATCH);
+            need(integer(c,"executionRuntimeVersion")==1 && text(c,"pipeline").equals("RELIABILITY_V2") && text(c,"runProfileId").equals(profile) && text(c,"runProfileSha256").equals(profileDigest) && text(c,"deploymentSha256").equals(deploymentDigest) && text(c,"deploymentRevision").matches("[0-9a-f]{40}") && integer(c,"verificationSeconds")>=1 && integer(c,"verificationSeconds")<=900,RUNTIME_MISMATCH);
             var expected=frozen.get("executionProfile");need(expected.get("profileId").stringValue().equals(c.get("runProfileId").stringValue()) && expected.get("configurationSha256").stringValue().equals(c.get("runProfileSha256").stringValue()) && frozen.get("pipeline").stringValue().equals("RELIABILITY_V2"),RUNTIME_MISMATCH);
             var refs=c.get("bindings");SourceJson.fields(refs,"batch","reference","output","staging","temp","control");
             var resolved=SourceJson.object();Set<Path> roots=new HashSet<>();
@@ -73,6 +87,27 @@ public final class ReliabilityRuntime {
     }
     public void admission() {
         check();for(String role:List.of("output","staging","temp","control"))try{Path root=Path.of(text(bindings.get(role),"root"));need(Files.isWritable(root),INPUT_UNAVAILABLE);need(Files.getFileStore(root).getUsableSpace()>=1024L*1024*1024,RESOURCE_LIMIT);}catch(java.io.IOException ex){throw new PreflightFailure(INPUT_UNAVAILABLE);}
+    }
+    /** Fixed Spark-free probe of actual interpreter/packages; manifest claims alone are insufficient. */
+    void readiness() {
+        admission();Path directory=null;
+        try {
+            directory=Files.createTempDirectory(Path.of(text(bindings.get("control"),"root")),"runtime-check-",
+                java.nio.file.attribute.PosixFilePermissions.asFileAttribute(java.nio.file.attribute.PosixFilePermissions.fromString("rwx------")));
+            Path request=directory.resolve("runtime.json"),result=directory.resolve("result.json");
+            byte[] raw=SourceJson.canonical(json());Files.write(request,raw,StandardOpenOption.CREATE_NEW);
+            Files.setPosixFilePermissions(request,java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
+            var exited=new ReadOnlyVerifierProcess().run(List.of(python.toString(),"-I","-B","-X","utf8",processing.resolve("reliability_execution_preflight.py").toString(),"--runtime-check",request.toString()),environment(),scratch(),java.time.Duration.ofSeconds(30),new ReadOnlyVerifierProcess.Observer(){
+                public void beforeStart(){admission();} public void started(InstallationHostGuard.ProcessIdentity child){} public void heartbeat(){admission();}
+            });
+            var response=PreflightFiles.canonical(PreflightFiles.read(result,65536,true),65536);
+            var expected=SourceJson.object().put("protocolVersion",1).put("runtimeSha256",SourceJson.sha(raw)).put("status","READY");
+            need(exited.exitCode()==0 && response.equals(expected) && Arrays.equals(raw,PreflightFiles.read(request,65536,true)),RUNTIME_MISMATCH);admission();
+        }catch(PreflightFailure ex){throw ex;}catch(Exception ex){throw new PreflightFailure(RUNTIME_MISMATCH);}
+        finally {
+            // Only these startup scratch files belong to this operation. Never traverse a native root.
+            if(directory!=null)try{Files.deleteIfExists(directory.resolve("result.json"));Files.deleteIfExists(directory.resolve("runtime.json"));Files.delete(directory);}catch(java.io.IOException ignored){ }
+        }
     }
     JsonNode json(){var n=SourceJson.object().put("profileId",id).put("profileSha256",digest);n.set("configuration",config.deepCopy());return n;}
     JsonNode bindings(){return bindings.deepCopy();}

@@ -2,6 +2,10 @@
 
 This Java 21 module implements `GET /api/v1/publishers`, `/api/v1/articles`, `/api/v1/daily` and `/api/v1/quality` over one explicitly pinned Gold publication. The owner [accepted ADR 0005](../../docs/adr/0005-gold-consumer-integration.md) on October 18, 2026. The [JDBC POC](../api/README.md) remains isolated and is not a runtime dependency. The separate [M6.3 React dashboard](../../frontend/README.md) consumes this publisher endpoint. M6.4 adds the three analytical endpoints and deterministic article pagination. `/api/v1/publication` is not implemented. The M6.5 frontend now consumes all four endpoints; final dashboard browser acceptance and M6 closeout remain pending.
 
+E5's current worker entry point is the [active Reliability worker](#c2b-2-active-reliability-worker).
+The passive-worker sections below describe earlier checkpoints; C3 recovery and Content execution
+remain deferred. Analytics-only startup and its publication selection are unchanged.
+
 ## Acceptance and structure
 
 Acceptance requires reference-equivalent results for all four reports, explicit publication selection, exact integer and UTC microsecond serialization, safe failure responses, bounded subprocess resources, and automated real HTTP/Python integration on synthetic publications. Startup and ordinary Maven unit tests must work without Gold, Spark or Python.
@@ -1227,3 +1231,134 @@ atomic result completion. **Tested:** local synthetic acceptance/regression evid
 hosted CI is pending owner publication. **Planned:** C2b-2 production capability/lifecycle wiring,
 reviewed profile eligibility/fairness and explicit activation acceptance. **Deferred:** production
 queue draining, C3 recovery/takeover/controls, Content/RSS, automatic retries, UI and E5 completion.
+
+## C2b-2 active Reliability worker
+
+The production worker now runs only RELIABILITY_V2 using the real fixed C2a/C2b-1 adapters.
+It is a non-web host process with one immutable profile for its lifetime. Use separate reviewed
+JSONL-v2 and Parquet-v1 run/runtime profiles; stop one startup before selecting the other.
+The same installation host guard excludes a second worker or operator importer, even with a
+different format. Content and other profiles remain QUEUED. There is no cross-profile fairness,
+dynamic executor flag, new execution endpoint or automatic publication activation.
+
+### Reviewed startup
+
+Build outside execution with Java 21. Provision the existing immutable RunProfile v1,
+execution-runtime v1, deployment manifest and six storage bindings as described in
+[execution-only runtime profile](#execution-only-runtime-profile). Copy the exact approved module
+set, including the updated preflight startup probe, and compute/review its manifest before creating
+new pinned profiles. Never rewrite an old profile or queued run to accept new deployment bytes.
+All native inputs must already be imported through the existing operator interface.
+
+With ignored private configuration and migrated PostgreSQL/loopback storage ready:
+
+```sh
+export JAVA_HOME='<approved-running-JDK-21-home>'
+export DDIP_DB_URL='jdbc:postgresql://127.0.0.1:5432/ddip'
+export DDIP_DB_USER='<reviewed-worker-role>'
+# Supply DDIP_DB_PASSWORD through the existing private operator environment.
+export DDIP_INSTALLATION_ID='<installation-UUID>'
+export DDIP_WORKER_EXECUTION_PROFILE_ID='<reviewed-JSONL-or-Parquet-run-profile-UUID>'
+export DDIP_WORKER_RUNTIME_PROFILE_ID='<matching-execution-runtime-profile-id>'
+export DDIP_WORKER_CONTROL_BINDING_ID='<installation-control-binding-id>'
+export DDIP_WORKER_DEPLOYMENT_SHA256='<exact-frozen-deployment-SHA256>'
+export DDIP_WORKER_PYTHON='<same-absolute-venv-python-as-runtime-profile>'
+export DDIP_WORKER_JAVA_HOME="$JAVA_HOME"
+export DDIP_WORKER_PROCESSING_ROOT='<same-canonical-pinned-processing-root-as-runtime-profile>'
+export DDIP_WORKER_POLL_MILLIS=1000
+DDIP_ROLE=worker "$JAVA_HOME/bin/java" -jar services/content-api/target/content-api-0.1.0-SNAPSHOT.jar
+```
+
+Only trusted profiles select executables/modules/Spark settings. Startup validates actual Java 21,
+Python 3.12.15, PySpark 4.0.2, DuckDB 1.4.5, deployment/module digests, storage identities/permissions,
+disjoint roots, binding association and >=1 GiB free space per writable volume. The fixed 30-second
+startup probe starts no Spark session and reads no native artifacts. No packages are installed.
+The older worker path properties must exactly match the approved execution descriptor. Polling
+accepts 250–5000 ms (default 1000); idle heartbeats use the five-second policy. Invalid readiness,
+STOPPING, import ownership or unresolved prior work cannot dispatch. Startup never migrates,
+repairs or automatically takes over operational state.
+
+### Submission, observation and replay
+
+Use the unchanged [Reliability submission contract](#durable-queued-run-submission-b2b-2a) with opaque
+imported batch/reference IDs and the exact active run-profile UUID. An example private JSON file is:
+
+```json
+{
+  "pipeline": "RELIABILITY_V2",
+  "executionProfileId": "<reviewed-run-profile-UUID>",
+  "sources": [{"sourceId": "synthetic-requests", "revision": 1}],
+  "batchArtifactIds": ["<imported-batch-artifact-UUID>"],
+  "serviceReferenceArtifactId": "<imported-service-reference-artifact-UUID>"
+}
+```
+
+Replace placeholders with the reviewed IDs; no paths or native fingerprints belong in the request.
+Start the existing loopback management API separately, then:
+
+```sh
+curl --fail-with-body -i -X POST http://127.0.0.1:8080/api/management/v1/runs   -H 'Origin: http://127.0.0.1:8080' -H 'X-DDIP-Local-Request: 1'   -H 'Content-Type: application/json' -H 'Idempotency-Key: reviewed-selection-001'   --data-binary @'<private-reviewed-submission.json>'
+# Use the returned opaque run ID / Location, never a filesystem address.
+curl --fail-with-body http://127.0.0.1:8080/api/management/v1/runs/'<run-id>'
+curl --fail-with-body http://127.0.0.1:8080/api/management/v1/runs/'<run-id>'/attempts
+curl --fail-with-body http://127.0.0.1:8080/api/management/v1/runs/'<run-id>'/events
+```
+
+HTTP 202 means a durable submission. The worker polls the oldest eligible profile/pipeline,
+checks current source enablement while preserving captured revisions, and commits an attempt
+before CHECK_INPUTS → PUBLISH_RELIABILITY → VERIFY_RESULT. The stages freshly qualify native
+inputs, publish through the unchanged Spark implementation, then independently reopen/reconcile
+output. SUCCEEDED requires atomic native artifact/dependency/stage/result linkage and verified
+completion. GET exposes historical VERIFIED_AT_EXECUTION, not current readability or activation;
+current stage, attempt stage count and fixed lifecycle events remain the existing public surface.
+Private process commands and full evidence are not exposed.
+
+The same idempotency key returns the original run. A new key creates a distinct identical-selection
+run: fresh verification then native read-only replay must retain publication bytes/mtimes and reuse
+only matching artifact evidence/dependency links. ANALYTICS_PUBLICATION stays unchanged.
+
+### Token ownership, stopping and failures
+
+One dispatch thread serializes idle heartbeat/claim, then carries the current stage owner through
+supervision and finalization. There is no independent active idle-heartbeat callback. Only a
+confirmed released token permits another claim. Known clean preflight failure atomically seals
+FAILED stage/attempt/run and releases the slot; a known quiescent publication failure does likewise,
+retaining incomplete output and retry-ineligible status. No automatic retry or native repair occurs.
+
+Ctrl-C/SIGTERM stops new claims and signals/interrupts active supervision. Its persistent stop signal
+also blocks subsequent stages if a library clears an interrupt. Cleanup precedes guard release;
+idle stop records STOPPED. Shutdown waits up to 45 seconds; if supervision is still unwinding, the
+worker retains its guard and reports uncertainty. Completed independent verification/commit may
+win a stop race. A confirmed pre-launch stop can close as PROCESS_START_FAILED without a child; active interruption
+conservatively retains RECOVERY_REQUIRED/occupied ownership.
+Database/conditional-update/lost-acknowledgment uncertainty stops polling without refreshing tokens.
+A replacement worker must refuse an occupied slot even after the old JVM/host lock disappears.
+Do not clear pointers, delete incomplete output or kill an unverified/reused PID. C3's explicit
+execution-owner reconciliation remains unimplemented; there is no takeover command in C2b-2.
+
+### Small-fixture reproduction and readiness
+
+Use only disposable databases and the pinned Python/Java environment. The production-style tests
+create synthetic native registrations, use the real fenced importer and HTTP source/submission
+routes, then start the same production lifecycle/capability. They do not install fixture executors.
+
+```sh
+export JAVA_HOME=$(/usr/libexec/java_home -v 21)
+export DDIP_TEST_PYTHON="$PWD/outputs/silver-python312/.venv/bin/python"
+export PYSPARK_PYTHON="$DDIP_TEST_PYTHON"
+export PYSPARK_DRIVER_PYTHON="$DDIP_TEST_PYTHON"
+export SPARK_LOCAL_IP=127.0.0.1
+# Supply private DDIP_TEST_DB_URL/USER/PASSWORD for the disposable PostgreSQL server.
+mvn -q -f services/content-api/pom.xml -Ppostgres   -Dit.test=ReliabilityWorkerIT,ReliabilityPreflightIT verify
+```
+
+The [C2b-2 implementation evidence](../../docs/architecture/durable-execution.md#c2b-2-verification-and-remaining-boundary)
+records exact integrated commands/counts and actual database restart observations: **278 Java,
+401 distinct PostgreSQL, 128 distinct Python and 20 analytics HTTP/Python cases passed locally**.
+The PostgreSQL total is the union of the 394-case full run and later expanded/targeted cases, not
+repeated-case addition. Four real PostgreSQL restarts were observed. Markdown/links/hygiene passed
+for 44 files. Hosted CI remains pending owner publication. Unsupported profiles still consume the
+global twenty-unfinished-run admission budget. Separate-process
+guard and pre-launch JVM-death tests do not prove universal descendant containment. Production-style
+local acceptance is not distributed/high-availability or exactly-once process execution. C3 recovery,
+Content execution, cross-profile automation, controls/UI and full E5 completion remain deferred.

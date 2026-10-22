@@ -43,7 +43,7 @@ public final class WorkerRepository {
     }
     public Claim claim(InstallationHostGuard guard,Session session,UUID attemptId) {
         held(guard,session);require(attemptId!=null,WORKER_CONFIGURATION_INVALID);
-        // Fixed production NONE. No environment property, Spring bean or API can enable a simulated executor.
+        // Only the fixed packaged adapter or isolated test capability supplies eligibility.
         if(!capability.available())return new Claim("NO_EXECUTOR",null,null,session,null);
         return ownerTransaction(()->{
             var c=slot();checkSession(c,session);require("READY".equals(session.status()) && idle(c),WORKER_NOT_READY);
@@ -185,6 +185,19 @@ public final class WorkerRepository {
             audit(stage.owner().runId(),stage.owner().attemptId(),verified?"STAGE_VERIFIED":"STAGE_FAILED",stage.state(),state,stage.stageVersion(),stage.stageVersion()+1,code);return nextStage(stage,stage.stageVersion()+1,state,stage.authorized());
         });
     }
+    /** Only the read-only supervisor may attest a definitive CHECK_INPUTS failure. Atomic closure. */
+    public Session failCheckInputs(InstallationHostGuard guard,Owner owner,CheckInputs stage,String code,String resultSha) {
+        held(guard,owner.worker());require(Set.of("INPUT_UNAVAILABLE","INPUT_INVALID","INPUT_CHANGED","RUNTIME_MISMATCH","RESOURCE_LIMIT","PROCESS_START_FAILED","STAGE_TIMEOUT","STAGE_OUTPUT_LIMIT").contains(code),WORKER_NOT_READY);
+        return ownerTransaction(()->{owned(owner);
+            if(stage==null)require(jdbc.queryForObject("SELECT count(*) FROM ddip_management.stage_invocations WHERE attempt_id=?",Long.class,owner.attemptId())==0,OWNERSHIP_LOST);
+            else {
+                require(owner.equals(stage.owner()) && hash(resultSha) && Set.of("INTENT","RUNNING").contains(stage.state()),OWNERSHIP_LOST);checkStage(stage);
+                exactly(jdbc.update("UPDATE ddip_management.stage_invocations SET state='FAILED',result_address=?,result_sha256=?,counts_bytes=?,outcome_code=?,finished_at=clock_timestamp(),row_version=row_version+1 WHERE attempt_id=? AND stage='CHECK_INPUTS' AND item_ordinal=0 AND checkpoint_id=? AND state=? AND row_version=?",stage.namespace()+"/verified.json",resultSha,SourceJson.canonical(SourceJson.object()),code,owner.attemptId(),stage.checkpointId(),stage.state(),stage.stageVersion()));
+                audit(owner.runId(),owner.attemptId(),"STAGE_FAILED",stage.state(),"FAILED",stage.stageVersion(),stage.stageVersion()+1,code);
+            }
+            return failOwned(owner,code);
+        });
+    }
     /** Unknown child/result: mark unknown and interrupt atomically, retaining the occupied pointer. */
     public void blockCheckInputs(InstallationHostGuard guard,CheckInputs stage) {
         held(guard,stage.owner().worker());ownerTransaction(()->{owned(stage.owner());checkStage(stage);
@@ -294,12 +307,16 @@ public final class WorkerRepository {
         return ownerTransaction(()->{owned(owner);
             if(stage==null)require(jdbc.queryForObject("SELECT count(*) FROM ddip_management.stage_invocations WHERE attempt_id=? AND stage IN ('PUBLISH_RELIABILITY','VERIFY_RESULT')",Long.class,owner.attemptId())==0,OWNERSHIP_LOST);
             else {nativeStage(stage);finishNative(stage,"FAILED",code,resultSha,null);}
-            finishAttempt(owner,"FAILED",code);
-            exactly(jdbc.update("UPDATE ddip_management.runs SET state='FAILED',finished_at=clock_timestamp(),outcome_code=?,retry_eligible=false,row_version=row_version+1 WHERE run_id=? AND current_attempt_id=? AND state='RUNNING' AND row_version=?",code,owner.runId(),owner.attemptId(),owner.runVersion()));
-            releaseOwned(owner);audit(owner.runId(),owner.attemptId(),"RUN_FAILED","RUNNING","FAILED",owner.runVersion(),owner.runVersion()+1,code);
-            Session w=owner.worker();return with(w,"READY",w.epoch(),w.coordinatorVersion()+1,w.workerVersion());
+            return failOwned(owner,code);
         });
     }
+    private Session failOwned(Owner owner,String code) {
+        finishAttempt(owner,"FAILED",code);
+        exactly(jdbc.update("UPDATE ddip_management.runs SET state='FAILED',finished_at=clock_timestamp(),outcome_code=?,retry_eligible=false,row_version=row_version+1 WHERE run_id=? AND current_attempt_id=? AND state='RUNNING' AND row_version=?",code,owner.runId(),owner.attemptId(),owner.runVersion()));
+        releaseOwned(owner);audit(owner.runId(),owner.attemptId(),"RUN_FAILED","RUNNING","FAILED",owner.runVersion(),owner.runVersion()+1,code);
+        Session w=owner.worker();return with(w,"READY",w.epoch(),w.coordinatorVersion()+1,w.workerVersion());
+    }
+
     public UUID succeedReliability(InstallationHostGuard guard,ReliabilityStage s,byte[] evidence,String resultSha) {
         held(guard,s.owner().worker());return ownerTransaction(()->{owned(s.owner());nativeStage(s);attemptDeadline(s.owner());require(s.stage().equals("VERIFY_RESULT") && s.state().equals("RUNNING") && hash(resultSha),OWNERSHIP_LOST);
             var e=platform.contentapi.management.FrozenRunSelection.canonical(evidence,platform.contentapi.management.SourceJson.sha(evidence),16*1024*1024);

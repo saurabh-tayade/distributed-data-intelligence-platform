@@ -6,8 +6,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.support.JdbcTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.springframework.boot.builder.SpringApplicationBuilder;
-import platform.contentapi.ContentApiApplication;
 
 /** Separate-process test harness only; never packaged in the application JAR. */
 public final class WorkerTestChild {
@@ -15,10 +13,12 @@ public final class WorkerTestChild {
         var b=OwnershipFixtures.readBinding(Path.of(args[0]));
         try {
             if(args[1].equals("passive")) {
-                var e=System.getenv();try(var context=new SpringApplicationBuilder(ContentApiApplication.class).run(
-                        "--ddip.role=worker","--ddip.database.url="+e.get("DDIP_TEST_DB_URL"),"--ddip.database.username="+e.get("DDIP_TEST_DB_USER"),"--ddip.database.password="+e.get("DDIP_TEST_DB_PASSWORD"),"--ddip.installation-id="+b.installationId(),"--ddip.worker.execution-profile-id="+args[2],"--ddip.worker.control-binding-id="+b.id(),"--ddip.worker.deployment-sha256="+"a".repeat(64),"--ddip.worker.python="+e.get("DDIP_TEST_PYTHON"),"--ddip.worker.java-home="+System.getProperty("java.home"),"--ddip.worker.processing-root="+Path.of("../../processing").toAbsolutePath().normalize(),"--logging.level.root=OFF","--spring.main.banner-mode=off")) {
-                    if(context instanceof org.springframework.boot.web.server.context.WebServerApplicationContext)throw new AssertionError("WEB_WORKER");
-                    System.out.println("C1_READY");System.out.flush();System.in.read();
+                // C1 metadata/guard harness only. Production activation has separate native-runtime tests.
+                var jdbc=new JdbcTemplate(new DriverManagerDataSource(System.getenv("DDIP_TEST_DB_URL"),System.getenv("DDIP_TEST_DB_USER"),System.getenv("DDIP_TEST_DB_PASSWORD")));
+                var tx=new ManagementTransactions(new TransactionTemplate(new JdbcTransactionManager(jdbc.getDataSource())));
+                try(var guard=InstallationHostGuard.acquire(b)) {
+                    var repo=new WorkerRepository(jdbc,tx,b.installationId());String hash=jdbc.queryForObject("SELECT configuration_sha256 FROM ddip_management.execution_profiles WHERE profile_id=?",String.class,args[2]);
+                    var session=repo.register(guard,args[2],hash,"a".repeat(64));System.out.println("C1_READY");System.out.flush();System.in.read();repo.stopIdle(guard,session);
                 }
             } else {
                 var jdbc=new JdbcTemplate(new DriverManagerDataSource(System.getenv("DDIP_TEST_DB_URL"),System.getenv("DDIP_TEST_DB_USER"),System.getenv("DDIP_TEST_DB_PASSWORD")));

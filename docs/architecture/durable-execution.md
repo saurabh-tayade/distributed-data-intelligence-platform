@@ -1,8 +1,8 @@
 # Durable execution and source controls
 
-Status: **Accepted — October 20, 2026**, with the Stage A.1 refinements, under [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md). The owner accepted additive [ADR 0011](../adr/0011-artifact-import-maintenance-ownership.md) on October 21 and authorized **B2b-1A import ownership foundation only**. B1/B2a and the ownership foundation are implemented; current coordination evidence is [recorded separately](#stage-b2b-1a-durable-import-ownership). Native qualification/functional imports (B2b-1B), submission (B2b-2) and C–F execution/control/UI require separate authorization. Acceptance alone passes no E5 test group. Accepted ADRs 0001–0010 and native data contracts are unchanged.
+Status: **Accepted — October 20, 2026**, with the Stage A.1 refinements, under [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md). The owner accepted additive [ADR 0011](../adr/0011-artifact-import-maintenance-ownership.md) on October 21. Architecture acceptance alone passes no E5 test group. Current implementation and authorization are recorded below; earlier checkpoint status paragraphs and counts remain historical. Accepted ADRs and native data contracts are unchanged.
 
-Current authorization: B1 through B2b-2B are owner-committed. The owner now authorizes **C1 worker coordination and durable claiming only**. The [C1 implementation boundary](#c1-worker-coordination-acceptance-boundary) keeps production dispatch disabled. C2/native execution and later controls remain unauthorized. Earlier checkpoint status paragraphs and their test counts are historical.
+Current authorization: B1–B2, C1, C2a and C2b-1 are owner-committed. The owner has authorized **C2b-2 production Reliability worker activation**. The [current implementation boundary](#c2b-2-production-reliability-worker) enables only the fixed Reliability adapter with one pinned profile per startup. C3 recovery, Content execution and new controls remain deferred. Earlier checkpoint status paragraphs and counts are historical.
 
 ## Boundary and invariants
 
@@ -1674,3 +1674,244 @@ Exact changed-file inventory:
 - `services/content-api/src/test/java/platform/contentapi/execution/VerifierProcessTest.java`
 - `services/content-api/src/test/java/platform/contentapi/management/PreflightCatalogFixture.java`
 - `services/content-api/src/test/java/platform/contentapi/management/WorkerCoordinationIT.java`
+
+## C2b-2 production Reliability worker
+
+The packaged non-web worker now uses the fixed RELIABILITY_V2 capability and the existing real
+preflight/publisher/independent-verifier adapters. No fake capability is configurable or packaged.
+This supersedes the passive-worker implementation status in the historical C1/C2a/C2b-1 sections;
+it does not change ADR 0010/0011, the seven run states, native product contracts or V1–V7.
+There is no new migration, persistence model, public endpoint or analytics activation.
+
+### Pinned readiness and eligible ordering
+
+Each host startup pins one RunProfile ID/SHA, execution-runtime ID/SHA and deployment digest.
+JSONL request-jsonl-v2 and Parquet request-parquet-v1 use separately reviewed startups, with the
+same installation CONTROL guard. Only RELIABILITY_V2 QUEUED rows with that exact run-profile ID
+are considered, in increasing immutable submission sequence. A Content run or another approved
+profile stays QUEUED. The operator stops the worker and starts another reviewed profile to service
+that queue. Unsupported queued work still consumes the global twenty-unfinished-run capacity.
+There is no cross-profile fairness or simultaneous format worker.
+
+Startup validates schema without migration, the installation guard, actual JDK 21, immutable
+profile/storage associations, disjoint root identities/permissions and the fixed deployment manifest.
+The legacy worker python/java-home/processing-root properties must equal the execution-runtime
+fields. A fixed `--runtime-check` mode of reliability_execution_preflight.py then checks actual
+Python 3.12.15/PySpark 4.0.2/DuckDB 1.4.5 and module/deployment hashes. This is a bounded 30-second
+Spark-free probe with a private canonical request/result digest under CONTROL; it has no run,
+attempt, native selection or publication authority. Only its own scratch files are removed.
+No dependency installation, arbitrary module or shell command is supported.
+
+Only after readiness does registration inspect the coordinator. STOPPING/RECOVERY_ONLY, an
+occupied import or unresolved execution register a non-dispatching historical worker and close
+it without clearing the old pointer. A free guard or old heartbeat never authorizes takeover.
+Invalid startup fails closed before claims. Runtime/root/free-space checks continue at stage
+boundaries and heartbeats; each writable volume requires at least 1 GiB free, not a hard quota.
+Changed deployment files require a new reviewed profile and submission, never rewritten captures.
+
+`ddip.worker.runtime-profile-id` / DDIP_WORKER_RUNTIME_PROFILE_ID selects the immutable execution
+runtime descriptor already defined by C2a. Polling is `ddip.worker.poll-millis` /
+DDIP_WORKER_POLL_MILLIS, default 1000 ms and accepted range 250–5000 ms. This is cooperative
+bounded polling of PostgreSQL, not an execution deadline or measured scheduling guarantee.
+
+### One owner for heartbeat, claim and completion tokens
+
+One dispatcher thread owns the live session token. Its short idle heartbeat (five-second policy)
+and coordinator-first claim transactions are serialized. Sources lock in deterministic order;
+claim gates still validate enablement and exact frozen source/profile/input membership. Invalid
+eligible selections and SOURCE_DISABLED fail observably without a processing attempt. Other
+pipelines/profiles are excluded by eligibility, not misclassified as invalid work.
+
+After claim, only the native supervisor path updates attempt/coordinator/worker versions. There
+is no concurrent idle-heartbeat scheduler. The loop installs a session only from a confirmed claim
+with no attempt, `Completed.worker()` or a typed definitive-failure result. Stage heartbeats pass
+their updated owner into later stages and finalization. Inspection snapshots and wake requests
+cannot mutate tokens. No callback refreshes a stale token from the database. A lost acknowledgment
+or failed condition stops the loop; it never retries with newer authority. No Java monitor or SQL
+transaction spans native work, and shutdown can signal that work concurrently.
+
+The fixed sequence remains CHECK_INPUTS → PUBLISH_RELIABILITY → VERIFY_RESULT. All existing
+stage intents, single-use launch authorizations, process identities, retained-evidence rechecks,
+30/15-minute stage limits, two-hour attempt limit and independent 16 MiB stream caps remain.
+Only independently verified native output can atomically link the result/stage/dependencies,
+finish attempt/run SUCCEEDED and release this owner. A distinct identical-selection run repeats
+verification and uses native read-only replay, reusing the operational artifact only with identical
+evidence/links. No publication is activated for analytics.
+
+### Definitive closure, uncertainty and shutdown
+
+Production uses `ReliabilityPreflight.verifyForExecution`. A typed pre-INTENT qualification failure
+proves no child was authorized. A known clean verifier failure retains its fixed private anchor;
+one fenced transaction seals CHECK_INPUTS FAILED, finishes attempt/run FAILED (retry ineligible),
+appends audits and releases this owner. It returns only the confirmed released session. The older
+internal C2a `verify` seam retains its stage-only behavior for isolated checkpoint tests. Neither
+path converts an arbitrary RuntimeException, malformed result, database error or uncertain cleanup
+into proof of quiescence. A rollback leaves no terminal partial closure; a lost commit response
+returns no authority even when historical rows prove that finalization committed.
+
+C2b-1 known quiescent publication failures use the same confirmed-token continuation rule.
+Incomplete namespaces remain untouched and retry ineligible. The dispatcher can service another
+eligible run after a confirmed safe failure or success; it never retries the failed run automatically.
+Unknown launch, child cleanup, stale ownership or DB outcome stops polling and never clears an
+occupied coordinator. If a terminal transaction actually committed before its response was lost,
+its atomic release remains committed, but the old worker still stops without inventing a session.
+Established adapter paths persist RECOVERY_REQUIRED/UNKNOWN where possible;
+an unavailable database may leave RUNNING/CLAIMED evidence occupied instead. Neither is idle.
+
+Idle stop signals the loop, records worker STOPPED using its current token and closes the guard.
+Active stop sets a persistent stop signal and interrupts the owner thread. The supervisor checks
+both before authorization/launch and while supervising; a cleared interrupt cannot enable a later
+stage. Existing identity-aware graceful/forced/final cleanup runs before the dispatch thread closes
+the guard. Shutdown waits up to 45 seconds outside the lifecycle monitor. If the thread has not
+finished, it retains its guard and reports uncertainty; no shutdown callback fabricates release.
+An independently verified final commit may win the shutdown race. A stop observed before ProcessBuilder.start can close as PROCESS_START_FAILED with no child.
+Interrupted work with an observed child is conservatively recovery-required, not automatically
+CANCELLED or successful.
+
+A crashed JVM may free the OS guard while its durable occupied slot remains. Replacement startup
+refuses that ownership even if the old parent is gone. Local tests observe parent/PID and bounded
+observed-descendant cleanup; they do not establish universal OS process-tree containment. C3 must
+supply explicit execution-owner quiescence/reconciliation. There is no automatic orphan cleanup,
+recovery, retry, cancellation API or claim of exactly-once native execution.
+
+### C2b-2 verification and remaining boundary
+
+The small production-style fixtures use the real fenced operator importer, HTTP source creation
+and POST submission, packaged worker lifecycle, Spark publisher and a distinct native independent
+verifier. Existing GET detail/attempts/events expose persisted lifecycle, current stage, stage count,
+fixed stage events and VERIFIED_AT_EXECUTION result linkage; detailed private stage/process evidence
+is not added to public DTOs. Historical verification still does not establish current readability.
+
+Local validation on October 21, 2026 used Java 21.0.7, Python 3.12.15, PySpark 4.0.2,
+DuckDB 1.4.5 and the isolated PostgreSQL 17.11 test container. Final distinct evidence:
+
+| Suite | Passed | Scope |
+| --- | ---: | --- |
+| Java unit/component | 278 | Includes fixed capability and persistent shutdown-signal checks |
+| PostgreSQL integration, union of runs below | 401 | B1/B2/C1 plus 41 preflight, 27 publication and 20 production-worker cases; includes all 23 Spark-backed Silver imports |
+| Spark-free native | 87 | Existing 85 plus two actual startup-probe cases; includes 32 preflight cases |
+| Native C2b publication/independent reader | 8 | Both formats, joint selection, replay, corruption and cleanup |
+| Native E2/E3 | 33 | Eight processing, 17 publication and eight format-publication cases, in separate processes |
+| Analytics HTTP/Python | 20 | Existing loopback analytical contracts, independent of management/worker |
+| Documentation | 44 files | Markdown, relative links and repository hygiene |
+
+These are **128 distinct Python cases**, not the sum of repeated overlapping native runs. The full
+PostgreSQL invocation passed 394 cases with four externally observed real container restarts
+(worker claim, history, production JSONL result and C2b verified-result barriers). The expanded
+production-worker class then passed 20 cases. One of the initial 41 preflight cases exposed an
+interrupt flag preventing private failure journaling before launch. The fix temporarily clears the
+flag only for bounded known-quiescent closure and restores it; all 41 preflight cases and the targeted
+verifier/publisher pre-intent/startup/stop cases passed afterward. The union is 394 plus five new
+worker cases, one preflight stop case and one publication stop case = 401; repeated cases are
+counted once. No outstanding failed or skipped case remains in this recorded scope.
+
+The production-style cases use the real fenced importer, HTTP source creation/submission and
+fixed production lifecycle. Both formats achieved SUCCEEDED with three VERIFIED stages and ten
+physical occurrences per original single-batch fixture. New distinct identical-selection runs
+reused the same operational result artifact with unchanged output bytes/mtimes; retained batch
+and reference bytes/mtimes also stayed unchanged. API restart was exercised for both formats;
+the JSONL production result also survived an actual PostgreSQL restart, with unchanged run,
+sequence, selection and artifact linkage. Lost final acknowledgment left a second run QUEUED
+without relaunch. Known corrupted-input failure continued with an unrelated retained batch;
+incomplete output stayed retry ineligible. Failed independent verification, active DB outage and
+active stop prevented further claims and retained occupied ownership. An actual worker JVM was
+killed while stage INTENT was blocked before commit/child launch; replacement startup refused its
+occupied claim. Two production-lifecycle JVMs with different reviewed profiles were excluded by
+the same guard. These are observed local process facts, not proof of universal orphan containment.
+
+Exact underlying commands (private DDIP_TEST_DB_* environment supplied by the local harness):
+
+~~~sh
+export JAVA_HOME=$(/usr/libexec/java_home -v 21)
+export DDIP_TEST_PYTHON="$PWD/outputs/silver-python312/.venv/bin/python"
+export PYSPARK_PYTHON="$DDIP_TEST_PYTHON"
+export PYSPARK_DRIVER_PYTHON="$DDIP_TEST_PYTHON"
+export SPARK_LOCAL_IP=127.0.0.1
+export PYTHONPATH=processing:processing/tests
+
+# Full regression: 278 Java and 394 PostgreSQL cases at this point.
+# A separate test-container harness restarts PostgreSQL at each READY barrier and writes .done.
+mvn -q -f services/content-api/pom.xml -Ppostgres \
+  -Dddip.test.worker-restart-signal=/private/tmp/ddip-c2b2-worker-restart \
+  -Dddip.test.history-restart-signal=/private/tmp/ddip-c2b2-history-restart \
+  -Dddip.test.reliability-restart-signal=/private/tmp/ddip-c2b2-reliability-restart \
+  -Dddip.test.production-restart-signal=/private/tmp/ddip-c2b2-production-restart verify
+
+# Expanded gate: production worker 20 passed; the one new preflight stop failure was fixed below.
+mvn -q -f services/content-api/pom.xml -Ppostgres \
+  -Dit.test=ReliabilityWorkerIT,ReliabilityPreflightIT verify
+# Final affected preflight suite: all 41 passed.
+mvn -q -f services/content-api/pom.xml -Ppostgres -Dit.test=ReliabilityPreflightIT \
+  -Dtest=NoTests -Dsurefire.failIfNoSpecifiedTests=false verify
+# All four targeted final pre-intent/shutdown/startup cases passed; 278 Java tests also ran.
+mvn -q -f services/content-api/pom.xml -Ppostgres \
+  '-Dit.test=ReliabilityPreflightIT#confirmedShutdownBeforeLaunchClosesWithoutInventingAChild+preIntentRuntimeFailureCanCloseOnlyOriginalClaim,ReliabilityExecutionIT#confirmedStopBeforePublisherLaunchClosesAndReturnsReleasedToken+startupFailureIsKnownFailedAndReleased' verify
+
+"$DDIP_TEST_PYTHON" -B -m unittest \
+  processing/tests/test_reliability_execution_preflight.py \
+  processing/tests/test_reliability_format_inputs.py \
+  processing/tests/test_reliability_format_admission.py \
+  processing/tests/test_reliability_format_verification.py \
+  processing/tests/test_reliability_inputs.py \
+  processing/tests/test_reliability_verification.py -v
+# Separate interpreter invocations preserve isolated Spark configuration.
+"$DDIP_TEST_PYTHON" -B -m unittest processing/tests/test_reliability_execution.py -v
+"$DDIP_TEST_PYTHON" -B -m unittest processing/tests/test_reliability_processing.py -v
+"$DDIP_TEST_PYTHON" -B -m unittest processing/tests/test_reliability_publication.py -v
+"$DDIP_TEST_PYTHON" -B -m unittest processing/tests/test_reliability_format_publication.py -v
+mvn -q -f services/content-api/pom.xml -Pintegration \
+  -Dtest=NoTests -Dsurefire.failIfNoSpecifiedTests=false \
+  -Danalytics.python="$DDIP_TEST_PYTHON" verify
+npm run check
+git diff --check
+git diff --cached --check
+~~~
+
+Restart flags are test barriers, not worker configuration. Use them only with an external controller
+for a disposable database; without that controller omit them. Local execution used ignored logs
+under outputs/e5-c2b2-* and private temporary logs. The original stopped state of the dedicated
+container is restored after testing; volumes are retained. The production JAR was inspected and
+contains the fixed capability/lifecycle but no WorkerTestSupport, ProductionWorkerChild, fixture
+classes or test executors. No migration, accepted ADR, native publication module or CI job changed.
+Hosted CI remains unverified until owner publication. No live feed, retained personal data,
+100K/1M benchmark or AWS operation was used.
+
+**Implemented:** fixed profile-pinned Reliability dispatch and safe definitive continuation.
+**Planned:** owner publication and hosted CI observation.
+**Deferred:** C3 execution-owner recovery/fault matrix, Content/RSS execution, dynamic profile
+switching/cross-profile automation, new controls, Operations UI, activation, authorization and full
+E5 completion. STOP after C2b-2.
+
+### C2b-2 changed files
+
+Production Java (existing execution package):
+[DatabaseConfiguration.java](../../services/content-api/src/main/java/platform/contentapi/execution/DatabaseConfiguration.java),
+[ReadOnlyVerifierProcess.java](../../services/content-api/src/main/java/platform/contentapi/execution/ReadOnlyVerifierProcess.java),
+[ReliabilityExecution.java](../../services/content-api/src/main/java/platform/contentapi/execution/ReliabilityExecution.java),
+[ReliabilityPreflight.java](../../services/content-api/src/main/java/platform/contentapi/execution/ReliabilityPreflight.java),
+[ReliabilityRuntime.java](../../services/content-api/src/main/java/platform/contentapi/execution/ReliabilityRuntime.java),
+[WorkerExecutionCapability.java](../../services/content-api/src/main/java/platform/contentapi/execution/WorkerExecutionCapability.java),
+[WorkerIdleLifecycle.java](../../services/content-api/src/main/java/platform/contentapi/execution/WorkerIdleLifecycle.java),
+[WorkerRepository.java](../../services/content-api/src/main/java/platform/contentapi/execution/WorkerRepository.java).
+
+Operational Python, configuration and test inclusion:
+[reliability_execution_preflight.py](../../processing/reliability_execution_preflight.py),
+[application.properties](../../services/content-api/src/main/resources/application.properties),
+[pom.xml](../../services/content-api/pom.xml).
+
+Tests and isolated harnesses:
+[test_reliability_execution_preflight.py](../../processing/tests/test_reliability_execution_preflight.py),
+[ReliabilityExecutionFixtures.java](../../services/content-api/src/test/java/platform/contentapi/execution/ReliabilityExecutionFixtures.java),
+[ReliabilityExecutionIT.java](../../services/content-api/src/test/java/platform/contentapi/execution/ReliabilityExecutionIT.java),
+[ReliabilityPreflightIT.java](../../services/content-api/src/test/java/platform/contentapi/execution/ReliabilityPreflightIT.java),
+[VerifierProcessTest.java](../../services/content-api/src/test/java/platform/contentapi/execution/VerifierProcessTest.java),
+[WorkerTestChild.java](../../services/content-api/src/test/java/platform/contentapi/execution/WorkerTestChild.java),
+[WorkerCoordinationIT.java](../../services/content-api/src/test/java/platform/contentapi/management/WorkerCoordinationIT.java),
+[ProductionWorkerChild.java](../../services/content-api/src/test/java/platform/contentapi/execution/ProductionWorkerChild.java),
+[ReliabilityWorkerIT.java](../../services/content-api/src/test/java/platform/contentapi/execution/ReliabilityWorkerIT.java),
+[WorkerCapabilityTest.java](../../services/content-api/src/test/java/platform/contentapi/execution/WorkerCapabilityTest.java).
+
+Documentation: this implementation contract and the
+[Content API/operator guide](../../services/content-api/README.md). Total: 23 files; no migration,
+accepted ADR, native publication contract or CI configuration was changed. Git index/branch are
+preserved; publication remains owner-managed.
