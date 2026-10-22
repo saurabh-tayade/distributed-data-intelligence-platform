@@ -4,6 +4,27 @@ DDIP turns RSS/Atom feeds and synthetic application request events into reproduc
 
 The project combines working standalone Content processing with an asynchronous, locally operational Reliability worker. It is an independent portfolio and learning project, not a production-ready commercial service.
 
+<!-- markdownlint-disable-next-line MD033 -->
+<a href="docs/visuals/data-product-journey.png"><img src="docs/visuals/data-product-journey.png" width="560" alt="Data Product Journey: standalone RSS/Atom Content processing and managed synthetic Reliability batches produce verified analytical products; managed Content execution remains planned."></a>
+
+[Full-resolution illustration](docs/visuals/data-product-journey.png) · [Editable SVG](docs/visuals/data-product-journey.svg) · [Technical notes and sources](docs/visuals/README.md)
+
+## Capabilities at a Glance
+
+Statuses describe scoped capabilities and evidence, not production readiness.
+
+| Capability | Status | Scope and remaining boundary |
+| --- | --- | --- |
+| Standalone Content Processing | ✓ Implemented and locally tested | RSS/Atom ingestion, SeaweedFS Bronze, Spark Silver and Gold |
+| Publisher Enrichment and Content Reports | ✓ Implemented and locally tested | Versioned publisher-reference enrichment and standalone DuckDB reports |
+| Gold REST APIs and React Analytics | ✓ Implemented and locally tested | Four analytical endpoints and dashboard views; final browser acceptance and closeout remain pending |
+| Managed Reliability Processing | ✓ Implemented and locally tested | JSONL/Parquet inputs, fixed-profile worker execution, Spark publication and independent output verification |
+| Durable Source and Run Management | ✓ Implemented and locally tested | Source revisions, verified imports, frozen run submissions and bounded execution history |
+| Execution Recovery | ◐ Partially implemented | Reconciliation admission and internal fenced handoff exist; native outcome resolution and production recovery activation remain unfinished |
+| Managed Content Processing | ○ Planned | Worker-managed RSS-to-Content execution |
+| Cancellation, Retry and React Operations | ○ Planned | Execution controls and an operator UI |
+| Streaming, Performance Benchmarks, AWS Validation and Multiworker Execution | — Deferred | Scale experiments and additional execution/deployment models |
+
 ## Inputs, outputs and consumers
 
 | Data product | Selected inputs | Resulting datasets and information | Current consumers |
@@ -57,25 +78,13 @@ flowchart TB
 
 Solid arrows show implemented paths; dashed arrows show planned managed Content execution. Content batches already work independently of the worker. The current React application consumes Gold analytics, while enriched Content and Reliability reports have standalone readers. PostgreSQL stores control and qualification metadata; native files remain the data authority. A newly verified worker result does not automatically replace the API's selected analytics publication.
 
-## Current implementation status
-
-**Committed E5 checkpoint: C3b — fenced execution recovery handoff**, commit `847511e`. The [E5 implementation contract](docs/architecture/durable-execution.md#c3b-fenced-execution-recovery-handoff) records its precise boundary and local evidence.
-
-| Status | Scope |
-| --- | --- |
-| Implemented and locally tested | Standalone RSS/Atom → Bronze → Silver → Gold; publisher-reference snapshots and enriched Content publications; DuckDB readers; four Gold analytics REST endpoints and the React dashboard |
-| Implemented and locally tested | Verified native imports; revisioned source management; idempotent queued submissions with frozen inputs; bounded run/attempt/event inspection; a fixed-profile Reliability worker executing CHECK_INPUTS → PUBLISH_RELIABILITY → VERIFY_RESULT for JSONL or Parquet, with atomic verified-result persistence and immutable replay |
-| Implemented and locally tested, internal only | C3a admits durable RECONCILE intent. C3b checks operator attestation and observable process evidence, then atomically transfers occupied ownership to a fenced reconciliation attempt in isolated tests. It does not resolve native publication outcomes or release the recovery slot |
-| In progress | E5 recovery is incomplete: C3c's operational resolver and final recovery disposition are not active. M6 dashboard browser acceptance and final closeout remain pending |
-| Planned / deferred | Managed Content/RSS execution; cancellation and retry; React Operations; cross-profile automation; streaming; distributed multiworker execution; E4a scale experiments and AWS validation |
-
 One worker startup is pinned to one approved execution profile and deployment digest. JSONL and Parquet use separate reviewed startups; stop the worker before changing profiles. It processes compatible runs in submission order. Content and other-profile runs remain queued. Ambiguous execution retains occupied ownership and blocks further dispatch; an expired heartbeat is never permission to take over.
 
 ## Execution bounds and performance evidence
 
 The current local admission policy allows **one globally active managed execution** and **at most 20 unfinished runs**, including active and recovery-required work. Reliability selections are bounded to **32 batches, 128 raw files, 1 GiB of raw input and 2 million physical occurrences**, subject to the stricter native per-file/profile limits. Writable volumes require at least **1 GiB free space** before stage authorization. These are admission limits, not measured throughput, guaranteed capacity or hard filesystem quotas; see the [accepted resource policy](docs/architecture/durable-execution.md#security-and-proposed-admission-limits).
 
-Small deterministic fixtures demonstrate correctness, real Spark publication, independent read-back and unchanged replay. [Recorded E2 fixture timings](docs/architecture/application-reliability-publication.md#reader-efficiency-gate-and-measured-observations) are explicitly not scale benchmarks. The [E3/E4a contract](docs/architecture/reliability-format-benchmarks.md#current-owner-approved-sequencing) separates implemented JSONL/Parquet correctness from deferred performance experiments. **No 100K/1M-event throughput result, streaming benchmark, distributed scaling result or AWS validation is claimed.**
+Small deterministic fixtures demonstrate correctness, real Spark publication, independent read-back and unchanged replay. [Recorded fixture timings](docs/architecture/application-reliability-publication.md#reader-efficiency-gate-and-measured-observations) are explicitly not scale benchmarks. The [format and benchmark contract](docs/architecture/reliability-format-benchmarks.md#current-owner-approved-sequencing) separates implemented JSONL/Parquet correctness from deferred performance experiments. **No 100K/1M-event throughput result, streaming benchmark, distributed scaling result or AWS validation is claimed.**
 
 ## Engineering approach
 
@@ -83,7 +92,7 @@ Small deterministic fixtures demonstrate correctness, real Spark publication, in
 - **Publish immutable datasets:** Spark writes Parquet with explicit schemas and completion evidence. Exact input selections determine native publication identities. Identical replay reopens completed results without rewriting their bytes; incomplete output is retained rather than silently repaired.
 - **Check data independently:** native readers validate schemas, inventories, hashes, provenance and reconciliation. Reliability's DuckDB verifier independently checks events, occurrences, aggregates and approximate-p95 rank policy. Missing, corrupt or changed dependencies fail closed.
 - **Make execution durable:** PostgreSQL captures source revisions, frozen selections, idempotency identities, runs, attempts, stages, controls and audit evidence. Short transactions fence one managed writer; native verification and Spark execution happen outside those transactions.
-- **Keep failure boundaries explicit:** known clean failures can release the slot. Uncertain writers or database outcomes retain blocked ownership. C3b's internal handoff is a foundation for recovery, not a complete operational resolver or an exactly-once process guarantee.
+- **Keep failure boundaries explicit:** known clean failures can release the slot. Uncertain writers or database outcomes retain blocked ownership. The internal recovery handoff is a foundation for recovery, not a complete operational resolver or an exactly-once process guarantee.
 - **Separate producers and consumers:** SQL readers, REST projections and the existing frontend consume verified data. Analytics-only startup does not require PostgreSQL. Local-first development uses synthetic tests, pinned runtimes and explicit operator configuration; cloud spending requires separate approval.
 
 ## Technology in use
@@ -109,7 +118,7 @@ Choose a standalone Content workflow or the managed Reliability workflow. There 
 2. **Build Content datasets:** use the [batch ingestion guide](docs/architecture/batch-ingestion.md), [Bronze-to-Silver guide](docs/architecture/bronze-to-silver.md) and [Gold publication guide](docs/architecture/gold-publication.md). [Publisher snapshots](docs/architecture/publisher-reference-snapshots.md) and [Content publication commands](docs/architecture/content-intelligence-publication.md#stage-b-implementation-and-executed-validation) add the standalone enrichment path. Tests and examples provide synthetic alternatives to deliberate live feed retrieval.
 3. **Run managed Reliability:** review the [v2 native interfaces and format contract](docs/architecture/reliability-format-benchmarks.md#version-and-interface-boundary), [operator imports](services/content-api/README.md#spark-free-native-input-imports-b2b-1b-a), [source management](services/content-api/README.md#e5-b2a-source-management) and [run submission](services/content-api/README.md#durable-queued-run-submission-b2b-2a). Then follow the [active worker startup and observation guide](services/content-api/README.md#c2b-2-active-reliability-worker). It requires reviewed private storage/runtime bindings and an immutable profile; it does not discover or substitute inputs.
 4. **Explore Content analytics:** start the [Spring Boot API](services/content-api/README.md#local-startup) with an explicitly selected completed Gold publication, then the [React dashboard](frontend/README.md#local-startup). See the [REST contracts](docs/architecture/analytics-api-contracts.md) and [standalone SQL guide](docs/architecture/duckdb-analytics.md). Reliability results do not add new dashboard views.
-5. **Inspect execution safely:** use the existing [run history APIs](services/content-api/README.md#bounded-run-history-and-inspection-b2b-2b). [RECONCILE controls](services/content-api/README.md#c3a-reconciliation-intent-only) record operator intent only; [C3b](services/content-api/README.md#c3b-internal-recovery-handoff) supplies no production recovery command. Do not clear coordinator records or bypass the installation guard.
+5. **Inspect execution safely:** use the existing [run history APIs](services/content-api/README.md#bounded-run-history-and-inspection-b2b-2b). [RECONCILE controls](services/content-api/README.md#c3a-reconciliation-intent-only) record operator intent only; the [internal recovery handoff](services/content-api/README.md#c3b-internal-recovery-handoff) supplies no production recovery command. Do not clear coordinator records or bypass the installation guard.
 
 ## Repository guide
 
@@ -124,15 +133,15 @@ Choose a standalone Content workflow or the managed Reliability workflow. There 
 | [docs/](docs/) | Architecture, contracts, decisions, operator guidance and recorded evidence |
 | [scripts/](scripts/) | Batch launcher and repository/ingestion checks |
 
-Start with the [E5 execution architecture](docs/architecture/durable-execution.md), [ADR index](docs/adr/README.md) and accepted [coordination](docs/adr/0010-durable-execution-coordination-and-recovery.md) / [import ownership](docs/adr/0011-artifact-import-maintenance-ownership.md) decisions. Native contracts live in the [Silver](docs/architecture/silver-processing.md), [Gold](docs/architecture/gold-contracts.md), [Content](docs/architecture/content-intelligence-publication.md) and [Reliability v2](docs/architecture/reliability-format-benchmarks.md) guides. The broader [product specification](docs/product-specification.md) and domain proposals ([Content](docs/data-products/content-intelligence.md), [Reliability](docs/data-products/application-reliability.md)) retain Proposed scope; accepted implementation slices are documented separately.
+Start with the [execution architecture](docs/architecture/durable-execution.md), [ADR index](docs/adr/README.md) and accepted [coordination](docs/adr/0010-durable-execution-coordination-and-recovery.md) / [import ownership](docs/adr/0011-artifact-import-maintenance-ownership.md) decisions. Native contracts live in the [Silver](docs/architecture/silver-processing.md), [Gold](docs/architecture/gold-contracts.md), [Content](docs/architecture/content-intelligence-publication.md) and [Reliability v2](docs/architecture/reliability-format-benchmarks.md) guides. The broader [product specification](docs/product-specification.md) and domain proposals ([Content](docs/data-products/content-intelligence.md), [Reliability](docs/data-products/application-reliability.md)) retain Proposed scope; accepted implementation slices are documented separately.
 
 Historical context remains available in the [roadmap](docs/charter.md#milestones-m0m9), [M1 closeout](docs/m1-closeout.md), [M2 closeout](docs/m2-closeout.md) and [M6 frontend acceptance notes](frontend/README.md#acceptance-and-design). Older checkpoint paragraphs describe their original evidence, not current completion status.
 
 ## Validation and reproducibility
 
-The [committed C3b validation record](docs/architecture/durable-execution.md#c3b-validation-and-c3c-prerequisites) reports **323 Java unit/component tests, 517 real PostgreSQL integration cases and 20 analytics HTTP/Python compatibility cases passed locally**. It includes Spark-backed Silver import regressions and recorded database-restart checks. These are recorded checkpoint results, not tests rerun for this README refresh, and do not establish a complete native recovery resolver. Other native product acceptance evidence is linked from the processing contracts above.
+Technical history: the [C3b implementation boundary](docs/architecture/durable-execution.md#c3b-fenced-execution-recovery-handoff) and [local validation record](docs/architecture/durable-execution.md#c3b-validation-and-c3c-prerequisites) report **323 Java unit/component tests, 517 real PostgreSQL integration cases and 20 analytics HTTP/Python compatibility cases passed locally**. That record includes Spark-backed Silver import regressions and database-restart checks. These are historical checkpoint results, not tests rerun for this README refresh, and do not establish a complete native recovery resolver. Other native product acceptance evidence is linked from the processing contracts above.
 
-The [CI definition](.github/workflows/ci.yml) configures documentation/hygiene, Java ingestion, Python/Spark/DuckDB and API/PostgreSQL integration, and frontend checks. Hosted CI for the current E5 checkpoint is **unverified here**; local evidence is reported separately.
+Hosted evidence: [E5 Phase 1 PR #51](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/pull/51) is merged. Its [successful PR CI run #39794730299](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/39794730299), for PR head `822930d`, passed all four jobs: documentation/hygiene, Java ingestion, Python/Spark/DuckDB with API/PostgreSQL integration, and frontend checks. The [CI definition](.github/workflows/ci.yml) records those checks. This evidence covers that PR snapshot; it does not claim hosted CI success for this README update or later commits.
 
 For documentation and repository checks, from the repository root with Node.js 24:
 
