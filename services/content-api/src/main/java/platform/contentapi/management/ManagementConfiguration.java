@@ -23,6 +23,7 @@ public class ManagementConfiguration {
     @Bean RunRepository runRepository(JdbcTemplate jdbc,ManagementTransactions tx,DatabaseSettings settings,ReviewedSourceCatalog catalog,RunHistoryRepository history) {
         return new RunRepository(jdbc,tx,settings.installationId(),catalog,history);
     }
+    @Bean ControlRepository controlRepository(JdbcTemplate jdbc,ManagementTransactions tx,DatabaseSettings settings){return new ControlRepository(jdbc,tx,settings.installationId());}
     @Bean LocalPolicy localPolicy(Environment e) {
         try {
             String address=e.getProperty("server.address","127.0.0.1");SourceFailure.require(Set.of("127.0.0.1","::1","localhost").contains(address));

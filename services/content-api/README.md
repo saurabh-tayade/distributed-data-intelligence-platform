@@ -3,8 +3,9 @@
 This Java 21 module implements `GET /api/v1/publishers`, `/api/v1/articles`, `/api/v1/daily` and `/api/v1/quality` over one explicitly pinned Gold publication. The owner [accepted ADR 0005](../../docs/adr/0005-gold-consumer-integration.md) on October 18, 2026. The [JDBC POC](../api/README.md) remains isolated and is not a runtime dependency. The separate [M6.3 React dashboard](../../frontend/README.md) consumes this publisher endpoint. M6.4 adds the three analytical endpoints and deterministic article pagination. `/api/v1/publication` is not implemented. The M6.5 frontend now consumes all four endpoints; final dashboard browser acceptance and M6 closeout remain pending.
 
 E5's current worker entry point is the [active Reliability worker](#c2b-2-active-reliability-worker).
-The passive-worker sections below describe earlier checkpoints; C3 recovery and Content execution
-remain deferred. Analytics-only startup and its publication selection are unchanged.
+The passive-worker sections below describe earlier checkpoints. [C3a control admission](#c3a-reconciliation-intent-only)
+records an explicit recovery request; execution-owner recovery/handoff and Content execution remain
+deferred. Analytics-only startup and its publication selection are unchanged.
 
 ## Acceptance and structure
 
@@ -1362,3 +1363,114 @@ global twenty-unfinished-run admission budget. Separate-process
 guard and pre-launch JVM-death tests do not prove universal descendant containment. Production-style
 local acceptance is not distributed/high-availability or exactly-once process execution. C3 recovery,
 Content execution, cross-profile automation, controls/UI and full E5 completion remain deferred.
+
+## C3a reconciliation intent only
+
+C3a adds RECONCILE admission to the existing loopback management API. **202/REQUESTED means
+recovery intent is durable; reconciliation has not started and the old occupied owner remains.**
+There is no recovery worker, force-clear command, automated process killer or takeover endpoint.
+CANCEL, RETRY, PAUSE and RESUME are unsupported (400, no durable control). The active Reliability
+worker still refuses any occupied execution/import slot. Do not restart it expecting admission to
+recover a crashed run. C3b must be separately authorized and implemented.
+
+### Operator safety checklist
+
+Before making the explicit assertion, a trusted local operator must:
+
+1. Identify the exact installation, run and occupied attempt from retained operational evidence.
+   Preserve the original attempt/stage commands, results, process-instance/PID/start records and
+   native artifacts; do not edit SQL pointers, epochs or run states to make admission pass.
+2. Stop ordinary worker restarts and unmanaged/legacy publishers for that installation. Inspect the
+   original worker and Python, Spark JVM and Py4J gateway descendants, including possible orphaned
+   or reparented processes. Check process identity/start, not only a numerical PID. Use the reviewed
+   local shutdown procedure; this HTTP request neither stops nor kills processes.
+3. Investigate uncertain launch gaps, descendant cleanup or unobserved writers. Preserve native
+   incomplete/completed namespaces without repair, deletion or relaunch. A missing parent/PID,
+   STOPPED row, free host lock, disconnected database session or old heartbeat is insufficient.
+4. Confirm the intended installation/profile/root identities and retained evidence have not been
+   substituted. If actual quiescence remains uncertain, do not assert it; keep ownership blocked.
+5. Only after inspection, explicitly assert quiescence for this exact attempt. C3a may reject a
+   matching live recorded worker/child or unavailable process inspection. An accepted assertion
+   remains an operator statement; C3b must independently requalify it under the installation guard.
+
+These checks cannot establish universal OS descendant containment or fencing against hostile or
+unmanaged filesystem writers. Opaque run/control IDs are identifiers, not authorization.
+
+### POST and GET
+
+First GET `/api/management/v1/runs/{runId}` and retain its run ETag. The new request requires the
+existing approved Origin and X-DDIP-Local-Request header, plus Idempotency-Key and that strong
+If-Match. No extra fields or arbitrary reason/path/command are accepted:
+
+```sh
+# API_ORIGIN is the configured loopback origin; RUN_ID and ATTEMPT_ID are exact recorded UUIDs.
+# RUN_ETAG includes its quotes, for example '"5"'. Keep it with the original body/key for replay.
+curl --fail-with-body -i "$API_ORIGIN/api/management/v1/runs/$RUN_ID/controls" \
+  -H "Origin: $API_ORIGIN" -H 'X-DDIP-Local-Request: 1' \
+  -H 'Content-Type: application/json' -H 'Idempotency-Key: reconcile-inspected-001' \
+  -H "If-Match: $RUN_ETAG" \
+  --data "{\"action\":\"RECONCILE\",\"attemptId\":\"$ATTEMPT_ID\",\"quiescenceConfirmed\":true}"
+```
+
+Successful committed data (inside `{apiVersion:1,data,meta:{correlationId}}`) has this shape:
+
+```json
+{
+  "controlId": "80000000-0000-4000-8000-000000000001",
+  "runId": "60000000-0000-4000-8000-000000000001",
+  "type": "RECONCILE",
+  "state": "REQUESTED",
+  "reason": null,
+  "requestedAt": "2026-10-21T12:00:00.123456Z",
+  "appliedAt": null,
+  "rowVersion": "0",
+  "runVersion": "5"
+}
+```
+
+The relative Location is `/api/management/v1/runs/{runId}/controls/{controlId}`. GET it without
+mutation-only headers to inspect the same safe fields, with control-row ETag. runVersion is current
+run context. Run detail latestControl and ordered run events show the committed request, without
+private process/attestation/evidence fields. Reads do not change state or verify native artifacts.
+Versions are decimal strings and timestamps retain UTC microseconds. Existing 64 KiB request and
+1 MiB response limits apply; all endpoint query parameters and duplicate headers are rejected.
+
+Idempotency scope is `(run_id,key)` and covers action, exact target, true confirmation, run ID and
+expected run version. Object order/whitespace is canonicalized. Retrying the original key/body/
+If-Match returns the original control before stale-current-ETag/eligibility checks, including after
+an API/database restart. Different normalized content under the key returns 409 IDEMPOTENCY_CONFLICT.
+A new stale command returns 412; missing If-Match returns 428. A pending request for the attempt,
+wrong/terminal/unoccupied binding or observed matching live writer returns 409 STATE_CONFLICT.
+128 controls/run or exhausted audit reserve returns 429. Unknown identity returns 404; invalid
+schema/type/UUID/header returns 400; Host/Origin/mutation-boundary failures return 403. Database
+failure returns safe 503 MANAGEMENT_UNAVAILABLE. No SQL/native/process diagnostic is public.
+
+Run must be RUNNING, CANCEL_REQUESTED or RECOVERY_REQUIRED with exactly the selected occupied
+attempt; abrupt loss can leave CLAIMED or RUNNING without RECOVERY_REQUIRED. An INTERRUPTED attempt
+or failed RECONCILE attempt may remain occupied only under the accepted recovery-state combinations.
+Admission leaves all ownership/run/attempt/stage records unchanged. An uncertain commit is resolved
+with the same key, never by a handoff or a new attempt. A new key cannot create another pending
+reconciliation request for the same occupied attempt. There is no C3a terminal control processor.
+
+### Tests and C3b prerequisite
+
+Use only disposable PostgreSQL databases and synthetic metadata. The control tests launch a tiny
+test-only JVM to record observed process exit; the admission operation itself starts no child.
+They do not equate that exit with descendant quiescence. Existing worker/publication regression
+fixtures remain separate. Commands and current counts are in the
+[C3a implementation evidence](../../docs/architecture/durable-execution.md#c3a-local-validation).
+
+```sh
+export JAVA_HOME=$(/usr/libexec/java_home -v 21)
+# Supply private DDIP_TEST_DB_URL/USER/PASSWORD for an isolated disposable PostgreSQL server.
+mvn -q -f services/content-api/pom.xml -Ppostgres \
+  -Dtest=ControlCommandsTest -Dit.test=ControlAdmissionIT verify
+```
+
+A test-container controller may use `-Dddip.test.control-restart-signal=/private/tmp/ddip-c3a-control-restart`
+to wait for READY, restart that disposable PostgreSQL server and create its `.done` acknowledgment.
+Omit the flag without a controller. It is a test barrier, not an operational API or worker property.
+C3b must implement fresh guard/quiescence qualification, exact stale-control rejection, atomic
+occupied-to-occupied fenced handoff, idempotent commit reconciliation, native read-only result
+qualification and final control/attempt/run disposition. None of these is performed by C3a.
+E5 remains incomplete; no new run execution/control functionality is inferred from REQUESTED.

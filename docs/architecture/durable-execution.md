@@ -2,7 +2,7 @@
 
 Status: **Accepted — October 20, 2026**, with the Stage A.1 refinements, under [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md). The owner accepted additive [ADR 0011](../adr/0011-artifact-import-maintenance-ownership.md) on October 21. Architecture acceptance alone passes no E5 test group. Current implementation and authorization are recorded below; earlier checkpoint status paragraphs and counts remain historical. Accepted ADRs and native data contracts are unchanged.
 
-Current authorization: B1–B2, C1, C2a and C2b-1 are owner-committed. The owner has authorized **C2b-2 production Reliability worker activation**. The [current implementation boundary](#c2b-2-production-reliability-worker) enables only the fixed Reliability adapter with one pinned profile per startup. C3 recovery, Content execution and new controls remain deferred. Earlier checkpoint status paragraphs and counts are historical.
+Current authorization: B1–B2, C1, C2a, C2b-1 and C2b-2 are owner-committed. The fixed Reliability worker remains active with one pinned profile per startup. The owner has authorized **C3a reconciliation control admission only**; its [implementation boundary](#c3a-reconciliation-control-admission) records REQUESTED intent without changing execution ownership. C3b recovery/handoff, Content execution and CANCEL/RETRY remain deferred. Earlier checkpoint status paragraphs and counts are historical.
 
 ## Boundary and invariants
 
@@ -1915,3 +1915,203 @@ Documentation: this implementation contract and the
 [Content API/operator guide](../../services/content-api/README.md). Total: 23 files; no migration,
 accepted ADR, native publication contract or CI configuration was changed. Git index/branch are
 preserved; publication remains owner-managed.
+
+## C3a reconciliation control admission
+
+**Implemented:** durable RECONCILE intent admission and safe control inspection only, on the
+owner-prepared E5 branch at baseline `9176b91ee0c869777108ea24dc44f5919f4569f2`.
+C3a creates REQUESTED control/audit records. It does not acquire the installation guard, transfer
+ownership, create a reconciliation attempt, mutate run/attempt/stage/worker/coordinator records,
+verify publications, launch children or apply/reject controls. The production Reliability worker
+and native contracts are unchanged. A free guard, absent/reused PID, stale heartbeat or operator
+boolean does not authorize recovery. C3b requires separate owner authorization.
+
+### HTTP command and inspection
+
+`POST /api/management/v1/runs/{runId}/controls` accepts exactly:
+
+~~~json
+{"action":"RECONCILE","attemptId":"70000000-0000-4000-8000-000000000001","quiescenceConfirmed":true}
+~~~
+
+Run/attempt IDs must be canonical lower-case UUIDs. Require Idempotency-Key (1–128 ASCII token
+characters), a single strong If-Match containing the expected decimal run version (for example
+`"5"`), application/json UTF-8, the approved Origin and X-DDIP-Local-Request: 1. Existing loopback
+Host/Origin policy, strict duplicate/type/field/UTF-8 decoding and 64 KiB body bounds apply. Unknown
+query parameters and duplicate headers are rejected. CANCEL, RETRY, PAUSE and RESUME return
+INVALID_ARGUMENT with no records. Null/false confirmation and free-text reasons are rejected.
+No mutation header is required for GET.
+
+On committed admission return 202, a relative Location identifying
+`/api/management/v1/runs/{runId}/controls/{controlId}`, control ETag `"0"` and the established
+`{apiVersion:1,data,meta:{correlationId}}` envelope. Data fields are controlId, runId, type, state,
+reason, requestedAt, appliedAt, rowVersion and runVersion. Versions are decimal strings; timestamps
+are UTC with six fractional digits. New state is REQUESTED with null reason/appliedAt. runVersion
+is current inspection context, not a replacement for the command's stored expected version.
+`GET` at that Location returns the same safe projection and the control's current row ETag;
+unknown or wrong-run identities return NOT_FOUND. Neither DTO exposes the target process,
+confirmation, canonical request, idempotency key, private artifact evidence or paths. Existing run
+detail latestControl and run-linked event history expose the committed request. GET has no
+coordinator-lock or native-verification dependency. Existing 1 MiB response cap applies.
+
+Errors remain fixed management envelopes: 400 INVALID_ARGUMENT, 403 LOCAL_BOUNDARY_REJECTED,
+404 NOT_FOUND, 409 IDEMPOTENCY_CONFLICT/STATE_CONFLICT, 412 PRECONDITION_FAILED,
+428 PRECONDITION_REQUIRED, 429 MANAGEMENT_CAPACITY_EXCEEDED and 503 MANAGEMENT_UNAVAILABLE.
+Positive live-writer evidence and an existing pending request are STATE_CONFLICT. No raw SQL,
+process diagnostics or private runtime evidence appears in responses.
+
+### Canonical identity, lock order and admission
+
+Scope is `(run_id,idempotency_key)` under fixed local-operator requester semantics, not authenticated
+identity. Exact normalized UTF-8 bytes and SHA-256 are stored in controls; JSONB is not the identity
+authority. Object keys use the existing SourceJson canonical encoder. Expected If-Match version
+is part of normalized content as a decimal string, consistent with source commands. The body has
+no optional/defaulted fields. This literal vector was independently computed with Python hashlib:
+
+~~~text
+{"action":"RECONCILE","attemptId":"70000000-0000-4000-8000-000000000001","expectedVersion":"5","quiescenceConfirmed":true,"runId":"60000000-0000-4000-8000-000000000001"}
+SHA-256: 46b24ff4d50645dc0961d129b3e61dbaa0b8a7db911e6e648664713c3bf0f528
+~~~
+
+Equivalent JSON field order/whitespace has the same identity. Changing the run, attempt or expected
+version changes command identity. Keep the original If-Match and body when resolving a lost reply;
+a refreshed If-Match under the same key is different content. Identical replay resolves before
+current ETag, current process/ownership eligibility, pending-control or capacity checks, returning
+the original control ID/state with current run-version context. It never performs handoff.
+
+ControlRepository uses two short transactions, with bounded process observation between them:
+
+1. Lock coordinator first and validate installation. Resolve scoped replay by exact bytes/hash.
+   For new work, lock run then exact attempt; validate ETag, occupied binding, worker/installation,
+   execution-profile and CONTROL binding membership. Read only bounded process/stage projections.
+2. Outside SQL transactions inspect recorded worker PID/start and recorded stage child PID/start.
+   A still-live matching start, or an observable live PID with unavailable start, vetoes admission.
+   Denied/unsupported observation also fails closed. An absent or reused PID is not positive proof
+   of quiescence. No process is killed or launched; native files are not inspected.
+3. Re-lock coordinator, resolve replay again, lock run/attempt and recheck the exact original
+   coordinator/run/attempt/worker/stage projection, including versions and process identities.
+   Any change rejects rather than adopting a new token. Reject another REQUESTED RECONCILE targeting
+   this attempt. Enforce 128 controls/run and existing audit reserve. Atomically insert immutable
+   REQUESTED control plus CONTROL_REQUESTED/ACCEPTED audit linked to run/attempt/control. Commit.
+
+An ambient caller transaction is rejected so external observation cannot accidentally occur inside
+one. The coordinator serializes competing admissions; different keys cannot insert two pending
+requests through this protocol, even when their observations overlap. Existing unique scoped key,
+same-run target FK, immutable request/evidence guards and append-only audit protect the result.
+There is no migration or new table/index. Privileged manual SQL is not a supported admission path.
+A rollback leaves no control/audit pair. Lost final acknowledgment is resolved by exact-key replay
+or GET of the known control; an unavailable/inconclusive database never permits recovery effects.
+
+Eligible run states are RUNNING, CANCEL_REQUESTED or RECOVERY_REQUIRED with the exact occupied
+coordinator/current attempt. EXECUTE attempts may be CLAIMED/RUNNING; RECOVERY_REQUIRED may retain
+INTERRUPTED or a terminal FAILED RECONCILE attempt, as specified by the accepted handoff contract.
+An active RECONCILE attempt must belong to RECOVERY_REQUIRED. Other terminal/released/inconsistent
+bindings fail closed. Admission does not require a stale heartbeat or change coordinator mode/epoch.
+Original immutable attempt/worker links and retained stage process evidence remain for C3b.
+
+### Quiescence and next checkpoint
+
+quiescenceConfirmed=true is a trusted operator assertion only. C3a's observable checks are a
+negative veto over recorded local process identities, not universal descendant containment or an
+attestation verifier. Missing parents can leave unrecorded Python/JVM/Py4J descendants. PID reuse,
+released FileChannel locks, STOPPED status and expired heartbeats do not prove those writers stopped.
+The operator checklist is in the [service guide](../../services/content-api/README.md#c3a-reconciliation-intent-only).
+REQUESTED blocks neither by a new lock nor by a fabricated attempt: the original occupied slot
+continues to block ordinary dispatch/import ownership as before. C3a has no way to apply or clear it.
+
+**Planned, not implemented:** C3b must independently establish fresh quiescence for all observable
+writers and possible orphans/unmanaged writers; hold the identity-checked installation guard;
+validate installation/profile, original process/evidence references, REQUESTED control/target and
+captured expected run version; then perform the accepted atomic occupied-to-occupied, epoch-fenced
+handoff with attempt ID equal to control ID. Revalidate controls/history bounds and resolve ambiguous
+handoff commits by exact identities. No intermediate idle slot is permitted. Native read-only
+reconciliation, final control disposition and safe release require their own implemented validation.
+**Deferred:** all handoff/recovery execution, automatic takeover/retry, CANCEL/RETRY, process killing,
+artifact repair/cleanup, Content processing, UI, AWS and E5 completion.
+
+### C3a local validation
+
+**Tested locally:** 308 distinct Java unit/component cases, **453 distinct PostgreSQL cases** and
+20 analytics HTTP/Python compatibility cases passed across the full and final affected runs.
+No skipped cases or remaining failures/errors. Do not add repeated focused cases to these totals.
+The initial full run was 308 Java passing and 450/451 PostgreSQL passing: one pre-C3a submission
+test still expected the controls route to be absent (404). Its body is now correctly rejected as
+INVALID_ARGUMENT (400). The assertion was updated while preserving no-control/no-attempt checks.
+The final affected run passed all 308 Java cases and **96 PostgreSQL cases** (52 ControlAdmissionIT
+plus 44 RunSubmissionIT), including that corrected case and two additional C3a cases. The final
+453-case PostgreSQL total is the current suite union, not a claim of a second full-suite execution.
+
+**Gate A:** 30 ControlCommandsTest cases cover the literal canonical vector, equivalent order,
+expected-version sensitivity, exact UUIDs, Long.MAX_VALUE, strict fields/types/duplicate keys,
+UTF-8/body limits, unsupported controls and strong If-Match/idempotency validation. Seventeen
+ControlAdmissionIT command/HTTP cases test real loopback POST/GET plus servlet/filter validation,
+202/Location/control ETag/envelope, null fields, safe timestamps/versions, Host/Origin/mutation
+protections, required/duplicate headers, lookup and existing detail/event integration. The successful
+real HTTP response contains no private process/attestation/evidence fields.
+
+**Gate B:** 35 additional ControlAdmissionIT PostgreSQL cases exercise all accepted occupied
+run/attempt combinations; same-key replay after a version change and newly live recorded child;
+changed command conflict; matching live worker and child vetoes with fresh/stale heartbeats;
+reused PID semantics; wrong run/attempt/installation, released/terminal bindings; control/audit
+insertion rollback; observation outside SQL; mutation of coordinator/run/attempt/worker/stage
+evidence before finalization; deterministic concurrent same-key/different-key admission; 128-control
+capacity and replay; immutable control identity; actual packaged-capability refusal of an occupied
+REQUESTED slot; outages before admission, GET and final persistence; and lost final commit acknowledgment.
+The latter injects a connection failure after the real PostgreSQL commit, then resolves the original
+control by exact-key replay without duplicate control/audit or ownership mutation. Admission/reads
+leave original run/attempt/coordinator/worker/stage and artifact metadata unchanged. Fixtures do not
+fabricate successful publications or RECONCILE attempts through application code.
+
+Five actual dedicated-container PostgreSQL restarts were observed at the worker, history, control,
+Reliability-result and production-result barriers. The C3a control retained its identity, exact
+REQUESTED summary, original occupied binding/epoch and replay identity across API/database restart.
+The full regression included B1/source/import/submission/history/worker suites, **23 Spark-backed
+Silver import cases**, 41 Reliability preflight, 27 execution and 20 production-worker cases, all
+passing. No standalone native Python suite was rerun for this control-only change. Existing native
+processing occurred only inside the bounded synthetic regression fixtures.
+
+Exact underlying commands (private DDIP_TEST_DB_* supplied by local harness; Java 21 and pinned
+outputs/silver-python312/.venv Python; process/scratch configuration from reviewed test profiles):
+
+~~~sh
+export JAVA_HOME=$(/usr/libexec/java_home -v 21)
+export DDIP_TEST_PYTHON="$PWD/outputs/silver-python312/.venv/bin/python"
+
+# Final focused gates: 30 Java + 50 PostgreSQL at this point, all passed.
+mvn -q -f services/content-api/pom.xml -Ppostgres \
+  -Dtest=ControlCommandsTest -Dit.test=ControlAdmissionIT verify
+
+# Full regression: 308 Java; 450/451 PostgreSQL, obsolete route assertion corrected below.
+# External controller restarts only the disposable server at each READY barrier and writes .done.
+mvn -q -f services/content-api/pom.xml -Ppostgres \
+  -Dddip.test.worker-restart-signal=/private/tmp/ddip-c3a-worker-restart \
+  -Dddip.test.history-restart-signal=/private/tmp/ddip-c3a-history-restart \
+  -Dddip.test.reliability-restart-signal=/private/tmp/ddip-c3a-reliability-restart \
+  -Dddip.test.production-restart-signal=/private/tmp/ddip-c3a-production-restart \
+  -Dddip.test.control-restart-signal=/private/tmp/ddip-c3a-control-restart verify
+
+# Final affected run, including two expanded cases: 308 Java + 96 PostgreSQL, all passed.
+mvn -q -f services/content-api/pom.xml -Ppostgres \
+  -Dit.test=ControlAdmissionIT,RunSubmissionIT verify
+
+# Twenty actual HTTP/Python analytics cases passed; no Java cases repeated by this command.
+mvn -q -f services/content-api/pom.xml -Pintegration \
+  -Dtest=NoTests -Dsurefire.failIfNoSpecifiedTests=false \
+  -Danalytics.python="$DDIP_TEST_PYTHON" verify
+npm run check
+git diff --check
+git diff --cached --check
+~~~
+
+Markdown/local links for 44 files and repository hygiene passed. The production JAR contains no
+ControlTestProcess, control test classes or WorkerTestSupport. V1–V7, accepted ADRs, native modules,
+worker dispatch and supervision are unchanged; no CI configuration change. The dedicated test
+container is restored to its original stopped state with volumes retained. Git index is unchanged;
+no branch/stage/commit/push/GitHub mutation was performed. Hosted CI remains unverified until owner
+publication. Local observations do not prove universal descendant quiescence or safe handoff.
+
+Changed files: ControlCommands.java, ControlProcesses.java, ControlRepository.java and
+ControlController.java; API wiring in ManagementConfiguration.java/SourceAdvice.java; test selection
+in services/content-api/pom.xml; ControlCommandsTest.java, ControlAdmissionIT.java,
+ControlTestProcess.java, WorkerTestSupport.java and the obsolete-route assertion in RunSubmissionIT.java;
+this contract and services/content-api/README.md. No new dependency, table, migration or native contract.
