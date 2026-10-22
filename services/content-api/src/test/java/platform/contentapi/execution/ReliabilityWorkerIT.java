@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.*;
 
 /** Actual packaged lifecycle/capability, loopback HTTP, native Spark and disposable PostgreSQL. */
 class ReliabilityWorkerIT extends ReliabilityExecutionFixtures {
+    private static final long VERIFY_BARRIER=1298375;
     ConfigurableApplicationContext api,workerContext;HttpClient client;String base;JsonNode request;
     @Override boolean productionSetup(){return true;}
     @Override void finishSetup(JsonNode request,JsonNode frozen)throws Exception {
@@ -64,6 +65,81 @@ class ReliabilityWorkerIT extends ReliabilityExecutionFixtures {
     UUID submit(String key)throws Exception {var r=write("/runs",request,key,null);assertThat(r.statusCode()).withFailMessage(r.body()).isEqualTo(202);return UUID.fromString(SourceJson.parse(r.body().getBytes()).get("data").get("runId").stringValue());}
     JsonNode get(UUID id,String suffix)throws Exception {var r=client.send(HttpRequest.newBuilder(URI.create(base+"/api/management/v1/runs/"+id+suffix)).GET().build(),HttpResponse.BodyHandlers.ofString());assertThat(r.statusCode()).isEqualTo(200);assertThat(r.body()).doesNotContain(work.toString(),"command.json","retained.json");return SourceJson.parse(r.body().getBytes()).get("data");}
     void await(BooleanSupplier condition,int seconds)throws Exception {long until=System.nanoTime()+TimeUnit.SECONDS.toNanos(seconds);while(!condition.getAsBoolean() && System.nanoTime()<until)Thread.sleep(20);assertThat(condition.getAsBoolean()).isTrue();}
+    /** Exact single-bigint advisory key and blocking session, not an unrelated database wait. */
+    boolean verificationBarrierWaiting(int holderPid) {
+        return Boolean.TRUE.equals(jdbc.queryForObject("""
+            SELECT EXISTS (
+                SELECT 1 FROM pg_locks l JOIN pg_stat_activity a ON a.pid=l.pid
+                WHERE a.datname=current_database() AND a.wait_event_type='Lock' AND a.wait_event='advisory'
+                  AND l.locktype='advisory' AND NOT l.granted AND l.mode='ExclusiveLock'
+                  AND l.classid=0 AND l.objid=? AND l.objsubid=1
+                  AND ?=ANY(pg_blocking_pids(l.pid)))
+            """,Boolean.class,VERIFY_BARRIER,holderPid));
+    }
+    void awaitVerificationBarrier(WorkerIdleLifecycle w,int holderPid,UUID waiting,Duration maximum)throws Exception {
+        long start=System.nanoTime(),nextProgress=0;var progress=new ArrayList<String>();
+        // The native Spark publisher precedes this barrier; 40s was not a portable publication budget.
+        // This is only a test deadline. Production stage/attempt deadlines and verification are unchanged.
+        while(System.nanoTime()-start<maximum.toNanos()) {
+            try {
+                if(verificationBarrierWaiting(holderPid))return;
+                if(!w.isRunning() || !w.condition().equals("READY"))
+                    throw verificationWaitFailure("Worker stopped before VERIFY_RESULT barrier",w,holderPid,waiting,start,progress);
+                if(System.nanoTime()>=nextProgress) {
+                    var row=jdbc.queryForMap("SELECT state,current_stage FROM ddip_management.runs WHERE run_id=?",run);
+                    String current=row.toString();
+                    if(progress.isEmpty() || !progress.getLast().endsWith(current)) {
+                        if(progress.size()<8)progress.add(TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-start)+"ms:"+current);
+                    }
+                    if(!Set.of("QUEUED","RUNNING").contains(row.get("state")) || "VERIFY_RESULT".equals(row.get("current_stage")))
+                        throw verificationWaitFailure("Run left the expected pre-verification state",w,holderPid,waiting,start,progress);
+                    nextProgress=System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(500);
+                }
+            }catch(org.springframework.dao.DataAccessException ex) {
+                throw verificationWaitFailure("Database observation unavailable",w,holderPid,waiting,start,progress);
+            }
+            Thread.sleep(50);
+        }
+        throw verificationWaitFailure("Timed out before VERIFY_RESULT barrier",w,holderPid,waiting,start,progress);
+    }
+    AssertionError verificationWaitFailure(String reason,WorkerIdleLifecycle w,int holderPid,UUID waiting,long start,List<String> progress) {
+        String prefix=reason+"; elapsedMs="+TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-start)
+            +"; expected=VERIFY_RESULT BEFORE INSERT waiting on advisory key "+VERIFY_BARRIER+" blocked by the held test session"
+            +"; workerRunning="+w.isRunning()+"; workerCondition="+w.condition()+"; progress="+progress;
+        // Explicit safe projections only: never SELECT *, query text, commands, private evidence or exception text.
+        try {
+            boolean observed=verificationBarrierWaiting(holderPid);
+            var runs=jdbc.queryForList("SELECT run_id,state,current_stage,row_version,outcome_code FROM ddip_management.runs WHERE run_id IN (?,?) ORDER BY submission_seq LIMIT 2",run,waiting);
+            var attempts=jdbc.queryForList("SELECT attempt_id,attempt_no,kind,state,owner_epoch,row_version,outcome_code FROM ddip_management.attempts WHERE run_id=? ORDER BY attempt_no DESC LIMIT 2",run);
+            var stages=jdbc.queryForList("""
+                SELECT s.stage,s.state,s.row_version,s.child_pid IS NOT NULL AS child_recorded,s.started_at,s.finished_at,s.outcome_code
+                FROM ddip_management.stage_invocations s JOIN ddip_management.runs r ON r.current_attempt_id=s.attempt_id
+                WHERE r.run_id=? ORDER BY s.stage LIMIT 3
+                """,run);
+            var coordinator=jdbc.queryForMap("SELECT mode,active_attempt_id,epoch,row_version FROM ddip_management.coordinator WHERE singleton_id=1");
+            return new AssertionError(prefix+"; expectedLockObserved="+observed+"; runs="+runs+"; attempts="+attempts+"; stages="+stages+"; coordinator="+coordinator);
+        }catch(org.springframework.dao.DataAccessException ex) {
+            return new AssertionError(prefix+"; database=UNAVAILABLE");
+        }
+    }
+    /** Session locks must be released before worker context teardown, including assertion failures. */
+    final class TestAdvisoryLock implements AutoCloseable {
+        final java.sql.Connection connection;final int holderPid;private boolean held=true;
+        TestAdvisoryLock(long key)throws Exception {
+            connection=jdbc.getDataSource().getConnection();
+            try(var statement=connection.createStatement()) {
+                statement.setQueryTimeout(3);
+                try(var result=statement.executeQuery("SELECT pg_backend_pid()")){result.next();holderPid=result.getInt(1);}
+                statement.execute("SELECT pg_advisory_lock("+key+")");
+            }catch(Exception ex){connection.close();throw ex;}
+        }
+        void release()throws Exception {
+            if(held)try(var statement=connection.createStatement()) {
+                statement.setQueryTimeout(3);statement.execute("SELECT pg_advisory_unlock_all()");held=false;
+            }
+        }
+        @Override public void close()throws Exception {try{release();}finally{connection.close();}}
+    }
     void finished(UUID id)throws Exception {await(()->Set.of("SUCCEEDED","FAILED","RECOVERY_REQUIRED").contains(jdbc.queryForObject("SELECT state FROM ddip_management.runs WHERE run_id=?",String.class,id)),100);}
     void idle(WorkerIdleLifecycle w)throws Exception {await(()->w.session().coordinatorVersion()==jdbc.queryForObject("SELECT row_version FROM ddip_management.coordinator",Long.class) && jdbc.queryForObject("SELECT active_attempt_id IS NULL FROM ddip_management.coordinator",Boolean.class),10);}
     @AfterEach void closeContexts(){if(workerContext!=null){workerContext.close();workerContext=null;}if(api!=null){api.close();api=null;}if(client!=null)client.close();}
@@ -145,9 +221,51 @@ class ReliabilityWorkerIT extends ReliabilityExecutionFixtures {
     }
     @Test void publisherSuccessWithInvalidIndependentOutputStopsDispatch()throws Exception {
         UUID waiting=submit("must-not-follow-invalid-output");jdbc.execute("CREATE FUNCTION ddip_management.hold_verify() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.stage='VERIFY_RESULT' THEN PERFORM pg_advisory_xact_lock(1298375); END IF; RETURN NEW; END $$");jdbc.execute("CREATE TRIGGER hold_verify BEFORE INSERT ON ddip_management.stage_invocations FOR EACH ROW EXECUTE FUNCTION ddip_management.hold_verify()");
-        try(var connection=jdbc.getDataSource().getConnection()) {
-            connection.createStatement().execute("SELECT pg_advisory_lock(1298375)");var w=startWorker();await(()->jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=? AND wait_event='advisory')",Boolean.class,database),40);
-            assertThat(jdbc.queryForObject("SELECT state FROM ddip_management.stage_invocations WHERE stage='PUBLISH_RELIABILITY'",String.class)).isEqualTo("VERIFIED");Path marker;try(var paths=Files.walk(output())){marker=paths.filter(p->p.getFileName().toString().equals("complete.json")).findFirst().orElseThrow();}Files.writeString(marker,"{}");connection.createStatement().execute("SELECT pg_advisory_unlock(1298375)");await(()->!w.isRunning(),20);assertThat(state()).isNotEqualTo("SUCCEEDED");assertThat(jdbc.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isNotNull();assertThat(jdbc.queryForObject("SELECT state FROM ddip_management.runs WHERE run_id=?",String.class,waiting)).isEqualTo("QUEUED");assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.artifacts WHERE kind='RELIABILITY_V2'",Long.class)).isZero();
+        try(var barrier=new TestAdvisoryLock(VERIFY_BARRIER)) {
+            var w=startWorker();
+            awaitVerificationBarrier(w,barrier.holderPid,waiting,Duration.ofSeconds(120));
+            assertThat(jdbc.queryForObject("SELECT state FROM ddip_management.stage_invocations WHERE stage='PUBLISH_RELIABILITY'",String.class)).isEqualTo("VERIFIED");
+            Path marker;try(var paths=Files.walk(output())){marker=paths.filter(p->p.getFileName().toString().equals("complete.json")).findFirst().orElseThrow();}
+            Files.writeString(marker,"{}");barrier.release();
+            long stoppingAt=System.nanoTime();
+            try{await(()->!w.isRunning(),30);}catch(AssertionError ex){throw verificationWaitFailure("Worker did not stop after invalid independent output",w,barrier.holderPid,waiting,stoppingAt,List.of());}
+            assertThat(w.condition()).isEqualTo("RECOVERY_REQUIRED");
+            assertThat(state()).isEqualTo("RECOVERY_REQUIRED");
+            assertThat(jdbc.queryForObject("SELECT mode FROM ddip_management.coordinator",String.class)).isEqualTo("RECOVERY_ONLY");
+            assertThat(jdbc.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isNotNull();
+            assertThat(jdbc.queryForObject("SELECT state FROM ddip_management.stage_invocations WHERE stage='VERIFY_RESULT' AND child_pid IS NOT NULL",String.class)).isEqualTo("UNKNOWN");
+            assertThat(jdbc.queryForObject("SELECT state FROM ddip_management.runs WHERE run_id=?",String.class,waiting)).isEqualTo("QUEUED");
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.attempts",Long.class)).isEqualTo(1);
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.artifacts WHERE kind='RELIABILITY_V2'",Long.class)).isZero();
+        }
+    }
+    @Test void verificationBarrierObservesOnlyTheExactLockAndBlockingSession()throws Exception {
+        try(var pool=Executors.newSingleThreadExecutor();var barrier=new TestAdvisoryLock(VERIFY_BARRIER);var unrelated=new TestAdvisoryLock(VERIFY_BARRIER+1)) {
+            var decoy=pool.submit(()->{try(var c=jdbc.getDataSource().getConnection();var s=c.createStatement()){s.setQueryTimeout(5);s.execute("SELECT pg_advisory_xact_lock("+(VERIFY_BARRIER+1)+")");}return null;});
+            await(()->jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=? AND wait_event='advisory')",Boolean.class,database),3);
+            assertThat(verificationBarrierWaiting(barrier.holderPid)).isFalse();unrelated.release();decoy.get(5,TimeUnit.SECONDS);
+            var expected=pool.submit(()->{try(var c=jdbc.getDataSource().getConnection();var s=c.createStatement()){s.setQueryTimeout(5);s.execute("SELECT pg_advisory_xact_lock("+VERIFY_BARRIER+")");}return null;});
+            await(()->verificationBarrierWaiting(barrier.holderPid),3);
+            assertThat(verificationBarrierWaiting(unrelated.holderPid)).isFalse();barrier.release();expected.get(5,TimeUnit.SECONDS);
+        }
+    }
+    @Test void verificationBarrierReleasesItsSessionLockOnAssertionFailure()throws Exception {
+        assertThatThrownBy(()->{try(var barrier=new TestAdvisoryLock(VERIFY_BARRIER)){throw new AssertionError("CONTROLLED_ASSERTION");}}).isInstanceOf(AssertionError.class).hasMessage("CONTROLLED_ASSERTION");
+        try(var connection=jdbc.getDataSource().getConnection();var statement=connection.createStatement();var result=statement.executeQuery("SELECT pg_try_advisory_lock("+VERIFY_BARRIER+")")) {
+            result.next();assertThat(result.getBoolean(1)).isTrue();
+        }
+    }
+    @Test void verificationBarrierTimeoutAndEarlyStopReportOnlySafeState()throws Exception {
+        var w=new WorkerIdleLifecycle(jdbc,tx,new DatabaseSettings(url,user,password,INSTALL),new org.springframework.mock.env.MockEnvironment());
+        try(var barrier=new TestAdvisoryLock(VERIFY_BARRIER)) {
+            for(var maximum:List.of(Duration.ZERO,Duration.ofSeconds(120))) {
+                var failure=catchThrowable(()->awaitVerificationBarrier(w,barrier.holderPid,run,maximum));
+                assertThat(failure).isInstanceOf(AssertionError.class).hasMessageContaining(maximum.isZero()?"Timed out":"Worker stopped")
+                    .hasMessageContaining("advisory key "+VERIFY_BARRIER).hasMessageContaining("workerCondition=NOT_STARTED")
+                    .hasMessageContaining("state=QUEUED").hasMessageContaining("attempts=[]").hasMessageContaining("stages=[]")
+                    .hasMessageContaining("coordinator=").hasMessageContaining("expectedLockObserved=false");
+                assertThat(failure.getMessage()).doesNotContain(work.toString(),url,password,"configuration_bytes","command.json");
+            }
         }
     }
     @ParameterizedTest @ValueSource(strings={"249","5001","invalid"}) void pollingBoundsFailClosed(String value){assertThatThrownBy(()->startWorker("--ddip.worker.poll-millis="+value)).hasRootCauseMessage("WORKER_CONFIGURATION_INVALID");assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.worker_instances",Long.class)).isZero();assertThat(state()).isEqualTo("QUEUED");}
