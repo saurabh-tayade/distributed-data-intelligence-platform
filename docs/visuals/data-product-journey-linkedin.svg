@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350" viewBox="0 0 1080 1350" role="img" aria-labelledby="visual-title visual-desc">
+  <title id="visual-title">Distributed Data Intelligence Platform — LinkedIn Data Product Journey</title>
+  <desc id="visual-desc">Two product journeys. Standalone Content batches use Java, SeaweedFS Bronze, Spark Silver and Gold. Gold serves DuckDB, REST and React; publisher-reference CSV enrichment serves standalone DuckDB. Managed Reliability uses registered synthetic JSONL or Parquet batches and versioned service CSV, run submission, a fixed worker, Spark and independent verification to produce verified immutable Parquet and DuckDB reports. Managed Content execution is planned. Native execution recovery resolution remains unfinished. No real production-monitoring or benchmark claim is made.</desc>
+  <metadata>LinkedIn presentation variant derived from the approved data-product-journey.svg technical illustration. Original artwork and technical documentation remain unchanged. Live editable vector text; local standard fonts; no external assets.</metadata>
+  <defs>
+    <style>text { font-family: Arial, Helvetica, sans-serif; } .icon { fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }</style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 1 1 L 9 5 L 1 9 Z" fill="#3B7D86"/></marker>
+    <symbol id="rss" viewBox="0 0 28 28" class="icon"><circle cx="6" cy="22" r="1.6"/><path d="M5 13a10 10 0 0 1 10 10M5 5a18 18 0 0 1 18 18"/></symbol>
+    <symbol id="pulse" viewBox="0 0 28 28" class="icon"><path d="M2 15h6l4-9 5 17 4-8h5"/></symbol>
+    <symbol id="verified-file" viewBox="0 0 64 64" class="icon"><path d="M15 7h23l13 13v35H15zM38 7v14h13M23 30h20M23 37h13"/><path d="m24 47 5 5 12-13"/></symbol>
+  </defs>
+  <rect x="0" y="0" width="1080" height="1350" rx="0" fill="#F3F6F8" stroke="none" />
+  <!-- Title: generous spacing and no external branding. -->
+  <rect x="54" y="39" width="48" height="4" rx="2" fill="#0E7C83" stroke="none" />
+  <text x="115" y="49" font-size="18" fill="#496577" font-weight="700" text-anchor="start" data-box="110 26 820 28" letter-spacing="2">DATA PRODUCT JOURNEY</text>
+  <text x="54" y="108" font-size="48" fill="#112F46" font-weight="700" text-anchor="start" data-box="54 64 848 58" >Distributed Data</text>
+  <text x="54" y="163" font-size="48" fill="#112F46" font-weight="700" text-anchor="start" data-box="54 120 848 58" >Intelligence Platform</text>
+  <text x="54" y="205" font-size="25" fill="#4F6878" font-weight="400" text-anchor="start" data-box="54 177 972 38" >From heterogeneous data to verified analytical products</text>
+  <use href="#verified-file" x="937" y="87" width="66" height="66" stroke="#0E7C83"/>
+  <!-- Lane 1: native Content processing, not managed worker execution. -->
+  <rect x="48" y="244" width="984" height="470" rx="20" fill="#FFFFFF" stroke="#D9E3E9" />
+  <rect x="48" y="265" width="5" height="55" rx="2" fill="#234965" stroke="none" />
+  <use href="#rss" x="72" y="273" width="27" height="27" stroke="#234965"/>
+  <text x="110" y="296" font-size="32" fill="#15364F" font-weight="700" text-anchor="start" data-box="108 263 620 44" >Content Intelligence</text>
+  <rect x="794" y="268" width="214" height="28" rx="14" fill="#EDF2F7" stroke="none" />
+  <text x="901" y="288" font-size="17" fill="#31516D" font-weight="700" text-anchor="middle" data-box="800 270 202 24" letter-spacing="0.7">STANDALONE BATCH</text>
+  <text x="72" y="326" font-size="24" fill="#597080" font-weight="400" text-anchor="start" data-box="72 302 936 32" >Discover publisher content, activity &amp; quality insights</text>
+  <text x="72" y="353" font-size="18" fill="#647C8B" font-weight="700" text-anchor="start" data-box="72 332 360 29" letter-spacing="1.4">INPUTS</text>
+  <text x="334" y="353" font-size="18" fill="#647C8B" font-weight="700" text-anchor="start" data-box="334 332 360 29" letter-spacing="1.4">PROCESSING</text>
+  <text x="630" y="353" font-size="18" fill="#647C8B" font-weight="700" text-anchor="start" data-box="630 332 360 29" letter-spacing="1.4">DATA PRODUCTS</text>
+  <rect x="72" y="372" width="208" height="72" rx="10" fill="#F2F6F9" stroke="#E0E7EC" />
+  <text x="88" y="402" font-size="26" fill="#18364D" font-weight="600" text-anchor="start" data-box="84 378 184 31" >RSS / Atom</text>
+  <text x="88" y="430" font-size="22" fill="#5B7282" font-weight="400" text-anchor="start" data-box="84 408 184 30" >Feeds</text>
+  <line x1="280" y1="392" x2="327" y2="392" stroke="#3B7D86" stroke-width="2.4" marker-end="url(#arrow)"/>
+  <rect x="334" y="372" width="240" height="40" rx="9" fill="#F0F5F8" stroke="#D9E3E9" />
+  <text x="454" y="399" font-size="25" fill="#18364D" font-weight="600" text-anchor="middle" data-box="344 375 220 34" >Java ingestion</text>
+  <rect x="334" y="426" width="240" height="40" rx="9" fill="#FBF5EF" stroke="#D9E3E9" />
+  <rect x="334" y="426" width="5" height="40" rx="2" fill="#B98258" stroke="none" />
+  <text x="454" y="453" font-size="22" fill="#18364D" font-weight="600" text-anchor="middle" data-box="344 429 220 34" >SeaweedFS Bronze</text>
+  <rect x="334" y="480" width="240" height="40" rx="9" fill="#F0F4F7" stroke="#D9E3E9" />
+  <rect x="334" y="480" width="5" height="40" rx="2" fill="#91A4B2" stroke="none" />
+  <text x="454" y="507" font-size="25" fill="#18364D" font-weight="600" text-anchor="middle" data-box="344 483 220 34" >Spark Silver</text>
+  <rect x="334" y="534" width="240" height="40" rx="9" fill="#FBF7EB" stroke="#D9E3E9" />
+  <rect x="334" y="534" width="5" height="40" rx="2" fill="#B7933E" stroke="none" />
+  <text x="454" y="561" font-size="25" fill="#18364D" font-weight="600" text-anchor="middle" data-box="344 537 220 34" >Spark Gold</text>
+  <line x1="454" y1="412" x2="454" y2="426" stroke="#3B7D86" stroke-width="2.4" marker-end="url(#arrow)"/>
+  <line x1="454" y1="466" x2="454" y2="480" stroke="#3B7D86" stroke-width="2.4" marker-end="url(#arrow)"/>
+  <line x1="454" y1="520" x2="454" y2="534" stroke="#3B7D86" stroke-width="2.4" marker-end="url(#arrow)"/>
+  <rect x="630" y="372" width="378" height="216" rx="12" fill="#F5F8FB" stroke="#DCE6ED" />
+  <text x="650" y="403" font-size="25" fill="#173F5C" font-weight="700" text-anchor="start" data-box="644 377 352 34" >Gold Parquet products</text>
+  <text x="650" y="433" font-size="26" fill="#18364D" font-weight="400" text-anchor="start" data-box="644 410 352 30" >Article catalogs</text>
+  <text x="650" y="462" font-size="24" fill="#18364D" font-weight="400" text-anchor="start" data-box="644 439 352 30" >Publisher + daily metrics</text>
+  <text x="650" y="491" font-size="24" fill="#18364D" font-weight="400" text-anchor="start" data-box="644 468 352 30" >Content quality insights</text>
+  <line x1="650" y1="510" x2="988" y2="510" stroke="#DCE5EA" stroke-width="1.2" />
+  <text x="650" y="539" font-size="25" fill="#315B74" font-weight="600" text-anchor="start" data-box="644 516 352 30" >DuckDB reports</text>
+  <text x="650" y="568" font-size="24" fill="#315B74" font-weight="600" text-anchor="start" data-box="644 545 352 30" >REST APIs • React views</text>
+  <line x1="574" y1="554" x2="623" y2="554" stroke="#3B7D86" stroke-width="2.4" marker-end="url(#arrow)"/>
+  <rect x="72" y="604" width="208" height="70" rx="10" fill="#F2F6F9" stroke="#E0E7EC" />
+  <text x="88" y="633" font-size="24" fill="#18364D" font-weight="600" text-anchor="start" data-box="84 609 184 31" >Publisher CSV</text>
+  <text x="88" y="659" font-size="21" fill="#5B7282" font-weight="400" text-anchor="start" data-box="84 638 184 30" >Versioned</text>
+  <line x1="280" y1="639" x2="327" y2="639" stroke="#3B7D86" stroke-width="2.4" marker-end="url(#arrow)"/>
+  <line x1="454" y1="574" x2="454" y2="606" stroke="#3B7D86" stroke-width="2.4" marker-end="url(#arrow)"/>
+  <rect x="334" y="612" width="240" height="62" rx="9" fill="#EEF5F8" stroke="#D9E3E9" />
+  <text x="454" y="636" font-size="23" fill="#18364D" font-weight="600" text-anchor="middle" data-box="344 613 220 31" >Spark Content</text>
+  <text x="454" y="663" font-size="23" fill="#18364D" font-weight="600" text-anchor="middle" data-box="344 640 220 31" >enrichment</text>
+  <rect x="630" y="612" width="378" height="62" rx="12" fill="#EEF7F7" stroke="#CFE2E4" />
+  <text x="650" y="638" font-size="25" fill="#125E66" font-weight="700" text-anchor="start" data-box="644 615 352 30" >Catalog + discovery</text>
+  <text x="650" y="666" font-size="23" fill="#315F67" font-weight="400" text-anchor="start" data-box="644 643 352 30" >Standalone DuckDB</text>
+  <line x1="574" y1="643" x2="623" y2="643" stroke="#3B7D86" stroke-width="2.4" marker-end="url(#arrow)"/>
+  <rect x="72" y="680" width="410" height="28" rx="6" fill="#FFF8EA" stroke="#C9A65C" stroke-dasharray="4 3"/>
+  <text x="84" y="701" font-size="18.5" fill="#795B24" font-weight="600" text-anchor="start" data-box="80 678 398 33" >Managed Content execution: planned</text>
+  <text x="542" y="701" font-size="20" fill="#647887" font-weight="400" text-anchor="start" data-box="536 678 470 33" >Feed activity, not readership</text>
+  <!-- Lane 2: Reliability uses its own contract; no Bronze/Silver/Gold labels. -->
+  <rect x="48" y="734" width="984" height="398" rx="20" fill="#FFFFFF" stroke="#D9E3E9" />
+  <rect x="48" y="755" width="5" height="55" rx="2" fill="#0E7C83" stroke="none" />
+  <use href="#pulse" x="72" y="761" width="27" height="27" stroke="#167D83"/>
+  <text x="110" y="786" font-size="32" fill="#15364F" font-weight="700" text-anchor="start" data-box="108 753 620 44" >Application Reliability</text>
+  <rect x="802" y="758" width="206" height="28" rx="14" fill="#E5F4F1" stroke="none" />
+  <text x="905" y="778" font-size="17" fill="#126D70" font-weight="700" text-anchor="middle" data-box="808 760 194 24" letter-spacing="0.7">MANAGED WORKER</text>
+  <text x="72" y="816" font-size="24" fill="#597080" font-weight="400" text-anchor="start" data-box="72 792 936 32" >Analyze synthetic request volumes, errors &amp; latency</text>
+  <text x="72" y="843" font-size="18" fill="#647C8B" font-weight="700" text-anchor="start" data-box="72 822 360 29" letter-spacing="1.4">INPUTS</text>
+  <text x="334" y="843" font-size="18" fill="#647C8B" font-weight="700" text-anchor="start" data-box="334 822 360 29" letter-spacing="1.4">PROCESSING</text>
+  <text x="630" y="843" font-size="18" fill="#647C8B" font-weight="700" text-anchor="start" data-box="630 822 360 29" letter-spacing="1.4">DATA PRODUCTS</text>
+  <rect x="72" y="861" width="208" height="220" rx="10" fill="#F0F8F7" stroke="#D8EAE7" />
+  <text x="88" y="892" font-size="22" fill="#18364D" font-weight="600" text-anchor="start" data-box="84 867 184 32" >Synthetic events</text>
+  <text x="88" y="928" font-size="27" fill="#176D75" font-weight="700" text-anchor="start" data-box="84 901 184 34" >JSONL v2</text>
+  <text x="88" y="959" font-size="25" fill="#176D75" font-weight="700" text-anchor="start" data-box="84 932 184 34" >or Parquet v1</text>
+  <line x1="88" y1="981" x2="264" y2="981" stroke="#D5E5E3" stroke-width="1.2" />
+  <text x="88" y="1015" font-size="24" fill="#18364D" font-weight="600" text-anchor="start" data-box="84 990 184 32" >Service CSV</text>
+  <text x="88" y="1045" font-size="21" fill="#5B7282" font-weight="400" text-anchor="start" data-box="84 1023 184 31" >Versioned</text>
+  <line x1="280" y1="881" x2="327" y2="881" stroke="#3B7D86" stroke-width="2.4" marker-end="url(#arrow)"/>
+  <rect x="334" y="861" width="240" height="40" rx="9" fill="#EDF7F5" stroke="#D9E3E9" />
+  <text x="454" y="888" font-size="22" fill="#18364D" font-weight="600" text-anchor="middle" data-box="344 864 220 34" >Registered artifacts</text>
+  <rect x="334" y="911" width="240" height="54" rx="9" fill="#EDF7F5" stroke="#D9E3E9" />
+  <text x="454" y="946" font-size="25" fill="#18364D" font-weight="600" text-anchor="middle" data-box="344 916 220 43">Run submission</text>
+  <rect x="334" y="973" width="240" height="50" rx="9" fill="#E4F3F0" stroke="#C8E1DC" />
+  <text x="454" y="1005" font-size="25" fill="#18364D" font-weight="600" text-anchor="middle" data-box="344 977 220 42" >Worker + Spark</text>
+  <rect x="334" y="1037" width="240" height="54" rx="9" fill="#E4F3F0" stroke="#D9E3E9" />
+  <text x="454" y="1058" font-size="23" fill="#18364D" font-weight="600" text-anchor="middle" data-box="344 1036 220 31">Independent</text>
+  <text x="454" y="1085" font-size="23" fill="#18364D" font-weight="600" text-anchor="middle" data-box="344 1063 220 31">verification</text>
+  <line x1="454" y1="901" x2="454" y2="911" stroke="#3B7D86" stroke-width="2.4" marker-end="url(#arrow)"/>
+  <line x1="454" y1="965" x2="454" y2="973" stroke="#3B7D86" stroke-width="2.4" marker-end="url(#arrow)"/>
+  <line x1="454" y1="1023" x2="454" y2="1037" stroke="#3B7D86" stroke-width="2.4" marker-end="url(#arrow)"/>
+  <rect x="630" y="861" width="378" height="220" rx="12" fill="#EEF8F5" stroke="#CFE5DE" />
+  <text x="650" y="892" font-size="28" fill="#145D60" font-weight="700" text-anchor="start" data-box="644 866 352 34" >Verified Parquet</text>
+  <text x="650" y="926" font-size="25" fill="#18364D" font-weight="400" text-anchor="start" data-box="644 904 352 29" >Requests + 5xx counts</text>
+  <text x="650" y="955" font-size="24" fill="#18364D" font-weight="400" text-anchor="start" data-box="644 933 352 29" >5-minute service aggregates</text>
+  <text x="650" y="984" font-size="25" fill="#18364D" font-weight="400" text-anchor="start" data-box="644 962 352 29" >Latency + approx. p95</text>
+  <text x="650" y="1013" font-size="24" fill="#18364D" font-weight="400" text-anchor="start" data-box="644 991 352 29" >Duplicates + rejections</text>
+  <line x1="650" y1="1031" x2="988" y2="1031" stroke="#CEE2DC" stroke-width="1.2" />
+  <text x="650" y="1063" font-size="24" fill="#285F61" font-weight="600" text-anchor="start" data-box="644 1040 352 30" >Immutable • DuckDB reports</text>
+  <line x1="574" y1="1064" x2="623" y2="1064" stroke="#3B7D86" stroke-width="2.4" marker-end="url(#arrow)"/>
+  <!-- Understated shared foundation: implemented metadata and evidence controls. -->
+  <rect x="48" y="1152" width="984" height="128" rx="16" fill="#E9EFF3" stroke="none" />
+  <text x="72" y="1184" font-size="26" fill="#25465C" font-weight="700" text-anchor="start" data-box="72 1157 560 36" >Shared platform foundation</text>
+  <text x="72" y="1221" font-size="21" fill="#3D596D" font-weight="400" text-anchor="start" data-box="70 1198 330 31" >PostgreSQL metadata</text>
+  <text x="414" y="1221" font-size="21" fill="#3D596D" font-weight="400" text-anchor="start" data-box="412 1198 330 31" >Frozen input selection</text>
+  <text x="714" y="1221" font-size="21" fill="#3D596D" font-weight="400" text-anchor="start" data-box="712 1198 296 31" >Idempotency</text>
+  <text x="72" y="1256" font-size="21" fill="#3D596D" font-weight="400" text-anchor="start" data-box="70 1233 330 31" >Run + attempt history</text>
+  <text x="414" y="1256" font-size="21" fill="#3D596D" font-weight="400" text-anchor="start" data-box="412 1233 330 31" >Independent verification</text>
+  <text x="714" y="1256" font-size="20" fill="#3D596D" font-weight="400" text-anchor="start" data-box="712 1233 296 31" >1 globally active managed run</text>
+  <text x="54" y="1322" font-size="19" fill="#6E8290" font-weight="600" text-anchor="start" data-box="54 1298 972 35" letter-spacing="0.8">LOCAL-FIRST  •  REPRODUCIBLE  •  INDEPENDENTLY VERIFIED</text>
+</svg>

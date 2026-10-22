@@ -1,5 +1,7 @@
 package platform.contentapi;
 
+import platform.contentapi.execution.AnalyticsRole;
+
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.Set;
@@ -7,6 +9,7 @@ import org.springframework.util.MultiValueMap;
 import org.springframework.web.bind.annotation.*;
 import static platform.contentapi.ApiFailure.Code.INVALID_ARGUMENT;
 
+@AnalyticsRole
 @RestController
 @RequestMapping("/api/v1")
 public class AnalyticsController {

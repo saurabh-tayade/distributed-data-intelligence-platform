@@ -50,7 +50,20 @@ jobs:
   processing:
     name: Python 3.12, local Spark processing and DuckDB analytics
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # Includes bounded C2b native publication/verification and PostgreSQL lifecycle cases.
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:17.11-bookworm@sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826
+        env:
+          POSTGRES_DB: ddip_test
+          POSTGRES_USER: ddip_test
+          POSTGRES_PASSWORD: ci_test_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ddip_test -d ddip_test"
+          --health-interval 5s --health-timeout 3s --health-retries 12
     env:
       SPARK_LOCAL_IP: 127.0.0.1
       TZ: UTC
@@ -86,6 +99,16 @@ jobs:
           export PYSPARK_PYTHON="$(command -v python)"
           PYTHONPATH=processing:processing/tests python services/api/tests/generate_fixtures.py --output services/api/target/fixtures
           mvn -B -ntp -f services/api/pom.xml verify
+      - name: Verify PostgreSQL migrations, persistence and isolated runtime roles
+        env:
+          DDIP_TEST_DB_URL: jdbc:postgresql://127.0.0.1:5432/ddip_test
+          DDIP_TEST_DB_USER: ddip_test
+          DDIP_TEST_DB_PASSWORD: ci_test_only
+        run: |
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          export DDIP_TEST_PYTHON="$(command -v python)"
+          mvn -B -ntp -f services/content-api/pom.xml verify -Ppostgres
       - name: Verify all Spring Boot analytics APIs against the same synthetic Gold fixtures
         run: |
           export JAVA_HOME="$JAVA_HOME_21_X64"

@@ -1,5 +1,7 @@
 package platform.contentapi;
 
+import platform.contentapi.execution.AnalyticsRole;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
@@ -20,6 +22,7 @@ import tools.jackson.databind.json.JsonMapper;
 import static platform.contentapi.ApiFailure.Code.*;
 
 /** Delegates all publication verification and SQL to the existing Python consumer. */
+@AnalyticsRole
 @Component
 public class GoldAnalyticsAdapter {
     public enum Report {
