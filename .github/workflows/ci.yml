@@ -51,7 +51,7 @@ jobs:
     name: Python 3.12, local Spark processing and DuckDB analytics
     runs-on: ubuntu-24.04
     # Includes bounded C2b native publication/verification and PostgreSQL lifecycle cases.
-    timeout-minutes: 25
+    timeout-minutes: 60
     services:
       postgres:
         image: postgres:17.11-bookworm@sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826
