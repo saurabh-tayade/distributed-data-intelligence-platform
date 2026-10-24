@@ -14,6 +14,9 @@ import static platform.contentapi.execution.RecoveryFailure.need;
 /** Exact private operational sidecars only. No native-root traversal, output qualification or publication. */
 final class RecoveryFiles {
     static final int MAXIMUM=1024*1024;
+    record Retained(byte[] bytes,InstallationHostGuard.Identity identity,String modifiedAt) {
+        @Override public String toString(){return "RecoveryFile[redacted]";}
+    }
     record Capture(JsonNode inventory,Set<Long> descendantPids) { }
     static Capture capture(InstallationHostGuard guard,UUID run,UUID attempt,long epoch,String selectionSha,JsonNode runtime,List<Map<String,Object>> stages) {
         var result=SourceJson.object();var files=result.putArray("files");Set<Long> hints=new HashSet<>();
@@ -74,6 +77,17 @@ final class RecoveryFiles {
     }
     static byte[] read(InstallationHostGuard guard,String address) {
         try{return PreflightFiles.read(resolve(guard,address),MAXIMUM,true);}catch(RecoveryFailure ex){throw ex;}catch(RuntimeException ex){throw new RecoveryFailure(EVIDENCE_UNAVAILABLE);}
+    }
+    /** Captures the packet's identity across a read and subsequent authorization, without creating anything. */
+    static Retained retained(InstallationHostGuard guard,String address) {
+        try {
+            Path path=resolve(guard,address);
+            var before=Files.readAttributes(path,java.nio.file.attribute.BasicFileAttributes.class,LinkOption.NOFOLLOW_LINKS);
+            var identity=InstallationHostGuard.identity(path);byte[] bytes=PreflightFiles.read(path,MAXIMUM,true);
+            var after=Files.readAttributes(path,java.nio.file.attribute.BasicFileAttributes.class,LinkOption.NOFOLLOW_LINKS);
+            need(Objects.equals(before.fileKey(),after.fileKey()) && before.size()==after.size() && before.lastModifiedTime().equals(after.lastModifiedTime()),EVIDENCE_CHANGED);
+            return new Retained(bytes,identity,after.lastModifiedTime().toString());
+        }catch(RecoveryFailure ex){throw ex;}catch(PreflightFailure ex){throw new RecoveryFailure(ex.code()==PreflightFailure.Code.INPUT_UNAVAILABLE?EVIDENCE_UNAVAILABLE:EVIDENCE_CHANGED);}catch(IOException ex){throw new RecoveryFailure(EVIDENCE_UNAVAILABLE);}catch(RuntimeException ex){throw new RecoveryFailure(EVIDENCE_CHANGED);}
     }
     private RecoveryFiles(){ }
 }

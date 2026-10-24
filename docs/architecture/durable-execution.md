@@ -2382,7 +2382,7 @@ repairs it. Missing/corrupt/changed required private command/runtime evidence al
 even if native output might independently exist. There is no universal process containment, hard
 filesystem I/O deadline, distributed failover or database/filesystem atomicity/power-loss guarantee.
 Qualified-handle lookup tests prove in-process ambiguous-commit resolution and actual database restart;
-validated packet bootstrap after recovery-JVM restart and operational closure remain C3c work.
+C3c.1 below adds validated packet bootstrap after recovery-JVM restart; operational closure remains deferred.
 
 **Planned, not implemented:** C3c must integrate an explicit operator workflow for fresh qualification,
 validated retained-packet bootstrap/commit reconciliation, live RECOVERY_ONLY owner authorization
@@ -2395,4 +2395,159 @@ adoption. C3b internal tests do not authorize this production workflow.
 
 **Deferred:** native reconciliation or final SUCCEEDED/FAILED/CANCELLED/APPLIED processing, owner
 release, new CANCEL/RETRY behavior, automatic takeover/retry, process killing, native repair/cleanup/
-republishing, Content/RSS, UI, AWS and full E5 completion. Stop after C3b.
+republishing, Content/RSS, UI, AWS and full E5 completion. The C3c.1 slice below extends this checkpoint.
+
+## C3c.1 guarded recovery bootstrap
+
+**Implemented:** bounded internal retained-evidence bootstrap and separate live-owner authorization.
+Execution Recovery remains **partially implemented**. No production recovery workflow, endpoint,
+operator command or dispatcher integration is activated. ADR 0010/0011, migrations V1–V7 and native
+product contracts are unchanged. This section extends the C3b evidence above; its prior test counts
+remain historical.
+
+### Acceptance boundary and implementation choices
+
+Acceptance for this slice is exact reconstruction of committed C3b metadata from retained evidence;
+read-only, repeatable bootstrap/lookup; fail-closed evidence and version checks; explicit fresh
+quiescence plus the exact live guarded owner before authorization; and an occupied RECOVERY_ONLY
+slot throughout. No bootstrap/authorization call may create an attempt, increment an epoch, append
+an audit, mutate artifacts/private evidence, invoke a native child, finish a control/run or release
+ownership. Existing C3b failure injection and ordinary-worker fences must continue to pass.
+
+RecoveryPacket strictly decodes the existing canonical qualificationVersion=1 packet, rather than
+introducing a second journal or changing the retained format. It rejects unknown/missing fields,
+duplicate JSON keys, noncanonical bytes, invalid types/UUIDs/decimal versions and unsupported policy
+or version. The existing 1 MiB packet, 512 stage and 20 attempt bounds apply. The eight original
+metadata projections reconstruct typed identities, numbers, booleans and UTC timestamps; canonical
+byte columns remain length/SHA-256 descriptors. No payload is reconstructed from a digest. The
+reconstructed snapshot must hash identically to the packet and compare to committed PostgreSQL
+records, including immutable run/control identity, profile/installation bindings and recorded
+versions. Mirrored packet fields must agree with that projection.
+
+RecoveryHandoff.bootstrap requires the held installation guard, an exact private relative packet
+address/hash and the approved runtime profile. It checks private/no-link file policy and packet
+identity across the read, original operator-review consistency, frozen run/source/input contracts,
+runtime/deployment/module/root bindings and the complete C3b private sidecar inventory. Explicit
+absence, bytes, length, device/inode and mtime must match, including sidecars that appear later.
+It never invokes runtime.readiness or a native verifier. The packet file identity/mtime/hash are
+sealed in the bootstrap handle and checked again before authorization.
+
+The same coordinator-locked C3b resolver serves both in-memory qualifications and decoded evidence;
+there is no second handoff interpretation. CONFIRMED_HANDOFF requires exact successor binding,
+versions, original history and ordered audit anchors, including the packet address/hash.
+CONFIRMED_ROLLBACK requires the unchanged original snapshot, no successor and no contradictory
+handoff audit. A successor with any recovery-stage invocation is outside this bootstrap slice.
+Changed/advanced ownership, version drift, contradictory audit or unavailable SQL is UNRESOLVED.
+Inconclusive bootstrap rejects with HANDOFF_UNRESOLVED and yields no handle. Lookup of an existing
+handle returns only historical facts and never authorizes, renews or adopts ownership.
+
+RecoveryHandoff.authorize is a separate internal operation. It requires a new explicit review of
+the original snapshot and every unresolved checkpoint within the existing 60-second window,
+including all retained descendant identities. It observes the exact recovery PID/start as LIVE,
+rechecks all old worker/child/descendant identities and PID-only hints, packet/sidecar/runtime
+integrity and the held guard. Only then does a final short coordinator-locked transaction confirm
+the exact handoff again, compare registered PID/start/instance, profile/host bindings and all
+run/attempt/control/worker/coordinator versions, and return the original committed Owner binding.
+The guard is checked once more after the final SQL transaction before returning authority.
+External observations never run inside SQL transactions; ambient caller transactions are rejected.
+Neither bootstrap nor authorization writes SQL or files.
+
+A retained review can establish historical qualification after it expires; it cannot satisfy the
+fresh authorization review. A different guard instance or an exited/restarted recovery JVM can
+inspect historical facts but cannot adopt that owner, even on the same host/PID. A heartbeat changes
+versions and makes the old packet inconclusive; bootstrap never discovers and adopts newer versions.
+A dead/changed owner requires another explicit C3a control targeting the occupied recovery attempt,
+fresh qualification and a C3b occupied-to-occupied handoff. Ordinary managed dispatch remains blocked.
+
+Reusing the packet and resolver avoids a migration, new persistence authority or dependency. The
+tradeoff is deliberate strictness: missing retained files/runtime bindings and version drift can
+block historical reconstruction even when a native result might exist. A tolerant best-effort
+reader or implicit token refresh would weaken the existing fail-closed contract. No new architecture
+decision is proposed or marked accepted by this implementation.
+
+### Validation and remaining boundary
+
+**Tested locally:** 323 Java unit/component cases and 574 distinct PostgreSQL cases passed across
+this slice's regression runs. These are suite-union counts, not a claim of one full 574-case run.
+The full invocation passed all 323 Java cases and 572/573 PostgreSQL cases; its one error was the
+new native-child sentinel fixture omitting required execution-profile/storage associations. That
+fixture was corrected without weakening runtime validation. After the final evidence/guard review,
+the final affected invocation passed all 323 Java cases and all 118 RecoveryHandoffIT cases with
+zero failures, errors or skips. Those 118 include all 64 existing C3b cases and 54 new bootstrap cases;
+repeated cases are not added to the totals. The other 456 PostgreSQL cases passed in the full run.
+
+The initial focused run also caught an incorrect assumption about the retained array encoding;
+the strict reader was corrected to the existing plain-array format. Forty affected cases passed
+before the broader run. No known failing case remains after the final affected verification.
+
+New coverage includes JSONL/Parquet and terminal-predecessor reconstruction; exact stage/audit
+preservation; lost commit acknowledgment; rollback without authority; unavailable SQL; truncated,
+altered, oversized, noncanonical, duplicate-key and contradictory packets; invalid bindings,
+hashes, types and versions; symlink/hardlink/private-permission and parent-symlink rejection;
+sidecar absence/appearance/replacement; packet replacement with unchanged bytes/mtime; stale
+heartbeat versions; lost guard before and during final SQL comparison; unavailable/reused/dead
+recovery identity; fresh review after expiry; and repeated bootstrap/authorization without writes.
+A separate actual recovery JVM committed a handoff and exited: a replacement guard could inspect
+its facts but required another explicit control and guarded occupied-to-occupied handoff. The
+old packet then remained inconclusive against the competing successor. A deliberately failing
+native-child sentinel proved qualification/bootstrap/authorization launched no native child.
+Native/private snapshots and complete SQL snapshots stayed unchanged on read-only paths; ordinary
+managed dispatch remained blocked. Existing transactional fault-injection and stale-owner cases
+were retained and rerun.
+
+Two actual dedicated-container PostgreSQL restarts were observed, one in each integrated run.
+Each barrier required a later postmaster start time and identical committed state followed by
+fresh packet bootstrap and separate same-live-owner authorization. No operational database was used.
+The local runtime was GraalVM Java 21.0.7, Python 3.12.15, PySpark 4.0.2, DuckDB 1.4.5 and PostgreSQL
+17.11-bookworm at the existing pinned image digest
+`sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826`.
+The full run included existing Spark-backed Silver import and Reliability publication regressions;
+only those existing fixtures performed native publication. Recovery operations did not.
+
+With the existing disposable DDIP_TEST_DB_URL/USER/PASSWORD environment and pinned
+DDIP_TEST_PYTHON/PYSPARK_PYTHON/PYSPARK_DRIVER_PYTHON plus JAVA_HOME and SPARK_LOCAL_IP:
+
+~~~sh
+# Full regression, including the corrected-later sentinel fixture error described above.
+# An external test controller restarts only the dedicated DB at READY and writes .done.
+mvn -o -q -Daether.syncContext.named.factory=noop -f services/content-api/pom.xml -Ppostgres \
+  -Dddip.test.bootstrap-restart-signal=/private/tmp/ddip-c3c1-bootstrap-restart verify
+
+# Final affected run: 323 Java + 118 PostgreSQL, all passed, second actual DB restart.
+mvn -o -q -Daether.syncContext.named.factory=noop -f services/content-api/pom.xml -Ppostgres \
+  -Dit.test=RecoveryHandoffIT \
+  -Dddip.test.bootstrap-restart-signal=/private/tmp/ddip-c3c1-bootstrap-final-restart verify
+~~~
+
+Restart properties are test-only barriers. Omit them without a dedicated-container controller.
+The offline Maven option uses the existing dependency cache; it adds no dependency. Logs and a
+per-suite full-run summary are retained under ignored outputs/e5-c3c1-* paths. Markdown/local links
+(45 files), repository hygiene and diff checks passed. The final production JAR includes the
+internal bootstrap classes and excludes recovery test helpers. The disposable container was removed.
+No branch switch, staging, commit, push or GitHub mutation occurred.
+
+Changed files: RecoveryPacket.java (strict existing-format reader); RecoveryHandoff.java (shared
+historical evidence and separate guarded authorization); RecoveryFiles.java (read-only packet
+identity seal); RecoveryHandoffIT.java and RecoveryBootstrapTestProcess.java (focused coverage and
+exited-owner fixture); this contract, services/content-api/README.md and root README.md. No ADR,
+migration, runtime role, public API or native implementation changed.
+
+Diagnostics use the existing fixed RecoveryFailure codes with no causes, stack traces, raw packet,
+SQL, path, PID or native exception text. Bootstrap, packet/file handles and Owner stringify to fixed
+redacted labels. No rejection appends a durable audit or exposes a new public diagnostic surface.
+
+The C3b packet does not retain its own historical inode in PostgreSQL. Bootstrap validates its
+private file policy and hash/audit anchor, then detects replacement between bootstrap and
+execution authorization; a byte-identical replacement before the first bootstrap cannot be
+distinguished. Original sidecar identities are retained and compared across restarts. These remain
+cooperative local POSIX checks, not hostile-administrator protection, universal orphan containment,
+a hard filesystem deadline or a database/filesystem power-loss guarantee. Manual orphan/unmanaged
+writer review remains essential. Hosted CI and other host/platform behavior remain unverified.
+
+**Ready as a prerequisite for C3c.2, not production recovery:** C3c.2 must wire guarded stage
+INTENT/single-use launch fencing and coordinated heartbeats, actual interpreter/package readiness
+and bounded independent native read-only verification before consuming artifacts. Every future
+operation must validate the live token and accepted quiescence at its boundary; this bootstrap
+handle is not stage permission. Final result classification, SUCCEEDED/FAILED/CANCELLED disposition,
+control completion and atomic conditional release remain deferred. No automatic takeover, retry,
+cancellation, repair, Content/RSS recovery, AWS or native contract change is included.
