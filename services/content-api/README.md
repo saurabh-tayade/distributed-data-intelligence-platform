@@ -1596,6 +1596,52 @@ replacement before that first read. Retained sidecar identities remain checked a
 Manual orphan/unmanaged-writer review is still required.
 
 See the [C3c.1 contract and validation](../../docs/architecture/durable-execution.md#c3c1-guarded-recovery-bootstrap)
-for implementation decisions, executed results and remaining risks. C3c.2 still needs guarded
+for implementation decisions, executed results and remaining risks. The C3c.2 seam below adds guarded
 stage launch, coordinated heartbeats, actual runtime readiness and native read-only verification.
 Final disposition, control completion, slot release and production activation remain unfinished.
+
+## C3c.2 internal native recovery inspection
+
+Execution Recovery is still **partially implemented** and production recovery remains inactive.
+The internal RecoveryVerification seam records one VERIFY_RESULT/item 0 under the fenced RECONCILE
+attempt, verifies actual pinned runtime readiness, and runs the original full independent native
+Reliability inspector against the exact frozen dependencies and intended output. Both JSONL and
+Parquet are supported. The recovery envelope owns supervision; the unchanged inner command retains
+the original EXECUTE attempt/epoch/deployment. Unsupported or missing original provenance is blocked.
+
+Intent commits first. A separate conditional INTENT -> RUNNING transaction consumes launch permission
+once; PID/start/instance, five-second heartbeats and final stage evidence require the exact live owner,
+versions and held installation guard. Readiness and inspection use one bounded read-only child.
+Native publication, Spark/gateway launch, artifact registration/activation, final run/control
+outcomes and slot release are absent. The run stays RECOVERY_REQUIRED, control REQUESTED and occupied
+coordinator RECOVERY_ONLY; ordinary managed dispatch stays blocked. run.currentStage retains the
+interrupted execution context; the RECONCILE attempt's VERIFY_RESULT stage records this inspection.
+
+A VERIFIED_PUBLICATION stage observation is private read-only evidence for C3c.3, not recovered run
+success. Absence, incompleteness, invalid/changed output, invalid/changed/unavailable dependencies,
+unavailable output, runtime/resource failures and supervision uncertainty retain separate fixed
+codes and cleanup evidence. FAILED means this verification task failed, not that the run has a
+known failed outcome. Unavailable I/O must never be treated as corruption or namespace absence.
+
+After restart, internal historical inspection validates committed command/result/anchor/audit hashes,
+original qualification, fresh launch-review binding and child cleanup without granting an owner token
+or invoking native code. Existing INTENT/RUNNING or uncommitted private completion is INCONCLUSIVE;
+UNKNOWN cleanup retains its explicit unresolved supervision evidence. Do not relaunch because a PID,
+acknowledgment or parent JVM disappeared. A changed/dead
+owner requires another explicit control and guarded handoff; this checkpoint does not automatically
+reuse a prior recovery stage or complete its control.
+
+Retain all private evidence and native namespaces. The adapter is separately versioned inside the
+API JAR; it does not modify original native deployment bytes or published formats. Original entry-point
+compatibility and adapter hashes fail closed on unsupported upgrades. See the
+[C3c.2 contract](../../docs/architecture/durable-execution.md#c3c2-fenced-native-recovery-verification)
+and [implementation record](../../docs/adr/0012-recovery-verification-provenance.md) for exact fencing,
+classifications, test commands/times and remaining C3c.3 prerequisites. There is no public recovery
+command, endpoint or documented production activation switch.
+
+Local validation passed the full content-api PostgreSQL profile (323 unit/component and 613
+integration cases, 39m57s), then the final affected regression (323 unit/component and 158 integration
+cases, 2m55s), including all 40 recovery-verification cases. The full run included an actual
+PostgreSQL restart. The final verification class took about 76 seconds; existing publication-test
+timing outliers leave the unchanged 60-minute CI job's total margin unproven. These are local results,
+not a hosted-CI claim. Exact commands, runtime pins, coverage and timing limits are in the contract.

@@ -94,7 +94,7 @@ public final class ReliabilityExecution {
         /** Confirmed released token only; ambiguous commits never return this value. */
         public WorkerRepository.Session worker(){return worker;}
     }
-    private static void validate(JsonNode command,JsonNode result,JsonNode evidence,ReadOnlyVerifierProcess.Result child) {
+    static void validate(JsonNode command,JsonNode result,JsonNode evidence,ReadOnlyVerifierProcess.Result child) {
         SourceJson.fields(result,"protocolVersion","runId","attemptId","stage","itemOrdinal","status","code","evidenceId","counts");
         for(String key:List.of("protocolVersion","runId","attemptId","stage","itemOrdinal"))need(result.get(key).equals(command.get(key)),RESULT_INVALID);
         for(String key:List.of("runId","attemptId","checkpointId","nativeFingerprint"))need(evidence.get(key).equals(command.get(key)),RESULT_INVALID);

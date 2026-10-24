@@ -2551,3 +2551,166 @@ operation must validate the live token and accepted quiescence at its boundary; 
 handle is not stage permission. Final result classification, SUCCEEDED/FAILED/CANCELLED disposition,
 control completion and atomic conditional release remain deferred. No automatic takeover, retry,
 cancellation, repair, Content/RSS recovery, AWS or native contract change is included.
+
+## C3c.2 fenced native recovery verification
+
+**Implemented:** internal single-use recovery verification intent/launch, actual pinned runtime
+readiness, full independent Reliability inspection, bounded private evidence and historical stage
+inspection. **Execution Recovery remains partially implemented.** Production recovery is inactive;
+there is no new runtime role, dispatcher caller, REST endpoint or operator command. Final run,
+attempt/control disposition, result-artifact registration and coordinator release remain C3c.3.
+Publication activation remains outside this recovery checkpoint.
+
+### Design review and acceptance boundary
+
+The [implementation record](../adr/0012-recovery-verification-provenance.md) documents the choices
+under accepted ADR 0010 without claiming another architecture acceptance. ADRs 0010/0011 and
+migrations V1–V7 are unchanged. No native module, published format or run-profile contract changes.
+
+| Required review question | Bounded implementation |
+| --- | --- |
+| One authorized RECONCILE stage | Reuse VERIFY_RESULT/item 0 in stage_invocations under the recovery attempt. Atomically require no existing stage, insert INTENT, advance only that attempt CLAIMED to RUNNING/version+1 and append bounded audit. Existing PK, version guards and occupied-slot constraints apply |
+| Original provenance versus current ownership | A new private E5_RECOVERY_VERIFICATION_V1 envelope binds recovery control/attempt, instance, epoch, qualification, fresh review, checkpoint and adapter digest. An inner unchanged VERIFY_RESULT command retains original EXECUTE run/attempt/epoch/runtime and the exact retained preflight pack |
+| Meaning of VERIFY_RESULT | RECONCILE kind, recovery policy and RECOVERY-prefixed audit distinguish inspection from EXECUTE publication. VERIFIED_PUBLICATION is stage evidence only. The run retains its interrupted currentStage context and RECOVERY_REQUIRED state; no stage_artifacts/result-artifact or activation is created |
+| Launch, identity, heartbeat, result fences | Coordinator-first short transactions compare exact installation/run/control/attempt/epoch/worker/coordinator versions, registered PID/start/instance and frozen selection. Stage identity/hash/version/child bindings are checked independently. Guard checks bracket transactions; native I/O runs outside SQL |
+| Restart and ambiguous child | Read-only inspect validates committed stage, handoff/observation audits and retained file hashes without an owner token. An INTENT/RUNNING stage or uncommitted private completion is INCONCLUSIVE. No existing stage is relaunched and no newer owner/version is adopted |
+
+Acceptance requires real independent JSONL/Parquet reads, runtime readiness before native artifact
+consumption, explicit unavailable/changed/incomplete distinctions, one consumed launch, bounded
+cleanup, durable inspection and unchanged native bytes. Every outcome must preserve occupied
+RECOVERY_ONLY, run RECOVERY_REQUIRED, control REQUESTED and blocked ordinary dispatch. Fault injection
+must preserve prior ownership and never mint a final run result from partial/uncommitted evidence.
+
+### Guarded intent, supervision and evidence
+
+RecoveryVerification is package-private and instantiated only by isolated tests. It first obtains
+C3c.1's separately authorized exact live owner, validates frozen relational evidence and loads the
+original VERIFIED CHECK_INPUTS pack. The pack's canonical command/bundle/result/evidence/anchor
+hashes and exact original PUBLISH_RELIABILITY command, intended fingerprint/namespace and runtime
+must agree. No discovery or replacement of missing provenance is allowed. The current launch seam
+requires an immediate EXECUTE predecessor with that verified preflight and publication intent;
+recovery-chain stage history is inspectable, but is not automatically reused to launch again.
+
+Before intent it writes only exclusive private command.json/retained.json under the new recovery
+attempt/checkpoint. Intent commits before any child. The final beforeStart callback checks the
+held guard, unchanged private bytes/identities, original evidence/runtime and a fresh quiescence
+review, then conditionally consumes INTENT -> RUNNING and commits launch audit. The review is
+retained in the command and bound by its persisted hash; freshness is checked again under SQL locks.
+An existing/ambiguous intent, stale version, expired review or lost guard rejects without refresh.
+
+ReadOnlyVerifierProcess launches exactly one default read-only child, with cleared/whitelisted
+environment, closed stdin, independently bounded streams, recorded PID/start/instance and five-second
+fenced heartbeats. Readiness and inspection share this child and one timeout (approved profile
+verificationSeconds, maximum 900 seconds); cleanup retains the existing bounded graceful/forced/
+drain waits. An unexpected descendant or uncertain cleanup cannot produce VERIFIED evidence.
+The OS-start/PID-record gap remains explicit: a consumed RUNNING stage without child identity is
+ambiguous. Losing the identity/heartbeat transaction stops supervision and retains that stage;
+private native output alone cannot establish a committed observation.
+
+The adapter is packaged separately in the API JAR and passed with Python -I -B -X utf8 -c. Its SHA-256
+is recorded in command, audit and result anchor. It checks compatibility with the known original
+reliability_execution.py and reliability_execution_preflight.py hashes, then uses the original
+verify_runtime and inspect functions. It never calls execute, publish, SparkSession or a gateway.
+Original command-to-attempt/epoch checks remain byte-for-byte unchanged. The original frozen
+manifest, all module/root/profile bindings and actual Python 3.12.15/PySpark 4.0.2/DuckDB 1.4.5
+readiness are checked before artifact consumption; Java 21 and JAVA_HOME are checked by the host.
+Unsupported original deployments fail closed, never substitute a new native runtime.
+
+The unchanged independent reader rechecks exact frozen dependency captures, native provenance,
+publication completion/inventories/schemas and analytical results, including its ordered replay and
+rank validation. The adapter inspects only the intended fingerprint. Explicit absence/incompleteness
+requires safe no-symlink namespace ancestors and repeated negative observation; generic I/O is never
+proof of absence. Dependency/runtime rechecks follow inspection. If original independently verified
+publication evidence exists, a different freshly valid publication is classified as changed.
+Native output/staging/reference/batch namespaces are never created, repaired or written. Only the
+new explicitly authorized private sidecars and approved private runtime scratch may be written.
+
+After proven clean child exit, result.json and evidence.json are strictly decoded, bound to both
+recovery ownership and original provenance, re-read and hashed into exclusive verified.json. The
+final exact-owner transaction seals only the verification stage and appends RECOVERY_STAGE_OBSERVED.
+It changes no run/control state or slot. Lost final acknowledgment is resolved through historical
+inspection, not a repeated child or best-effort finalization.
+
+| Observation | Persisted stage evidence; never final run disposition |
+| --- | --- |
+| Full independent verification succeeds | VERIFIED / VERIFIED_PUBLICATION, complete private native qualification and confirmed clean exit |
+| Safe exact namespace or completion absence | FAILED / OUTPUT_ABSENT or OUTPUT_INCOMPLETE; negative evidence rechecked |
+| Demonstrated changed or invalid output | FAILED / OUTPUT_CHANGED or OUTPUT_INVALID, fixed native code; no repair |
+| Dependency integrity/provenance failure | FAILED / DEPENDENCY_CHANGED or DEPENDENCY_INVALID. A recorded inventory entry proven missing is changed evidence |
+| Unavailable dependency/output I/O | FAILED / DEPENDENCY_UNAVAILABLE or OUTPUT_UNAVAILABLE. This means the inspection failed; it is not a known data/run failure |
+| Readiness/compatibility or resource rejection | FAILED / RUNTIME_INCOMPATIBLE or RESOURCE_LIMIT; readiness phase, native code and child/cleanup evidence remain distinct |
+| Confirmed start/deadline/output/private-evidence failure | FAILED with fixed supervision code and NO_CHILD_LAUNCHED or CONFIRMED_TERMINATED evidence; never inferred publication success |
+| Interrupted verifier or unconfirmed cleanup | UNKNOWN with fixed code and UNCONFIRMED evidence, retaining any recorded child identity |
+| Ownership/DB loss, unknown intent/launch/result commit | Preserve the last committed stage and occupied owner; inspect returns INCONCLUSIVE unless a fully matching final stage/anchor/audit committed |
+
+Historical inspection takes the coordinator lock for a bounded committed projection, then reads
+exact private paths outside SQL. It checks installation, RECONCILE/handoff/qualification identity,
+launch review against the original snapshot and recorded launch time, command/retained/adapter
+hashes, result anchor, native result schema and child/cleanup bindings. It performs no native launch,
+artifact inspection, state transition or token adoption. A replacement guard/JVM can inspect facts;
+C3c.1 continues to reject execution adoption and old bootstrap after a stage/heartbeat has advanced.
+
+### Local validation and limits
+
+Local validation used Darwin/aarch64, GraalVM JDK 21.0.7, Python 3.12.15, PySpark 4.0.2,
+DuckDB 1.4.5 and disposable PostgreSQL 17.11. The PostgreSQL container used the CI-pinned image
+postgres:17.11-bookworm@sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826.
+JAVA_HOME, DDIP_TEST_PYTHON, PYSPARK_PYTHON, PYSPARK_DRIVER_PYTHON, SPARK_LOCAL_IP=127.0.0.1
+and DDIP_TEST_DB_URL/USER/PASSWORD selected these local runtimes and the disposable database;
+no cloud credentials or services were used. The existing Java process-supervision and quiescence
+unit tests ran alongside the new PostgreSQL cases. Documentation checks used Node.js 26.12.0 with
+the lockfile-pinned Markdown tooling; the hosted documentation job's Node.js 24 was not tested locally.
+
+Commands below ran from the repository root, timed with /usr/bin/time -p. Offline mode and the
+Maven named-lock override accommodate this local Maven cache; neither changes application behavior.
+
+~~~bash
+mvn -o -q -Daether.syncContext.named.factory=noop -f services/content-api/pom.xml \
+  -Ppostgres -Dddip.test.verification-restart-signal=/private/tmp/ddip-c3c2-verification-restart verify
+mvn -o -q -Daether.syncContext.named.factory=noop -f services/content-api/pom.xml \
+  -Ppostgres -Dit.test=RecoveryHandoffIT,RecoveryVerificationIT verify
+npm run check
+~~~
+
+| Executed check | Result and measured elapsed time |
+| --- | --- |
+| Full content-api PostgreSQL profile, including real native publication/verification regressions | 323 unit/component + 613 PostgreSQL integration cases; no failures, errors or skips; 2,397.36 seconds (39m57s) |
+| Final affected regression after the last command-provenance and adapter review changes | 323 unit/component + 158 PostgreSQL integration cases (118 handoff + 40 verification); no failures, errors or skips; 174.78 seconds (2m55s) |
+| New verification class in the final affected run | 40 cases, 75.568 seconds including two cached native JSONL/Parquet fixture publications; slowest individual case 7.171 seconds |
+| Earlier focused verification and process/quiescence regression | 38 verification cases plus selected unit tests; passed in 79.69 seconds before the final two coverage additions |
+| Markdown/local links and repository hygiene | Passed across 46 Markdown files; 1.60 seconds |
+| Whitespace and JAR boundaries | Passed; production JAR includes the private adapter and excludes test classes/fixture publisher |
+
+The full profile preceded the last narrow review changes; the final affected run covers those
+changes. Their union covers 614 distinct PostgreSQL cases, not 614 cases in one full-profile run.
+The restart-barrier test in the full run performed an actual docker restart of the disposable
+PostgreSQL container between verification and historical inspection. That optional test property
+requires an external test controller to wait for the signal file, restart only the disposable
+container, await pg_isready and write the .done file; without it the case exercises replacement-guard
+inspection without claiming a database restart. Other fault tests cover SQL
+rollback/commit acknowledgment loss at each intent/launch/child/result boundary, active-child
+heartbeat/database loss, actual start failure/deadline, interrupted/unconfirmed cleanup, competing
+calls, stale owners/guards, incompatible readiness, changed private evidence and inaccessible I/O.
+Successful and unsuccessful observations retain RECOVERY_REQUIRED/REQUESTED/occupied RECOVERY_ONLY,
+no registered publication/result artifact, blocked unrelated dispatch and byte-identical native
+batch/reference/output/staging snapshots. The disposable container was removed after validation.
+
+CI timing is not proven by these local measurements. The new class costs about 76 seconds locally,
+including approximately 25 seconds creating its two native fixtures; no new individual case exceeded
+8 seconds. The existing ReliabilityExecutionIT class took 1,769.607 seconds in the full run, with
+staleFinalOwnershipCannotInsertArtifact at 1,030.420 seconds and
+lostFinalAcknowledgmentResolvesExactlyPersistedResultWithoutSecondWriter at 575.010 seconds.
+The cause of these existing-case outliers is unproven. The unchanged processing/API CI job has a
+60-minute budget and also runs other checks; its total budget margin and hosted result remain
+unverified. No CI restructuring or unrelated timing changes are included.
+
+C3c.3 still needs fresh independent qualification at the disposition boundary, complete result
+matrix policy (including unavailable I/O and pending cancellation), atomic fenced attempt/control/
+run/artifact disposition and conditional release. A historical verification receipt is not proof
+of current artifact readability. Interrupted launch/cleanup and missing/corrupt retained provenance
+stay blocked. No automatic retry/takeover, cancellation, repair or broader product recovery exists.
+The adapter compatibility allowlist and stored adapter digest intentionally fail closed on binary/
+runtime changes; future versions must explicitly preserve compatible historical readers. Cooperative
+POSIX guard checks, trusted manual orphan/unmanaged-writer review and existing native contracts
+remain essential. No universal orphan containment, hostile-user fencing, hard filesystem deadline,
+power-loss atomicity, hosted-CI result or production operational recovery is claimed.

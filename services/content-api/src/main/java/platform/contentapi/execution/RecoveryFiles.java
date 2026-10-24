@@ -78,6 +78,9 @@ final class RecoveryFiles {
     static byte[] read(InstallationHostGuard guard,String address) {
         try{return PreflightFiles.read(resolve(guard,address),MAXIMUM,true);}catch(RecoveryFailure ex){throw ex;}catch(RuntimeException ex){throw new RecoveryFailure(EVIDENCE_UNAVAILABLE);}
     }
+    static byte[] readPrivate(InstallationHostGuard guard,String address,int maximum) {
+        need(maximum>0 && maximum<=PreflightFiles.LARGE,INVALID_REQUEST);return PreflightFiles.read(resolve(guard,address),maximum,true);
+    }
     /** Captures the packet's identity across a read and subsequent authorization, without creating anything. */
     static Retained retained(InstallationHostGuard guard,String address) {
         try {

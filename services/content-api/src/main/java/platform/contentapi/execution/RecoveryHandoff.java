@@ -195,22 +195,69 @@ final class RecoveryHandoff {
             return receipt(same?Status.CONFIRMED_HANDOFF:Status.UNRESOLVED,q);
         });}catch(ManagementFailure | RecoveryFailure ex){return receipt(Status.UNRESOLVED,q);}
     }
-    /** C3b permits only fenced recovery heartbeats, never stage execution or slot release. */
-    Owner heartbeat(InstallationHostGuard guard,Owner owner) {
-        held(guard,owner.worker());return tx.required(()->{
+    /** Exact live metadata fence shared by recovery-stage mutations; never refreshes an input token. */
+    <T> T fenced(InstallationHostGuard guard,Owner owner,java.util.function.Supplier<T> operation) {
+        held(guard,owner.worker());
+        T result=tx.required(()->{checkOwned(guard,owner);return operation.get();});held(guard,owner.worker());return result;
+    }
+    private void checkOwned(InstallationHostGuard guard,Owner owner) {
             var s=read(owner.controlId(),owner.worker().instanceId());var w=owner.worker();
             need(s.controlId().equals(s.coordinator.get("active_attempt_id")) && w.instanceId().equals(s.coordinator.get("owner_instance_id")) && w.epoch()==number(s.coordinator,"epoch") && w.coordinatorVersion()==number(s.coordinator,"row_version") && "RECOVERY_ONLY".equals(s.coordinator.get("mode")) && s.coordinator.get("active_import_id")==null,OWNERSHIP_LOST);
             need("REQUESTED".equals(s.control.get("state")) && number(s.control,"row_version")==owner.controlVersion() && owner.predecessor().equals(s.oldId()) && owner.runId().equals(s.runId()) && owner.controlId().equals(s.run.get("current_attempt_id")) && "RECOVERY_REQUIRED".equals(s.run.get("state")) && number(s.run,"row_version")==owner.runVersion(),OWNERSHIP_LOST);
             var a=one(jdbc.queryForList("SELECT instance_id,owner_epoch,kind,state,row_version FROM ddip_management.attempts WHERE attempt_id=? FOR UPDATE",owner.controlId()));
-            need(w.instanceId().equals(a.get("instance_id")) && w.epoch()==number(a,"owner_epoch") && "RECONCILE".equals(a.get("kind")) && "CLAIMED".equals(a.get("state")) && number(a,"row_version")==owner.attemptVersion(),OWNERSHIP_LOST);
+            need(w.instanceId().equals(a.get("instance_id")) && w.epoch()==number(a,"owner_epoch") && "RECONCILE".equals(a.get("kind")) && Set.of("CLAIMED","RUNNING").contains(a.get("state")) && number(a,"row_version")==owner.attemptVersion(),OWNERSHIP_LOST);
             recoveryWorker(guard,w,s.recovery);
             var anchors=jdbc.queryForList("SELECT details_bytes FROM ddip_management.audit_events WHERE run_id=? AND attempt_id=? AND control_id=? AND action='RECOVERY_HANDOFF' ORDER BY event_seq LIMIT 2",owner.runId(),owner.controlId(),owner.controlId());
             need(anchors.size()==1 && SourceJson.parse((byte[])anchors.getFirst().get("details_bytes")).get("qualificationSha256").stringValue().equals(owner.qualificationSha256()),OWNERSHIP_LOST);
+            validateFrozen(guard,w,s);
+    }
+    Owner heartbeat(InstallationHostGuard guard,Owner owner) {
+        return fenced(guard,owner,()->{var w=owner.worker();
             exactly(jdbc.update("UPDATE ddip_management.worker_instances SET heartbeat_at=clock_timestamp(),row_version=row_version+1 WHERE instance_id=? AND installation_id=? AND status='RECOVERY_ONLY' AND row_version=?",w.instanceId(),installation,w.workerVersion()));
             exactly(jdbc.update("UPDATE ddip_management.coordinator SET heartbeat_at=clock_timestamp(),row_version=row_version+1 WHERE singleton_id=1 AND installation_id=? AND mode='RECOVERY_ONLY' AND active_attempt_id=? AND owner_instance_id=? AND epoch=? AND row_version=? AND active_import_id IS NULL",installation,owner.controlId(),w.instanceId(),w.epoch(),w.coordinatorVersion()));
             var next=new WorkerRepository.Session(installation,w.instanceId(),w.profileId(),w.profileDigest(),w.deploymentDigest(),w.hostDigest(),"RECOVERY_ONLY",w.epoch(),w.coordinatorVersion()+1,w.workerVersion()+1);
             return new Owner(next,owner.runId(),owner.controlId(),owner.predecessor(),owner.runVersion(),owner.attemptVersion(),owner.controlVersion(),owner.qualificationSha256());
         });
+    }
+    void verificationFresh(RecoveryQuiescence.Review review){RecoveryQuiescence.fresh(review.inspectedAt(),clock.instant());}
+    ReliabilityRuntime verificationRuntime(Bootstrap evidence){return evidence.runtime;}
+    /** Fresh launch review plus unchanged private evidence, independently of historical receipt lookup. */
+    void verificationReview(InstallationHostGuard guard,Bootstrap evidence,RecoveryQuiescence.Review review,Owner owner) {
+        held(guard,owner.worker());need(evidence!=null && owner.controlId().equals(evidence.target.controlId()) && owner.qualificationSha256().equals(evidence.sha) && owner.worker().instanceId().equals(evidence.target.recovery.instanceId()),OWNERSHIP_LOST);
+        need(review!=null && review.descendants().containsAll(evidence.packet.review.descendants()),QUIESCENCE_REQUIRED);
+        try{need(processes.inspect(identity(evidence.target.snapshot.recovery,"pid","process_started_at"))==RecoveryQuiescence.State.LIVE,PROCESS_UNRESOLVED);}catch(RuntimeException ex){throw new RecoveryFailure(PROCESS_UNRESOLVED);}
+        checkProcesses(evidence.target.snapshot,review,evidence.target.digest());checkHints(evidence.target.snapshot,review,checkBootstrapFiles(guard,evidence));
+    }
+    JsonNode verificationPack(InstallationHostGuard guard,Bootstrap evidence,Owner owner) {
+        var s=evidence.target.snapshot;
+        var found=s.stages.stream().filter(v->"CHECK_INPUTS".equals(v.get("stage")) && number(v,"item_ordinal")==0 && "VERIFIED".equals(v.get("state"))).toList();
+        need("EXECUTE".equals(s.attempt.get("kind")) && found.size()==1,EVIDENCE_UNAVAILABLE);
+        var stage=found.getFirst();String base="runs/"+s.runId()+"/attempts/"+s.oldId()+"/check-inputs/"+stage.get("checkpoint_id");
+        var pack=SourceJson.object();for(var entry:Map.of("command","command.json","bundle","selection.json","result","result.json","evidence","evidence.json","anchor","verified.json").entrySet())pack.set(entry.getKey(),PreflightFiles.canonical(RecoveryFiles.readPrivate(guard,base+"/"+entry.getValue(),PreflightFiles.LARGE),PreflightFiles.LARGE));
+        var c=pack.get("command");var r=pack.get("result");var e=pack.get("evidence");var anchor=pack.get("anchor");
+        need(SourceJson.sha(SourceJson.canonical(c)).equals(stage.get("command_sha256")) && SourceJson.sha(SourceJson.canonical(anchor)).equals(stage.get("result_sha256")) && c.get("runtime").equals(evidence.runtime.json()),EVIDENCE_CHANGED);
+        need(anchor.get("commandSha256").stringValue().equals(SourceJson.sha(SourceJson.canonical(c))) && anchor.get("resultSha256").stringValue().equals(SourceJson.sha(SourceJson.canonical(r))) && anchor.get("evidenceSha256").stringValue().equals(SourceJson.sha(SourceJson.canonical(e))) && anchor.get("cleanup").stringValue().equals("OBSERVED_CLEAN_EXIT") && c.get("bundleSha256").stringValue().equals(SourceJson.sha(SourceJson.canonical(pack.get("bundle")))),EVIDENCE_CHANGED);
+        ReliabilityPreflight.validateResult(c,r,0);ReliabilityPreflight.validateEvidence(c,pack.get("bundle").get("capturedSelection"),r,e);
+        need(SourceJson.sha(SourceJson.canonical(pack.get("bundle").get("capturedSelection"))).equals(s.run.get("selection_sha256")),EVIDENCE_CHANGED);
+        var publish=s.stages.stream().filter(v->"PUBLISH_RELIABILITY".equals(v.get("stage")) && number(v,"item_ordinal")==0).toList();
+        need(publish.size()==1 && e.get("nativeDependencyFingerprint").stringValue().equals(publish.getFirst().get("intended_identity")) && ("v2/processor_revision=2/publication="+e.get("nativeDependencyFingerprint").stringValue()).equals(publish.getFirst().get("intended_namespace")),EVIDENCE_UNAVAILABLE);
+        var publication=publish.getFirst();String publishAddress="runs/"+s.runId()+"/attempts/"+s.oldId()+"/publish-reliability/"+publication.get("checkpoint_id")+"/command.json";
+        var pc=PreflightFiles.canonical(RecoveryFiles.readPrivate(guard,publishAddress,PreflightFiles.SMALL),PreflightFiles.SMALL);
+        for(String key:List.of("protocolVersion","runId","attemptId","ownerEpoch","itemOrdinal","capturedConfigSha256","runtime"))need(pc.get(key).equals(c.get(key)),EVIDENCE_CHANGED);
+        need(pc.get("stage").stringValue().equals("PUBLISH_RELIABILITY") && pc.get("nativeFingerprint").equals(e.get("nativeDependencyFingerprint")) && pc.get("retainedSha256").stringValue().equals(SourceJson.sha(SourceJson.canonical(pack))),EVIDENCE_CHANGED);
+        fenced(guard,owner,()->null);return pack;
+    }
+    JsonNode verificationExpectedPublication(InstallationHostGuard guard,Bootstrap evidence) {
+        var s=evidence.target.snapshot;var found=s.stages.stream().filter(v->"VERIFY_RESULT".equals(v.get("stage")) && number(v,"item_ordinal")==0 && "VERIFIED".equals(v.get("state"))).toList();
+        if(found.isEmpty())return SourceJson.object().putNull("v").get("v");need(found.size()==1,EVIDENCE_CHANGED);
+        String base="runs/"+s.runId()+"/attempts/"+s.oldId()+"/verify-result/"+found.getFirst().get("checkpoint_id");
+        var e=PreflightFiles.canonical(RecoveryFiles.readPrivate(guard,base+"/evidence.json",PreflightFiles.LARGE),PreflightFiles.LARGE);
+        var a=PreflightFiles.canonical(RecoveryFiles.readPrivate(guard,base+"/verified.json",PreflightFiles.SMALL),PreflightFiles.SMALL);
+        need(SourceJson.sha(SourceJson.canonical(e)).equals(a.get("evidenceSha256").stringValue()) && e.get("policy").stringValue().equals("E5_RELIABILITY_RESULT_V1") && e.get("attemptId").stringValue().equals(s.oldId().toString()) && e.get("runId").stringValue().equals(s.runId().toString()) && e.get("publication").get("nativeFingerprint").stringValue().equals(found.getFirst().get("intended_identity")),EVIDENCE_CHANGED);
+        var c=PreflightFiles.canonical(RecoveryFiles.readPrivate(guard,base+"/command.json",PreflightFiles.SMALL),PreflightFiles.SMALL);var r=PreflightFiles.canonical(RecoveryFiles.readPrivate(guard,base+"/result.json",PreflightFiles.SMALL),PreflightFiles.SMALL);
+        need(a.get("commandSha256").stringValue().equals(SourceJson.sha(SourceJson.canonical(c))) && a.get("resultSha256").stringValue().equals(SourceJson.sha(SourceJson.canonical(r))) && a.get("cleanup").stringValue().equals("OBSERVED_CLEAN_EXIT"),EVIDENCE_CHANGED);
+        ReliabilityExecution.validate(c,r,e,new ReadOnlyVerifierProcess.Result(0,null,0,0,Set.of()));
+        return e.get("publication");
     }
     private Snapshot read(UUID control,UUID recovery) {
         var c=one(jdbc.queryForList("SELECT installation_id,mode,epoch,active_attempt_id,owner_instance_id,active_import_id,heartbeat_at,row_version FROM ddip_management.coordinator WHERE singleton_id=1 FOR UPDATE"));
