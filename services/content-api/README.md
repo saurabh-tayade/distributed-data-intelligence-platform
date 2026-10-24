@@ -1483,7 +1483,7 @@ E5 remains incomplete; no new run execution/control functionality is inferred fr
 worker is unchanged and still refuses an occupied/recovery-only slot. Do not start another worker,
 clear SQL pointers, change epochs or bypass host.guard to recover a run. C3a 202/REQUESTED remains
 intent only. C3b's package-private test seam transfers ownership but does not inspect a native
-publication, apply the control, finish the run or release ownership. C3c requires separate approval.
+publication, apply the control, finish the run or release ownership. Remaining C3c workflow requires separate approval.
 
 ### Fresh inspection before any future handoff
 
@@ -1567,3 +1567,35 @@ runtime readiness and full native read-only reconciliation, then verified result
 finalization and conditional release. Uncertainty must keep the slot occupied. Cancellation, retry,
 automatic takeover/repair, Content execution and E5 completion remain deferred. No production
 handoff command is documented because none is enabled.
+
+## C3c.1 internal guarded bootstrap
+
+Execution Recovery remains **partially implemented**. The internal RecoveryHandoff seam can now
+read retained private C3b qualification evidence and reconcile its exact committed PostgreSQL
+state. There is still no public bootstrap/recovery endpoint, operator command, normal-worker mode
+or production recovery workflow. Existing C3a management commands and dispatch behavior are unchanged.
+
+Bootstrap requires the held installation guard, exact private packet relative address/SHA-256 and
+approved runtime profile. It strictly checks canonical packet format/versions, immutable identities,
+installation/profile/frozen selection, original recorded versions and private file bytes/identities.
+It reuses the C3b coordinator-locked resolver for CONFIRMED_HANDOFF, CONFIRMED_ROLLBACK and UNRESOLVED.
+It creates no attempt, epoch, audit, file or owner token. No native child or artifact verifier runs.
+
+A separate internal authorization requires a fresh explicit process-quiescence review, unchanged
+packet/sidecar/runtime evidence, the exact LIVE registered recovery process under the same guard
+instance, and the original committed attempt/epoch/run/control/worker/coordinator versions. A
+historical receipt or expired review alone grants no current authority. Heartbeat/version drift
+is inconclusive, never an invitation to refresh the token from SQL. A dead or changed recovery
+owner needs a new C3a control targeting it and a fresh guarded C3b handoff. The slot stays occupied
+in RECOVERY_ONLY and ordinary managed dispatch remains blocked.
+
+Keep the packet and original private/native evidence. Missing, changed, unsafe or unavailable
+files/runtime/SQL evidence fails closed with bounded fixed diagnostics. Packet identity is sealed
+from bootstrap through authorization; the C3b format cannot detect a byte-identical packet
+replacement before that first read. Retained sidecar identities remain checked across restart.
+Manual orphan/unmanaged-writer review is still required.
+
+See the [C3c.1 contract and validation](../../docs/architecture/durable-execution.md#c3c1-guarded-recovery-bootstrap)
+for implementation decisions, executed results and remaining risks. C3c.2 still needs guarded
+stage launch, coordinated heartbeats, actual runtime readiness and native read-only verification.
+Final disposition, control completion, slot release and production activation remain unfinished.

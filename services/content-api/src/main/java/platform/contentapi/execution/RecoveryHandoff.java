@@ -12,7 +12,7 @@ import tools.jackson.databind.JsonNode;
 import static platform.contentapi.execution.RecoveryFailure.Code.*;
 import static platform.contentapi.execution.RecoveryFailure.need;
 
-/** C3b internal seam only: deliberately no bean, public factory, application role, HTTP or dispatcher caller.
+/** C3b/C3c.1 internal seam only: no bean, public factory, application role, HTTP or dispatcher caller.
  * Transfers an occupied slot; has no native executor, stage-launch, final-outcome or release operation.
  */
 final class RecoveryHandoff {
@@ -21,7 +21,9 @@ final class RecoveryHandoff {
     /** Historical facts, never authority; in particular lookup never supplies or refreshes an owner token. */
     record Receipt(Status status,UUID controlId,UUID runId,UUID attemptId,UUID instanceId,long epoch) { }
     record Owner(WorkerRepository.Session worker,UUID runId,UUID controlId,UUID predecessor,
-                 long runVersion,long attemptVersion,long controlVersion,String qualificationSha256) { }
+                 long runVersion,long attemptVersion,long controlVersion,String qualificationSha256) {
+        @Override public String toString(){return "RecoveryOwner[redacted]";}
+    }
     record Result(Receipt receipt,Owner owner) { }
     private record Snapshot(Map<String,Object> coordinator,Map<String,Object> run,Map<String,Object> attempt,
                             Map<String,Object> control,Map<String,Object> oldWorker,Map<String,Object> recovery,
@@ -38,10 +40,21 @@ final class RecoveryHandoff {
         Set<UUID> unresolvedCheckpoints(){return snapshot.unresolved();}
         @Override public String toString(){return "RecoveryTarget[redacted]";}
     }
-    static final class Qualified {
-        private final Target target;private final RecoveryQuiescence.Review review;private final ReliabilityRuntime runtime;
-        private final RecoveryFiles.Capture files;private final String address,sha;private final Instant qualifiedAt;private final AtomicBoolean used=new AtomicBoolean();
-        private Qualified(Target target,RecoveryQuiescence.Review review,ReliabilityRuntime runtime,RecoveryFiles.Capture files,String address,String sha,Instant at){this.target=target;this.review=review;this.runtime=runtime;this.files=files;this.address=address;this.sha=sha;qualifiedAt=at;}
+    private static class Evidence {
+        final Target target;final String address,sha;
+        Evidence(Target target,String address,String sha){this.target=target;this.address=address;this.sha=sha;}
+    }
+    static final class Bootstrap extends Evidence {
+        private final RecoveryFiles.Retained retained;private final RecoveryPacket packet;private final ReliabilityRuntime runtime;
+        private Bootstrap(Target target,String address,String sha,RecoveryFiles.Retained retained,RecoveryPacket packet,ReliabilityRuntime runtime){super(target,address,sha);this.retained=retained;this.packet=packet;this.runtime=runtime;}
+        String digest(){return target.digest();}
+        Set<UUID> unresolvedCheckpoints(){return target.unresolvedCheckpoints();}
+        @Override public String toString(){return "RecoveryBootstrap[redacted]";}
+    }
+    static final class Qualified extends Evidence {
+        private final RecoveryQuiescence.Review review;private final ReliabilityRuntime runtime;
+        private final RecoveryFiles.Capture files;private final Instant qualifiedAt;private final AtomicBoolean used=new AtomicBoolean();
+        private Qualified(Target target,RecoveryQuiescence.Review review,ReliabilityRuntime runtime,RecoveryFiles.Capture files,String address,String sha,Instant at){super(target,address,sha);this.review=review;this.runtime=runtime;this.files=files;qualifiedAt=at;}
         String address(){return address;} String sha256(){return sha;}
         @Override public String toString(){return "RecoveryQualification[redacted]";}
     }
@@ -51,6 +64,54 @@ final class RecoveryHandoff {
     /** Deterministic clock/observation/transaction-fault seams; never configurable in a production runtime. */
     RecoveryHandoff(JdbcTemplate jdbc,ManagementTransactions tx,UUID installation,Clock clock,RecoveryQuiescence.Processes processes,Consumer<Step> fault){this.jdbc=jdbc;this.tx=tx;this.installation=installation;this.clock=clock;this.processes=processes;this.fault=fault;}
 
+    /** Read-only restart seam. A retained packet can establish facts even for a different/dead process. */
+    Bootstrap bootstrap(InstallationHostGuard guard,String address,String sha,String runtimeProfile) {
+        try {
+            need(!TransactionSynchronizationManager.isActualTransactionActive() && guard!=null && address!=null,INVALID_REQUEST);guard.checkHeld(installation);
+            var retained=RecoveryFiles.retained(guard,address);var packet=RecoveryPacket.parse(retained.bytes(),address,sha,guard);var n=packet.descriptor;
+            var rows=packet.rows;var original=new Snapshot(rows.get(0),rows.get(1),rows.get(2),rows.get(3),rows.get(4),rows.get(5),packet.stages,packet.history);
+            need(original.digest().equals(RecoveryPacket.text(n,"snapshotSha256")),EVIDENCE_CHANGED);
+            var live=tx.required(()->read(original.controlId(),(UUID)original.recovery.get("instance_id")));
+            var frozen=FrozenRunSelection.canonical((byte[])live.run.get("captured_selection"),(String)live.run.get("selection_sha256"),PreflightFiles.LARGE);
+            var w=new WorkerRepository.Session(installation,(UUID)original.recovery.get("instance_id"),RecoveryPacket.text(n,"runProfileId"),RecoveryPacket.text(n,"runProfileSha256"),frozen.get("executionProfile").get("configuration").get("runtime").get("deploymentSha256").stringValue(),RecoveryPacket.text(n,"hostBindingSha256"),"RECOVERY_ONLY",number(original.coordinator,"epoch"),number(original.coordinator,"row_version"),number(original.recovery,"row_version"));
+            var target=new Target(original,w);var proof=new Evidence(target,address,sha);
+            need(resolveEvidence(proof).status()!=Status.UNRESOLVED,HANDOFF_UNRESOLVED);
+            tx.required(()->{validateFrozen(guard,w,live);return null;});
+            var runtime=ReliabilityRuntime.load(jdbc,tx,guard,new WorkerRepository.Owner(w,original.runId(),original.oldId(),number(original.run,"row_version"),number(original.attempt,"row_version"),(String)original.attempt.get("state")),runtimeProfile,frozen);
+            need(SourceJson.sha(SourceJson.canonical(runtime.json())).equals(RecoveryPacket.text(n,"runtimeSha256")),RUNTIME_MISMATCH);
+            var result=new Bootstrap(target,address,sha,retained,packet,runtime);checkBootstrapFiles(guard,result);
+            need(resolveEvidence(result).status()!=Status.UNRESOLVED,HANDOFF_UNRESOLVED);return result;
+        }catch(RecoveryFailure ex){throw ex;}catch(ImportOwnershipFailure ex){throw new RecoveryFailure(OWNERSHIP_LOST);}catch(ManagementFailure ex){throw new RecoveryFailure(HANDOFF_UNRESOLVED);}catch(PreflightFailure ex){throw new RecoveryFailure(RUNTIME_MISMATCH);}catch(RuntimeException ex){throw new RecoveryFailure(EVIDENCE_CHANGED);}
+    }
+    /** Separate explicit authorization, never an effect of resolve/bootstrap or adoption of newer versions. */
+    Owner authorize(InstallationHostGuard guard,Bootstrap evidence,RecoveryQuiescence.Review review) {
+        try {
+            need(evidence!=null,INVALID_REQUEST);held(guard,evidence.target.recovery);
+            var s=evidence.target.snapshot;
+            need(review!=null && review.descendants().containsAll(evidence.packet.review.descendants()),QUIESCENCE_REQUIRED);
+            RecoveryQuiescence.State live;try{live=processes.inspect(identity(s.recovery,"pid","process_started_at"));}catch(RuntimeException ex){throw new RecoveryFailure(PROCESS_UNRESOLVED);}
+            need(live==RecoveryQuiescence.State.LIVE,PROCESS_UNRESOLVED);
+            checkProcesses(s,review,evidence.target.digest());var captured=checkBootstrapFiles(guard,evidence);checkHints(s,review,captured);
+            held(guard,evidence.target.recovery);
+            // All external observation has finished before the final coordinator-locked comparison.
+            Owner result=tx.required(()->{
+                need(resolveEvidence(evidence).status()==Status.CONFIRMED_HANDOFF,HANDOFF_UNRESOLVED);
+                var current=read(s.controlId(),evidence.target.recovery.instanceId());var w=evidence.target.recovery;
+                recoveryWorker(guard,w,current.recovery);validateFrozen(guard,w,current);RecoveryQuiescence.fresh(review.inspectedAt(),clock.instant());
+                var bound=new WorkerRepository.Session(installation,w.instanceId(),w.profileId(),w.profileDigest(),w.deploymentDigest(),w.hostDigest(),"RECOVERY_ONLY",number(s.coordinator,"epoch")+1,number(s.coordinator,"row_version")+1,w.workerVersion());
+                return new Owner(bound,s.runId(),s.controlId(),s.oldId(),number(s.run,"row_version")+1,0,number(s.control,"row_version"),evidence.sha);
+            });
+            held(guard,result.worker());return result;
+        }catch(RecoveryFailure ex){throw ex;}catch(ImportOwnershipFailure ex){throw new RecoveryFailure(OWNERSHIP_LOST);}catch(ManagementFailure ex){throw new RecoveryFailure(HANDOFF_UNRESOLVED);}catch(RuntimeException ex){throw new RecoveryFailure(EVIDENCE_CHANGED);}
+    }
+    private RecoveryFiles.Capture checkBootstrapFiles(InstallationHostGuard guard,Bootstrap evidence) {
+        guard.checkHeld(installation);var retained=RecoveryFiles.retained(guard,evidence.address);
+        need(retained.identity().equals(evidence.retained.identity()) && retained.modifiedAt().equals(evidence.retained.modifiedAt()) && SourceJson.sha(retained.bytes()).equals(evidence.sha),EVIDENCE_CHANGED);
+        try{evidence.runtime.check();}catch(RuntimeException ex){throw new RecoveryFailure(RUNTIME_MISMATCH);}
+        var s=evidence.target.snapshot;var files=RecoveryFiles.capture(guard,s.runId(),s.oldId(),number(s.coordinator,"epoch"),(String)s.run.get("selection_sha256"),evidence.runtime.json(),s.stages);
+        need(files.inventory().equals(evidence.packet.descriptor.get("privateEvidence")),EVIDENCE_CHANGED);
+        return files;
+    }
     Target inspect(InstallationHostGuard guard,WorkerRepository.Session recovery,UUID control) {
         held(guard,recovery);need(control!=null,INVALID_REQUEST);
         return tx.required(()->{var s=read(control,recovery.instanceId());validateOriginal(guard,recovery,s);return new Target(s,recovery);});
@@ -111,18 +172,20 @@ final class RecoveryHandoff {
         held(guard,result.owner().worker());return result;
     }
     /** Bounded, coordinator-locked acknowledgment lookup. Never returns an owner/session or does external I/O. */
-    Receipt resolve(Qualified q) {
-        need(q!=null && !TransactionSynchronizationManager.isActualTransactionActive(),INVALID_REQUEST);
+    Receipt resolve(Qualified q) {need(!TransactionSynchronizationManager.isActualTransactionActive(),INVALID_REQUEST);return resolveEvidence(q);}
+    Receipt resolve(Bootstrap evidence) {need(!TransactionSynchronizationManager.isActualTransactionActive(),INVALID_REQUEST);return resolveEvidence(evidence);}
+    private Receipt resolveEvidence(Evidence q) {
+        need(q!=null,INVALID_REQUEST);
         try{return tx.required(()->{
             var s=read(q.target.controlId(),q.target.recovery.instanceId());
             var successors=jdbc.queryForList("SELECT attempt_id,run_id,attempt_no,kind,instance_id,owner_epoch,state,row_version FROM ddip_management.attempts WHERE attempt_id=? FOR UPDATE",q.target.controlId());
-            if(successors.isEmpty())return receipt(s.digest().equals(q.target.digest())?Status.CONFIRMED_ROLLBACK:Status.UNRESOLVED,q);
+            if(successors.isEmpty())return receipt(s.digest().equals(q.target.digest()) && jdbc.queryForObject("SELECT count(*) FROM ddip_management.audit_events WHERE control_id=? AND safe_code='RECOVERY_HANDOFF'",Long.class,s.controlId())==0?Status.CONFIRMED_ROLLBACK:Status.UNRESOLVED,q);
             var a=successors.getFirst();var b=q.target.snapshot;
             boolean same=hash(s.control).equals(hash(b.control)) && hash(s.oldWorker).equals(hash(b.oldWorker)) && hash(s.recovery).equals(hash(b.recovery))
                     && s.controlId().equals(s.coordinator.get("active_attempt_id")) && q.target.recovery.instanceId().equals(s.coordinator.get("owner_instance_id")) && number(s.coordinator,"epoch")==number(b.coordinator,"epoch")+1 && number(s.coordinator,"row_version")==number(b.coordinator,"row_version")+1 && "RECOVERY_ONLY".equals(s.coordinator.get("mode")) && s.coordinator.get("active_import_id")==null
                     && s.controlId().equals(s.run.get("current_attempt_id")) && "RECOVERY_REQUIRED".equals(s.run.get("state")) && number(s.run,"row_version")==number(b.run,"row_version")+1
                     && s.runId().equals(a.get("run_id")) && "RECONCILE".equals(a.get("kind")) && q.target.recovery.instanceId().equals(a.get("instance_id")) && number(a,"owner_epoch")==number(b.coordinator,"epoch")+1 && "CLAIMED".equals(a.get("state")) && number(a,"row_version")==0 && number(a,"attempt_no")==b.history.stream().mapToLong(v->number(v,"attempt_no")).max().orElse(0)+1;
-            same &= preservedHistory(b,s);
+            same &= preservedHistory(b,s) && jdbc.queryForObject("SELECT count(*) FROM ddip_management.stage_invocations WHERE attempt_id=?",Long.class,s.controlId())==0;
             var audits=jdbc.queryForList("SELECT attempt_id,action,before_state,after_state,before_version,after_version,safe_code,details_bytes FROM ddip_management.audit_events WHERE run_id=? AND control_id=? AND action IN ('RECOVERY_HANDOFF','ATTEMPT_CLAIMED','ATTEMPT_INTERRUPTED','STAGE_UNKNOWN') ORDER BY event_seq LIMIT 516",s.runId(),s.controlId());
             var expected=new ArrayList<Map<String,Object>>();
             if(Set.of("CLAIMED","RUNNING").contains(b.attempt.get("state")))expected.add(auditRow(b.oldId(),"ATTEMPT_INTERRUPTED",(String)b.attempt.get("state"),"INTERRUPTED",number(b.attempt,"row_version"),number(b.attempt,"row_version")+1,q));
@@ -175,6 +238,9 @@ final class RecoveryHandoff {
         need(active || prior,OWNERSHIP_LOST);need("EXECUTE".equals(s.attempt.get("kind")) || "RECOVERY_REQUIRED".equals(s.run.get("state")),OWNERSHIP_LOST);
         recoveryWorker(guard,recovery,s.recovery);
         need(installation.equals(s.oldWorker.get("installation_id")) && recovery.profileId().equals(s.oldWorker.get("execution_profile_id")) && recovery.profileDigest().equals(s.oldWorker.get("profile_sha256")) && recovery.hostDigest().equals(s.oldWorker.get("host_binding_sha256")) && recovery.profileId().equals(s.run.get("execution_profile_id")),RUNTIME_MISMATCH);
+        validateFrozen(guard,recovery,s);
+    }
+    private void validateFrozen(InstallationHostGuard guard,WorkerRepository.Session recovery,Snapshot s) {
         need(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.execution_profile_storage p JOIN ddip_management.storage_bindings b USING(binding_id) WHERE p.profile_id=? AND b.binding_id=? AND b.installation_id=? AND b.role='CONTROL' AND b.configuration_sha256=? AND b.configuration_bytes=?)",Boolean.class,recovery.profileId(),guard.binding().id(),installation,guard.binding().digest(),guard.binding().descriptor()),RUNTIME_MISMATCH);
         try {
             var body=SourceJson.object().put("action","RECONCILE").put("attemptId",s.oldId().toString()).put("quiescenceConfirmed",true);
@@ -218,14 +284,14 @@ final class RecoveryHandoff {
         for(var h:before.history){var matches=after.history.stream().filter(v->v.get("attempt_id").equals(h.get("attempt_id"))).toList();if(matches.size()!=1)return false;var expected=new HashMap<>(h);if(h.get("attempt_id").equals(before.oldId()) && active){expected.put("state","INTERRUPTED");expected.put("row_version",number(h,"row_version")+1);}if(!hash(expected).equals(hash(matches.getFirst())))return false;}
         return true;
     }
-    private byte[] auditDetails(Qualified q) {
+    private byte[] auditDetails(Evidence q) {
         var s=q.target.snapshot;return SourceJson.canonical(SourceJson.object().put("protocolVersion",1).put("policy","E5_EXECUTION_QUIESCENCE_V1").put("oldAttemptId",s.oldId().toString()).put("oldInstanceId",s.oldWorker.get("instance_id").toString()).put("oldEpoch",s.coordinator.get("epoch").toString()).put("oldCoordinatorVersion",s.coordinator.get("row_version").toString()).put("oldRunVersion",s.run.get("row_version").toString()).put("oldAttemptVersion",s.attempt.get("row_version").toString()).put("snapshotSha256",s.digest()).put("qualificationAddress",q.address).put("qualificationSha256",q.sha));
     }
     private void audit(Snapshot s,UUID attempt,String action,String before,String after,Long bv,Long av,Qualified q) {
         jdbc.update("INSERT INTO ddip_management.audit_events(actor_scope,run_id,attempt_id,control_id,action,before_state,after_state,before_version,after_version,safe_code,details_bytes) VALUES ('local-operator',?,?,?,?,?,?,?,?,'RECOVERY_HANDOFF',?)",s.runId(),attempt,s.controlId(),action,before,after,bv,av,auditDetails(q));fault.accept(Step.AUDIT);
     }
-    private Map<String,Object> auditRow(UUID attempt,String action,String before,String after,Long bv,Long av,Qualified q){var row=new HashMap<String,Object>();row.put("attempt_id",attempt);row.put("action",action);row.put("before_state",before);row.put("after_state",after);row.put("before_version",bv);row.put("after_version",av);row.put("safe_code","RECOVERY_HANDOFF");row.put("details_bytes",auditDetails(q));return row;}
-    private static Receipt receipt(Status status,Qualified q){
+    private Map<String,Object> auditRow(UUID attempt,String action,String before,String after,Long bv,Long av,Evidence q){var row=new HashMap<String,Object>();row.put("attempt_id",attempt);row.put("action",action);row.put("before_state",before);row.put("after_state",after);row.put("before_version",bv);row.put("after_version",av);row.put("safe_code","RECOVERY_HANDOFF");row.put("details_bytes",auditDetails(q));return row;}
+    private static Receipt receipt(Status status,Evidence q){
         var s=q.target.snapshot;
         if(status==Status.CONFIRMED_ROLLBACK)return new Receipt(status,s.controlId(),s.runId(),s.oldId(),(UUID)s.oldWorker.get("instance_id"),number(s.coordinator,"epoch"));
         if(status==Status.UNRESOLVED)return new Receipt(status,s.controlId(),s.runId(),null,null,0);
@@ -237,6 +303,7 @@ final class RecoveryHandoff {
     private static void exactly(int rows){need(rows==1,OWNERSHIP_LOST);}
     private static String hash(Object value){return SourceJson.sha(SourceJson.canonical(json(value)));}
     private static JsonNode json(Object value) {
+        if(value instanceof JsonNode node)return node;
         if(value instanceof Map<?,?> map){var n=SourceJson.object();for(var e:map.entrySet())n.set(e.getKey().toString(),json(e.getValue()));return n;}
         if(value instanceof Collection<?> list){var a=SourceJson.object().putArray("v");list.forEach(v->a.add(json(v)));return a;}
         if(value instanceof byte[] raw)return SourceJson.object().put("sha256",SourceJson.sha(raw)).put("length",Integer.toString(raw.length));
