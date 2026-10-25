@@ -21,7 +21,7 @@ final class RecoveryVerification {
     static final Set<String> OBSERVATIONS=Set.of("VERIFIED_PUBLICATION","OUTPUT_ABSENT","OUTPUT_INCOMPLETE","OUTPUT_CHANGED","OUTPUT_INVALID","OUTPUT_UNAVAILABLE","DEPENDENCY_CHANGED","DEPENDENCY_INVALID","DEPENDENCY_UNAVAILABLE","RUNTIME_INCOMPATIBLE","RESOURCE_LIMIT");
     private static final Set<String> SUPERVISION=Set.of("PROCESS_START_FAILED","STAGE_TIMEOUT","STAGE_OUTPUT_LIMIT","EVIDENCE_INVALID","EVIDENCE_UNAVAILABLE","INTERRUPTED","TERMINATION_UNCONFIRMED");
     enum Step { INTENT, AUTHORIZED, CHILD, RESULT }
-    record Stage(RecoveryHandoff.Owner owner,UUID checkpoint,String state,long version,String address,String commandSha,String fingerprint,InstallationHostGuard.ProcessIdentity child) {
+    record Stage(RecoveryHandoff.Owner owner,int itemOrdinal,UUID checkpoint,String state,long version,String address,String commandSha,String fingerprint,InstallationHostGuard.ProcessIdentity child) {
         @Override public String toString(){return "RecoveryVerificationStage[redacted]";}
     }
     record Observation(Stage stage,String classification) { }
@@ -43,7 +43,18 @@ final class RecoveryVerification {
         try{return verifyOnce(guard,bootstrap,review);}catch(RecoveryFailure | ManagementFailure | ImportOwnershipFailure | PreflightFailure ex){throw ex;}catch(RuntimeException ex){throw new RecoveryFailure(EVIDENCE_CHANGED);}
     }
     private Observation verifyOnce(InstallationHostGuard guard,RecoveryHandoff.Bootstrap bootstrap,RecoveryQuiescence.Review review) {
-        var owner=handoffs.authorize(guard,bootstrap,review);var runtime=handoffs.verificationRuntime(bootstrap);
+        return verifyOwned(guard,bootstrap,review,handoffs.authorize(guard,bootstrap,review),0);
+    }
+    /** One separate, persisted read-only qualification for finalization; never reopens item 0. */
+    Observation requalify(InstallationHostGuard guard,RecoveryHandoff.Bootstrap bootstrap,Stage previous,RecoveryQuiescence.Review review) {
+        need(previous!=null && previous.itemOrdinal()==0 && Set.of("VERIFIED","FAILED").contains(previous.state()),EVIDENCE_UNAVAILABLE);
+        var facts=inspect(guard,previous.owner().controlId());need(facts.evidence()!=null,EVIDENCE_UNAVAILABLE);
+        handoffs.fenced(guard,previous.owner(),()->{stage(previous);return null;});
+        handoffs.verificationChild(previous.child());
+        return verifyOwned(guard,bootstrap,review,previous.owner(),1);
+    }
+    private Observation verifyOwned(InstallationHostGuard guard,RecoveryHandoff.Bootstrap bootstrap,RecoveryQuiescence.Review review,RecoveryHandoff.Owner owner,int itemOrdinal) {
+        var runtime=handoffs.verificationRuntime(bootstrap);
         var pack=handoffs.verificationPack(guard,bootstrap,owner);UUID checkpoint=UUID.randomUUID();
         var files=new PreflightFiles(guard,owner.runId(),owner.controlId(),checkpoint,"VERIFY_RESULT");
         byte[] retained=SourceJson.canonical(pack);String fingerprint=pack.get("evidence").get("nativeDependencyFingerprint").stringValue();
@@ -53,7 +64,7 @@ final class RecoveryVerification {
         byte[] raw=SourceJson.canonical(command);files.write("command.json",raw,PreflightFiles.SMALL);files.write("retained.json",retained,PreflightFiles.LARGE);
         var commandIdentity=InstallationHostGuard.identity(files.directory.resolve("command.json"));var retainedIdentity=InstallationHostGuard.identity(files.directory.resolve("retained.json"));
         handoffs.verificationReview(guard,bootstrap,review,owner);
-        var current=new Current();current.stage=begin(guard,owner,checkpoint,files.address,SourceJson.sha(raw),fingerprint);
+        var current=new Current();current.stage=begin(guard,owner,itemOrdinal,checkpoint,files.address,SourceJson.sha(raw),fingerprint);
         try {
             compatible(runtime);var once=new AtomicBoolean();
             var child=process.run(List.of(runtime.json().get("configuration").get("python").stringValue(),"-I","-B","-X","utf8","-c",new String(bridge(),java.nio.charset.StandardCharsets.UTF_8),files.directory.resolve("command.json").toString(),bridgeSha()),runtime.environment(),runtime.scratch(),Duration.ofSeconds(runtime.seconds()),new ReadOnlyVerifierProcess.Observer(){
@@ -89,44 +100,45 @@ final class RecoveryVerification {
     }
     private static void checkRequest(PreflightFiles f,byte[] raw,byte[] pack,InstallationHostGuard.Identity command,InstallationHostGuard.Identity retained){need(InstallationHostGuard.identity(f.directory.resolve("command.json")).equals(command) && InstallationHostGuard.identity(f.directory.resolve("retained.json")).equals(retained) && Arrays.equals(raw,f.read("command.json",PreflightFiles.SMALL)) && Arrays.equals(pack,f.read("retained.json",PreflightFiles.LARGE)),EVIDENCE_CHANGED);}
     private static tools.jackson.databind.node.ObjectNode anchor(Stage s,JsonNode command,String code,String cleanup){var n=SourceJson.object().put("policy",POLICY).put("checkpointId",s.checkpoint().toString()).put("commandSha256",s.commandSha()).put("retainedSha256",command.get("retainedSha256").stringValue()).put("bridgeSha256",bridgeSha()).put("classification",code).put("cleanup",cleanup);if(s.child()==null)n.putNull("child");else n.putObject("child").put("instanceId",s.child().instanceId().toString()).put("pid",Long.toString(s.child().pid())).put("startedAt",s.child().startedAt().toString());return n;}
-    private Stage begin(InstallationHostGuard guard,RecoveryHandoff.Owner owner,UUID checkpoint,String address,String sha,String fingerprint) {
+    private Stage begin(InstallationHostGuard guard,RecoveryHandoff.Owner owner,int itemOrdinal,UUID checkpoint,String address,String sha,String fingerprint) {
         return handoffs.fenced(guard,owner,()->{
-            need(owner.attemptVersion()==0 && jdbc.queryForObject("SELECT count(*) FROM ddip_management.stage_invocations WHERE attempt_id=?",Long.class,owner.controlId())==0,OWNERSHIP_LOST);
+            need((itemOrdinal==0 && owner.attemptVersion()==0 || itemOrdinal==1 && owner.attemptVersion()==1) && jdbc.queryForObject("SELECT count(*) FROM ddip_management.stage_invocations WHERE attempt_id=?",Long.class,owner.controlId())==itemOrdinal,OWNERSHIP_LOST);
             need(address.equals("runs/"+owner.runId()+"/attempts/"+owner.controlId()+"/verify-result/"+checkpoint) && sha.matches("[0-9a-f]{64}") && fingerprint.matches("[0-9a-f]{64}"),INVALID_REQUEST);
             need(jdbc.queryForObject("SELECT count(*) FROM ddip_management.stage_invocations s JOIN ddip_management.attempts a USING(attempt_id) WHERE a.run_id=?",Long.class,owner.runId())<512,CAPACITY_EXCEEDED);
-            capacity(2);exactly(jdbc.update("UPDATE ddip_management.attempts SET state='RUNNING',row_version=row_version+1 WHERE attempt_id=? AND kind='RECONCILE' AND state='CLAIMED' AND row_version=?",owner.controlId(),owner.attemptVersion()));
-            jdbc.update("INSERT INTO ddip_management.stage_invocations(attempt_id,stage,item_ordinal,checkpoint_id,state,input_evidence_sha256,intended_identity,intended_namespace,command_address,command_sha256) VALUES (?,'VERIFY_RESULT',0,?,'INTENT',?,?,?,?,?)",owner.controlId(),checkpoint,sha,fingerprint,"v2/processor_revision=2/publication="+fingerprint,address+"/command.json",sha);
-            var next=new RecoveryHandoff.Owner(owner.worker(),owner.runId(),owner.controlId(),owner.predecessor(),owner.runVersion(),1,owner.controlVersion(),owner.qualificationSha256());var s=new Stage(next,checkpoint,"INTENT",0,address,sha,fingerprint,null);
-            audit(s,"RECOVERY_ATTEMPT_RUNNING","CLAIMED","RUNNING",0L,1L,"STARTED");audit(s,"RECOVERY_STAGE_INTENT",null,"INTENT",null,0L,"ACCEPTED");fault.accept(Step.INTENT);return s;
+            capacity(itemOrdinal==0?2:1);if(itemOrdinal==0)exactly(jdbc.update("UPDATE ddip_management.attempts SET state='RUNNING',row_version=row_version+1 WHERE attempt_id=? AND kind='RECONCILE' AND state='CLAIMED' AND row_version=?",owner.controlId(),owner.attemptVersion()));
+            jdbc.update("INSERT INTO ddip_management.stage_invocations(attempt_id,stage,item_ordinal,checkpoint_id,state,input_evidence_sha256,intended_identity,intended_namespace,command_address,command_sha256) VALUES (?,'VERIFY_RESULT',?,?,'INTENT',?,?,?,?,?)",owner.controlId(),itemOrdinal,checkpoint,sha,fingerprint,"v2/processor_revision=2/publication="+fingerprint,address+"/command.json",sha);
+            var next=new RecoveryHandoff.Owner(owner.worker(),owner.runId(),owner.controlId(),owner.predecessor(),owner.runVersion(),1,owner.controlVersion(),owner.qualificationSha256());var s=new Stage(next,itemOrdinal,checkpoint,"INTENT",0,address,sha,fingerprint,null);
+            if(itemOrdinal==0)audit(s,"RECOVERY_ATTEMPT_RUNNING","CLAIMED","RUNNING",0L,1L,"STARTED");audit(s,"RECOVERY_STAGE_INTENT",null,"INTENT",null,0L,"ACCEPTED");fault.accept(Step.INTENT);return s;
         });
     }
     private Stage authorize(InstallationHostGuard guard,Stage s,RecoveryQuiescence.Review review) {
         return handoffs.fenced(guard,s.owner(),()->{stage(s);handoffs.verificationFresh(review);need(s.state().equals("INTENT") && s.child()==null,OWNERSHIP_LOST);capacity(1);
-            exactly(jdbc.update("UPDATE ddip_management.stage_invocations SET state='RUNNING',started_at=clock_timestamp(),row_version=row_version+1 WHERE attempt_id=? AND stage='VERIFY_RESULT' AND item_ordinal=0 AND checkpoint_id=? AND state='INTENT' AND row_version=? AND child_pid IS NULL",s.owner().controlId(),s.checkpoint(),s.version()));
+            exactly(jdbc.update("UPDATE ddip_management.stage_invocations SET state='RUNNING',started_at=clock_timestamp(),row_version=row_version+1 WHERE attempt_id=? AND stage='VERIFY_RESULT' AND item_ordinal=? AND checkpoint_id=? AND state='INTENT' AND row_version=? AND child_pid IS NULL",s.owner().controlId(),s.itemOrdinal(),s.checkpoint(),s.version()));
             audit(s,"RECOVERY_LAUNCH_AUTHORIZED","INTENT","RUNNING",s.version(),s.version()+1,"STARTED");fault.accept(Step.AUTHORIZED);return next(s,s.owner(),"RUNNING",null);
         });
     }
     private Stage recordChild(InstallationHostGuard guard,Stage s,InstallationHostGuard.ProcessIdentity child) {
         return handoffs.fenced(guard,s.owner(),()->{stage(s);need(s.state().equals("RUNNING") && s.child()==null && child!=null && child.pid()>0 && child.startedAt()!=null && child.instanceId()!=null,OWNERSHIP_LOST);capacity(1);
-            exactly(jdbc.update("UPDATE ddip_management.stage_invocations SET child_pid=?,child_started_at=?,child_instance_id=?,row_version=row_version+1 WHERE attempt_id=? AND stage='VERIFY_RESULT' AND item_ordinal=0 AND checkpoint_id=? AND state='RUNNING' AND row_version=? AND child_pid IS NULL",child.pid(),Timestamp.from(child.startedAt()),child.instanceId(),s.owner().controlId(),s.checkpoint(),s.version()));
+            exactly(jdbc.update("UPDATE ddip_management.stage_invocations SET child_pid=?,child_started_at=?,child_instance_id=?,row_version=row_version+1 WHERE attempt_id=? AND stage='VERIFY_RESULT' AND item_ordinal=? AND checkpoint_id=? AND state='RUNNING' AND row_version=? AND child_pid IS NULL",child.pid(),Timestamp.from(child.startedAt()),child.instanceId(),s.owner().controlId(),s.itemOrdinal(),s.checkpoint(),s.version()));
             audit(s,"RECOVERY_CHILD_STARTED","RUNNING","RUNNING",s.version(),s.version()+1,"STARTED");fault.accept(Step.CHILD);return next(s,s.owner(),"RUNNING",child);
         });
     }
-    private Stage heartbeat(InstallationHostGuard guard,Stage s) {handoffs.fenced(guard,s.owner(),()->{stage(s);need(s.state().equals("RUNNING"),OWNERSHIP_LOST);return null;});var owner=handoffs.heartbeat(guard,s.owner());return new Stage(owner,s.checkpoint(),s.state(),s.version(),s.address(),s.commandSha(),s.fingerprint(),s.child());}
+    private Stage heartbeat(InstallationHostGuard guard,Stage s) {handoffs.fenced(guard,s.owner(),()->{stage(s);need(s.state().equals("RUNNING"),OWNERSHIP_LOST);return null;});var owner=handoffs.heartbeat(guard,s.owner());return new Stage(owner,s.itemOrdinal(),s.checkpoint(),s.state(),s.version(),s.address(),s.commandSha(),s.fingerprint(),s.child());}
     private Stage finish(InstallationHostGuard guard,Stage s,String state,String code,String sha) {
         return handoffs.fenced(guard,s.owner(),()->{stage(s);need(Set.of("INTENT","RUNNING").contains(s.state()) && (OBSERVATIONS.contains(code)||SUPERVISION.contains(code)),OWNERSHIP_LOST);capacity(1);
-            exactly(jdbc.update("UPDATE ddip_management.stage_invocations SET state=?,outcome_code=?,result_address=?,result_sha256=?,finished_at=clock_timestamp(),row_version=row_version+1 WHERE attempt_id=? AND stage='VERIFY_RESULT' AND item_ordinal=0 AND checkpoint_id=? AND state=? AND row_version=?",state,code,s.address()+"/verified.json",sha,s.owner().controlId(),s.checkpoint(),s.state(),s.version()));
+            exactly(jdbc.update("UPDATE ddip_management.stage_invocations SET state=?,outcome_code=?,result_address=?,result_sha256=?,finished_at=clock_timestamp(),row_version=row_version+1 WHERE attempt_id=? AND stage='VERIFY_RESULT' AND item_ordinal=? AND checkpoint_id=? AND state=? AND row_version=?",state,code,s.address()+"/verified.json",sha,s.owner().controlId(),s.itemOrdinal(),s.checkpoint(),s.state(),s.version()));
             audit(s,"RECOVERY_STAGE_OBSERVED",s.state(),state,s.version(),s.version()+1,code);fault.accept(Step.RESULT);return next(s,s.owner(),state,s.child());
         });
     }
-    private void stage(Stage s) {
-        var row=one(jdbc.queryForList("SELECT checkpoint_id,state,row_version,command_address,command_sha256,input_evidence_sha256,intended_identity,child_pid,child_started_at,child_instance_id FROM ddip_management.stage_invocations WHERE attempt_id=? AND stage='VERIFY_RESULT' AND item_ordinal=0 FOR UPDATE",s.owner().controlId()));
+    void stage(Stage s) {
+        var row=one(jdbc.queryForList("SELECT checkpoint_id,state,row_version,command_address,command_sha256,input_evidence_sha256,intended_identity,child_pid,child_started_at,child_instance_id FROM ddip_management.stage_invocations WHERE attempt_id=? AND stage='VERIFY_RESULT' AND item_ordinal=? FOR UPDATE",s.owner().controlId(),s.itemOrdinal()));
         need(s.owner().attemptVersion()==1 && s.checkpoint().equals(row.get("checkpoint_id")) && s.state().equals(row.get("state")) && s.version()==number(row,"row_version") && s.commandSha().equals(row.get("command_sha256")) && s.commandSha().equals(row.get("input_evidence_sha256")) && s.fingerprint().equals(row.get("intended_identity")) && (s.address()+"/command.json").equals(row.get("command_address")),OWNERSHIP_LOST);
         need(s.child()==null?row.get("child_pid")==null:s.child().pid()==number(row,"child_pid") && s.child().instanceId().equals(row.get("child_instance_id")) && s.child().startedAt().equals(((Timestamp)row.get("child_started_at")).toInstant()),OWNERSHIP_LOST);
     }
-    private static Stage next(Stage s,RecoveryHandoff.Owner owner,String state,InstallationHostGuard.ProcessIdentity child){return new Stage(owner,s.checkpoint(),state,s.version()+1,s.address(),s.commandSha(),s.fingerprint(),child);}
+    private static Stage next(Stage s,RecoveryHandoff.Owner owner,String state,InstallationHostGuard.ProcessIdentity child){return new Stage(owner,s.itemOrdinal(),s.checkpoint(),state,s.version()+1,s.address(),s.commandSha(),s.fingerprint(),child);}
     private void capacity(int count){need(AuditCapacity.available(jdbc,count,jdbc.queryForObject("SELECT count(*) FROM ddip_management.runs WHERE state IN ('QUEUED','RUNNING','CANCEL_REQUESTED','RECOVERY_REQUIRED')",Long.class)),CAPACITY_EXCEEDED);}
-    private void audit(Stage s,String action,String before,String after,Long bv,Long av,String code){byte[] details=SourceJson.canonical(SourceJson.object().put("policy",POLICY).put("checkpointId",s.checkpoint().toString()).put("commandSha256",s.commandSha()).put("qualificationSha256",s.owner().qualificationSha256()).put("bridgeSha256",bridgeSha()));jdbc.update("INSERT INTO ddip_management.audit_events(actor_scope,run_id,attempt_id,control_id,action,before_state,after_state,before_version,after_version,safe_code,details_bytes) VALUES ('local-operator',?,?,?,?,?,?,?,?,?,?)",s.owner().runId(),s.owner().controlId(),s.owner().controlId(),action,before,after,bv,av,code,details);}
+    private void audit(Stage s,String action,String before,String after,Long bv,Long av,String code){byte[] details=SourceJson.canonical(auditDetails(s,SourceJson.object().put("policy",POLICY).put("checkpointId",s.checkpoint().toString()).put("commandSha256",s.commandSha()).put("qualificationSha256",s.owner().qualificationSha256()).put("bridgeSha256",bridgeSha())));jdbc.update("INSERT INTO ddip_management.audit_events(actor_scope,run_id,attempt_id,control_id,action,before_state,after_state,before_version,after_version,safe_code,details_bytes) VALUES ('local-operator',?,?,?,?,?,?,?,?,?,?)",s.owner().runId(),s.owner().controlId(),s.owner().controlId(),action,before,after,bv,av,code,details);}
+    private static tools.jackson.databind.node.ObjectNode auditDetails(Stage s,tools.jackson.databind.node.ObjectNode n){if(s.itemOrdinal()!=0)n.put("recoveryItem",s.itemOrdinal());return n;}
     private static void validate(JsonNode c,JsonNode result,JsonNode e,ReadOnlyVerifierProcess.Result child) {
         try {
             SourceJson.fields(result,"protocolVersion","runId","attemptId","checkpointId","classification","evidenceSha256");
@@ -148,16 +160,19 @@ final class RecoveryVerification {
         }catch(RuntimeException ex){throw new PreflightFailure(PreflightFailure.Code.RESULT_INVALID);}
     }
     Inspection inspect(InstallationHostGuard guard,UUID attempt) {
-        try{return inspectRecorded(guard,attempt);}catch(RecoveryFailure | ManagementFailure | ImportOwnershipFailure | PreflightFailure ex){throw ex;}catch(RuntimeException ex){throw new RecoveryFailure(EVIDENCE_CHANGED);}
+        return inspect(guard,attempt,0);
     }
-    private Inspection inspectRecorded(InstallationHostGuard guard,UUID attempt) {
-        need(guard!=null && attempt!=null && !TransactionSynchronizationManager.isActualTransactionActive(),INVALID_REQUEST);guard.checkHeld(guard.binding().installationId());
+    Inspection inspect(InstallationHostGuard guard,UUID attempt,int itemOrdinal) {
+        try{return inspectRecorded(guard,attempt,itemOrdinal);}catch(RecoveryFailure | ManagementFailure | ImportOwnershipFailure | PreflightFailure ex){throw ex;}catch(RuntimeException ex){throw new RecoveryFailure(EVIDENCE_CHANGED);}
+    }
+    private Inspection inspectRecorded(InstallationHostGuard guard,UUID attempt,int itemOrdinal) {
+        need(guard!=null && attempt!=null && (itemOrdinal==0 || itemOrdinal==1) && !TransactionSynchronizationManager.isActualTransactionActive(),INVALID_REQUEST);guard.checkHeld(guard.binding().installationId());
         var row=tx.required(()->{
             var coordinator=one(jdbc.queryForList("SELECT installation_id FROM ddip_management.coordinator WHERE singleton_id=1 FOR UPDATE"));need(guard.binding().installationId().equals(coordinator.get("installation_id")),OWNERSHIP_LOST);
-            var s=one(jdbc.queryForList("SELECT s.checkpoint_id,s.state,s.row_version,s.command_address,s.command_sha256,s.input_evidence_sha256,s.result_address,s.result_sha256,s.outcome_code,s.child_pid,s.child_started_at,s.child_instance_id,s.started_at,a.run_id,a.kind,w.installation_id FROM ddip_management.stage_invocations s JOIN ddip_management.attempts a USING(attempt_id) JOIN ddip_management.worker_instances w USING(instance_id) WHERE s.attempt_id=? AND s.stage='VERIFY_RESULT' AND s.item_ordinal=0",attempt));
+            var s=one(jdbc.queryForList("SELECT s.checkpoint_id,s.state,s.row_version,s.command_address,s.command_sha256,s.input_evidence_sha256,s.result_address,s.result_sha256,s.outcome_code,s.child_pid,s.child_started_at,s.child_instance_id,s.started_at,a.run_id,a.kind,w.installation_id FROM ddip_management.stage_invocations s JOIN ddip_management.attempts a USING(attempt_id) JOIN ddip_management.worker_instances w USING(instance_id) WHERE s.attempt_id=? AND s.stage='VERIFY_RESULT' AND s.item_ordinal=?",attempt,itemOrdinal));
             need("RECONCILE".equals(s.get("kind")) && guard.binding().installationId().equals(s.get("installation_id")),EVIDENCE_CHANGED);
             var audit=one(jdbc.queryForList("SELECT details_bytes FROM ddip_management.audit_events WHERE run_id=? AND attempt_id=? AND control_id=? AND action='RECOVERY_HANDOFF' ORDER BY event_seq LIMIT 2",s.get("run_id"),attempt,attempt));s.put("handoff_details",audit.get("details_bytes"));
-            if(s.get("result_sha256")!=null){var observed=one(jdbc.queryForList("SELECT after_state,after_version,safe_code,details_bytes FROM ddip_management.audit_events WHERE run_id=? AND attempt_id=? AND control_id=? AND action='RECOVERY_STAGE_OBSERVED' ORDER BY event_seq LIMIT 2",s.get("run_id"),attempt,attempt));need(s.get("state").equals(observed.get("after_state")) && number(s,"row_version")==number(observed,"after_version") && s.get("outcome_code").equals(observed.get("safe_code")),EVIDENCE_CHANGED);s.put("observed_details",observed.get("details_bytes"));}
+            if(s.get("result_sha256")!=null){var observed=one(jdbc.queryForList("SELECT after_state,after_version,safe_code,details_bytes FROM ddip_management.audit_events WHERE run_id=? AND attempt_id=? AND control_id=? AND action='RECOVERY_STAGE_OBSERVED' AND convert_from(details_bytes,'UTF8')::jsonb->>'checkpointId'=? ORDER BY event_seq LIMIT 2",s.get("run_id"),attempt,attempt,s.get("checkpoint_id").toString()));need(s.get("state").equals(observed.get("after_state")) && number(s,"row_version")==number(observed,"after_version") && s.get("outcome_code").equals(observed.get("safe_code")),EVIDENCE_CHANGED);s.put("observed_details",observed.get("details_bytes"));}
             return s;
         });
         var details=SourceJson.parse((byte[])row.get("handoff_details"));String address="runs/"+row.get("run_id")+"/attempts/"+attempt+"/verify-result/"+row.get("checkpoint_id");
@@ -172,7 +187,7 @@ final class RecoveryVerification {
         if(row.get("result_sha256")==null)return new Inspection((String)row.get("state"),"INCONCLUSIVE",null);
         need((address+"/verified.json").equals(row.get("result_address")),EVIDENCE_CHANGED);byte[] validated=RecoveryFiles.readPrivate(guard,address+"/verified.json",PreflightFiles.SMALL);need(SourceJson.sha(validated).equals(row.get("result_sha256")),EVIDENCE_CHANGED);var a=PreflightFiles.canonical(validated,PreflightFiles.SMALL);
         need(a.get("policy").stringValue().equals(POLICY) && a.get("classification").stringValue().equals(row.get("outcome_code")) && a.get("commandSha256").stringValue().equals(SourceJson.sha(raw)) && a.get("retainedSha256").equals(c.get("retainedSha256")) && a.get("bridgeSha256").equals(c.get("bridgeSha256")) && a.get("checkpointId").equals(c.get("checkpointId")),EVIDENCE_CHANGED);
-        var audit=SourceJson.parse((byte[])row.get("observed_details"));need(audit.equals(SourceJson.object().put("policy",POLICY).put("checkpointId",c.get("checkpointId").stringValue()).put("commandSha256",SourceJson.sha(raw)).put("qualificationSha256",qSha).put("bridgeSha256",bridgeSha())),EVIDENCE_CHANGED);
+        var audit=SourceJson.parse((byte[])row.get("observed_details"));var expectedAudit=SourceJson.object().put("policy",POLICY).put("checkpointId",c.get("checkpointId").stringValue()).put("commandSha256",SourceJson.sha(raw)).put("qualificationSha256",qSha).put("bridgeSha256",bridgeSha());if(itemOrdinal!=0)expectedAudit.put("recoveryItem",itemOrdinal);need(audit.equals(expectedAudit),EVIDENCE_CHANGED);
         InstallationHostGuard.ProcessIdentity child=null;
         if(row.get("child_pid")!=null){child=new InstallationHostGuard.ProcessIdentity((UUID)row.get("child_instance_id"),number(row,"child_pid"),((Timestamp)row.get("child_started_at")).toInstant());need(a.get("child").equals(SourceJson.object().put("instanceId",child.instanceId().toString()).put("pid",Long.toString(child.pid())).put("startedAt",child.startedAt().toString())),EVIDENCE_CHANGED);}else need(a.get("child").isNull(),EVIDENCE_CHANGED);
         String code=a.get("classification").stringValue();JsonNode e=null;

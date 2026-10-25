@@ -1645,3 +1645,52 @@ cases, 2m55s), including all 40 recovery-verification cases. The full run includ
 PostgreSQL restart. The final verification class took about 76 seconds; existing publication-test
 timing outliers leave the unchanged 60-minute CI job's total margin unproven. These are local results,
 not a hosted-CI claim. Exact commands, runtime pins, coverage and timing limits are in the contract.
+
+## C3c.3 internal transactional recovery finalization
+
+Execution Recovery remains **Partially implemented**. RecoveryFinalization adds an internal seam;
+there is no production recovery command, endpoint, dispatcher invocation or activation switch.
+ADR 0012 remains an implementation record, not owner-accepted architecture. The
+[C3c.3 contract](../../docs/architecture/durable-execution.md#c3c3-fenced-recovery-finalization) and
+[implementation record](../../docs/adr/0013-recovery-finalization-evidence.md) define the exact matrix.
+Earlier C3c.1/C3c.2 paragraphs describe those checkpoints, whose occupied/no-finalization behavior
+remains unchanged unless this separately authorized finalization seam succeeds.
+
+The live C3c.2 recovery owner must supply a fresh original-writer/orphan/unmanaged-writer review.
+Qualification records one separate VERIFY_RESULT/item 1 and invokes the unchanged pinned independent
+reader. It seals selected native bytes/identities before and after verification and rereads them
+before disposition. Historical VERIFIED evidence alone cannot authorize success. Unknown child
+cleanup, unavailable I/O, contradictory observations, stale owner/review, changed root or private
+provenance remains blocked; existing/ambiguous qualification stages cannot be relaunched.
+
+A safely completed reconciliation closes its attempt SUCCEEDED and control APPLIED, explicitly
+recording whether the run became SUCCEEDED or FAILED. Verified output links the exact immutable
+result artifact and frozen dependencies. Proven absence can set retry eligibility; incomplete,
+corrupt/changed output or supported dependency mutation/invalidity closes FAILED without retry.
+Artifacts remain in place. PUBLICATION_INVALID alone cannot justify release because the original
+reader can flatten I/O errors; additional positive readable-byte corruption proof is required.
+Pending cancellation, runtime/query/path/resource ambiguity and unavailable dependencies remain
+RECOVERY_REQUIRED with occupied RECOVERY_ONLY ownership. CANCELLED and RETRY are not implemented.
+
+Final attempt/control/run/result/audit changes and conditional coordinator release commit together.
+The recovery worker becomes STOPPED, not READY. Normal dispatch requires a fresh guarded worker
+registration after confirmed release. A historical completion receipt has no owner token, cannot
+relaunch verification or release a newer slot, and does not prove current native readability.
+Lost acknowledgment must be resolved under the coordinator lock using the exact control/checkpoint/
+qualification identity; unavailable or contradictory SQL facts remain UNRESOLVED. Native files,
+original attempts/stages, frozen selections and private evidence are preserved; no publication,
+repair, cleanup, activation or automatic takeover is performed.
+
+The final filesystem/process observation and SQL commit have an unavoidable time-of-check/time-of-use
+gap under the accepted cooperative local model. Retain evidence and require trusted installation-level
+orphan review. Local test commands/results, runtime pins and remaining activation requirements are
+recorded in the contract; local validation does not establish hosted CI or production readiness.
+
+Local C3c.3 validation passed 53 focused PostgreSQL cases plus 36 process/quiescence/history unit
+cases in 1m58s, then one full content-api PostgreSQL profile: 323 unit/component and 667 integration
+cases, zero failures/errors/skips, in 16m15s. The full run retained all 118 handoff/bootstrap and 40
+verification cases and performed actual PostgreSQL restarts at all three recovery checkpoints.
+Native byte hashes, sizes and modification times remained unchanged. The new finalization class
+took about two minutes including fixture creation; hosted CI and its total timing margin remain
+unverified. Exact commands, runtime pins, conservative blocked outcomes and scale limits are in the
+contract. The disposable database was removed after validation.

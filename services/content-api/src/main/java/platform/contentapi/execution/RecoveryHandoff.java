@@ -220,6 +220,12 @@ final class RecoveryHandoff {
         });
     }
     void verificationFresh(RecoveryQuiescence.Review review){RecoveryQuiescence.fresh(review.inspectedAt(),clock.instant());}
+    java.time.Instant verificationNow(){return clock.instant();}
+    void verificationChild(InstallationHostGuard.ProcessIdentity child) {
+        need(child!=null,PROCESS_UNRESOLVED);
+        RecoveryQuiescence.State observed;try{observed=processes.inspect(new RecoveryQuiescence.Identity(child.pid(),child.startedAt()));}catch(RuntimeException ex){throw new RecoveryFailure(PROCESS_UNRESOLVED);}
+        need(observed==RecoveryQuiescence.State.ABSENT || observed==RecoveryQuiescence.State.REUSED,PROCESS_UNRESOLVED);
+    }
     ReliabilityRuntime verificationRuntime(Bootstrap evidence){return evidence.runtime;}
     /** Fresh launch review plus unchanged private evidence, independently of historical receipt lookup. */
     void verificationReview(InstallationHostGuard guard,Bootstrap evidence,RecoveryQuiescence.Review review,Owner owner) {

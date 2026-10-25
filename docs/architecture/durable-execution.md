@@ -2,7 +2,7 @@
 
 Status: **Accepted — October 20, 2026**, with the Stage A.1 refinements, under [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md). The owner accepted additive [ADR 0011](../adr/0011-artifact-import-maintenance-ownership.md) on October 21. Architecture acceptance alone passes no E5 test group. Current implementation and authorization are recorded below; earlier checkpoint status paragraphs and counts remain historical. Accepted ADRs and native data contracts are unchanged.
 
-Current authorization: B1–B2, C1, C2a, C2b-1, C2b-2 and C3a are owner-committed. The fixed Reliability worker remains active with one pinned profile per startup. The owner has authorized **C3b internal fenced recovery handoff only**. [C3a admission](#c3a-reconciliation-control-admission) still records REQUESTED intent; the [C3b seam](#c3b-fenced-execution-recovery-handoff) can transfer that occupied slot in isolated tests after fresh qualification. No production recovery invocation/resolver is enabled. C3c native reconciliation/closure, Content execution and CANCEL/RETRY remain deferred. Earlier checkpoint status paragraphs and counts are historical.
+Current checkpoint: the fixed Reliability worker remains active with one pinned profile per startup. The owner has authorized C3a–C3c.3 internal Reliability reconciliation: admission, occupied handoff, guarded bootstrap, independent verification and transactional finalization. The C3c.3 implementation and local evidence are recorded below. No production recovery command, endpoint, dispatcher invocation or automatic takeover is enabled. Execution Recovery remains **Partially implemented**. Content execution, cancellation and guarded retry remain deferred. Earlier checkpoint status paragraphs and counts are historical.
 
 ## Boundary and invariants
 
@@ -2714,3 +2714,203 @@ runtime changes; future versions must explicitly preserve compatible historical 
 POSIX guard checks, trusted manual orphan/unmanaged-writer review and existing native contracts
 remain essential. No universal orphan containment, hostile-user fencing, hard filesystem deadline,
 power-loss atomicity, hosted-CI result or production operational recovery is claimed.
+
+## C3c.3 fenced recovery finalization
+
+**Implemented:** internal fresh qualification and atomic Reliability reconciliation disposition.
+**Execution Recovery remains Partially implemented.** There is no production caller, recovery
+command, public endpoint, automatic invocation/takeover, cancellation, guarded retry or publication
+activation. Earlier C3c.1/C3c.2 limitations describe those checkpoints; this section supersedes only
+their statements that internal final disposition is absent. ADRs 0010/0011 remain accepted and
+unchanged. ADR 0012 remains an implementation record; [ADR 0013](../adr/0013-recovery-finalization-evidence.md)
+records these scoped choices without claiming new architecture acceptance.
+
+### Exact outcome and transition matrix
+
+All release rows require the same exact live RECONCILE owner, fresh explicit original-writer review,
+known recovery-child cleanup, fresh independent qualification, immutable private evidence and frozen
+selection/root identity validation. Native data mutation is distinct from changed authority,
+private provenance, root identity or verification evidence: the latter always blocks disposition.
+
+| Independently qualified observation | Run outcome / safe reason | Attempt / control | Retry flag / coordinator |
+| --- | --- | --- | --- |
+| Exact completed publication, full native analytical/dependency verification, unchanged freshly readable evidence | SUCCEEDED / RECOVERED_PUBLICATION; exact result artifact/dependency link and counts | SUCCEEDED / RECONCILED_SUCCEEDED; APPLIED / RECOVERED_PUBLICATION | false; release to READY |
+| Exact intended namespace positively absent; complete frozen inputs retained | FAILED / PUBLICATION_ABSENT | SUCCEEDED / RECONCILED_FAILED; APPLIED / PUBLICATION_ABSENT | true only below the 20-attempt bound; release to READY |
+| Existing intended namespace without complete.json, positively and repeatedly observed | FAILED / INCOMPLETE_OUTPUT; retain all files | SUCCEEDED / RECONCILED_FAILED; APPLIED / INCOMPLETE_OUTPUT | false; release to READY |
+| PUBLICATION_INVALID plus separate readable-byte proof of malformed completion metadata, wrong manifest fingerprint or declared inventory/hash mismatch | FAILED / PUBLICATION_INVALID; no repair | SUCCEEDED / RECONCILED_FAILED; APPLIED / PUBLICATION_INVALID | false; release to READY |
+| PUBLICATION_CHANGED corroborated by stable fresh qualification | FAILED / PUBLICATION_CHANGED | SUCCEEDED / RECONCILED_FAILED; APPLIED / PUBLICATION_CHANGED | false; release to READY |
+| Observed dependency mutation with EVIDENCE_CHANGED, INPUT_CHANGED, SNAPSHOT_CHANGED or DEPENDENCY_CHANGED | FAILED / DEPENDENCY_CHANGED | SUCCEEDED / RECONCILED_FAILED; APPLIED / DEPENDENCY_CHANGED | false; release to READY |
+| BATCH_INVALID, SNAPSHOT_INVALID or DEPENDENCY_INVALID from full native dependency verification | FAILED / DEPENDENCY_INVALID | SUCCEEDED / RECONCILED_FAILED; APPLIED / DEPENDENCY_INVALID | false; release to READY |
+| Unavailable I/O/dependencies, unsupported runtime, uncertain launch/cleanup, possible writer, path/resource/query ambiguity, contradictory classifications or changed authority/private evidence | No terminal disposition: RECOVERY_REQUIRED; no result artifact | Recovery attempt unchanged; control REQUESTED | false; occupied RECOVERY_ONLY, unrelated dispatch blocked |
+| Pending cancellation | Deferred, including an otherwise verified publication; no CANCELLED or TOO_LATE inference | No control finalization | Occupied RECOVERY_ONLY |
+
+A successful reconciliation operation may establish a FAILED run. The attempt's outcome code and
+completion audit explicitly record that distinction; a negative verification-stage result is not
+itself a failed reconciliation or known failed run. Unresolved evidence does not close/reject the
+control in this slice. There are no new run/attempt/control/stage states or schema transitions.
+The absent-output retry flag is eligibility evidence only: no RETRY command/execution is implemented,
+and any future retry must requalify the same selection and namespace under the accepted policy.
+
+### Fresh qualification and authority
+
+RecoveryFinalization is package-private and has no application bean, role, endpoint or dispatcher
+caller. qualify requires the live owner carried from C3c.1 through the actual C3c.2 Observation;
+it does not reconstruct or refresh an owner from a historical receipt. The item-0 stage/version,
+private result/anchor/command, original qualification/provenance and native identity must agree.
+Unconfirmed C3c.2 cleanup or an inconclusive observation cannot start qualification.
+
+Exactly one VERIFY_RESULT/item 1 records finalization qualification. It uses the existing C3c.2
+intent-before-launch, conditional one-time authorization, PID/start/instance persistence, bounded
+read-only process, exact-owner heartbeat and immutable observation mechanism. Native command item 0
+and original EXECUTE attempt/epoch are unchanged: SQL item 1 identifies this second recovery check,
+not a new native publication/input item. Its audit adds recoveryItem=1; item-0 protocol/audit bytes
+and the packaged Python adapter remain compatible. No existing intent is reopened or relaunched.
+An ambiguous item-1 launch, commit or cleanup remains occupied and requires explicit recovery work;
+qualification cannot adopt another token or reconstruct a live capability after JVM replacement.
+
+Outside SQL, bounded no-symlink reads seal every selected dependency and intended publication file's
+bytes, names, inode/device, mode, size and modification/change times, with safe repeated negative
+namespace observations. The seal checks approved root identities and is identical before and after
+the fresh full native verifier. Before final disposition it rereads the exact native seal and private
+proof, revalidates original writer/descendant quiescence with a fresh operator review, checks the exact
+live recovery process and both verifier children, and revalidates frozen relational selection and
+original private publication provenance. Both recovery items' private bytes, inode/device and modification evidence are also sealed and reread.
+Qualification expires after 60 seconds; freshness is checked
+again in the final transaction. Native seal reads are capped at 8 GiB, 8,192 entries, depth 8 and a
+cooperative 60-second deadline per pass. Unsupported/oversized trees fail closed, never truncate.
+These bounds are safety limits, not measured performance or hard filesystem-I/O deadlines.
+
+A prior VERIFIED stage is historical evidence. A changed/unreadable publication after that stage
+cannot be finalized through its receipt. Qualification classifications/native code/publication must
+agree with the retained C3c.2 observation; later changes or contradictory observations block release.
+The native reader sometimes maps OSError to PUBLICATION_INVALID. Therefore that code alone is never
+sufficient: the separate readable-byte fault proof above is mandatory. Other invalid diagnoses stay
+blocked rather than silently treating unavailable I/O as corruption. No native module is modified.
+
+### Atomic disposition and replay
+
+The existing handoff fence locks the coordinator first, then run, predecessor/control, registered
+workers and current recovery attempt in its established order. Finalization locks both exact recovery
+stage items, then result artifact identities. Native/process/large filesystem work finishes before
+this short transaction. Only the bounded installation-guard identity check also brackets commit.
+The SQL transaction compares installation, run/control/attempt identities and states, owner instance,
+epoch, worker/coordinator/run/control/attempt/stage versions, command/result anchors, frozen selection,
+absence of cancellation/stop conditions, qualification freshness and audit capacity.
+
+In one transaction it inserts or exactly reuses the immutable Reliability artifact and frozen input
+edges, appends the item-1 RESULT link, closes the recovery attempt, closes the original run with exact
+counts/result or safe failed reason/retry flag, applies the RECONCILE control, marks the recovery
+worker STOPPED, and conditionally clears only this occupied binding while setting coordinator READY.
+The epoch does not increment. Five bounded completion audits link the same run/attempt/control,
+qualification, both checkpoints, hashes, native classification/code, final operator-review digest
+summary, before/after versions, result and disposition. Original submission/selection, interrupted
+attempts and existing stage evidence are retained. Any row-count/constraint/artifact/audit/guard
+failure rolls back all disposition effects. No intermediate idle state is committed.
+
+Existing read-only run/attempt/control/event projections allow the new fixed safe outcome codes,
+recovery audit actions and coordinator audit states; response shapes and private-detail exclusion
+are unchanged. Unknown/free-form diagnostics still fail closed.
+
+The coordinator being READY does not advertise a READY recovery worker. Its session is STOPPED and
+cannot dispatch. The normal fresh host-guard/worker-registration lifecycle must establish a new
+READY process instance before claiming queued work. No automatic transition or runtime caller is added.
+
+finish first resolves exact committed historical facts in a coordinator-locked transaction. A matching
+completion requires the exact immutable attempt/control/stage/result/link/dependency/audit projection;
+a completed receipt carries no session or execution authority. It can be inspected after restart
+under a replacement guard, even after an unrelated newer owner claims the slot. It never clears that
+newer owner. Pending confirmation requires the exact original binding and versions; uncertain SQL,
+lock/connection failure or inconsistent facts returns UNRESOLVED. No unprotected read proves rollback.
+
+Only a still-held, still-fresh in-memory qualification plus fresh external rechecks may proceed after
+a confirmed non-finalized projection. SQL rollback can therefore be retried without another verifier
+launch. Lost final acknowledgment is resolved by the same control/checkpoint/qualification identity;
+no duplicate artifact, completion audit, epoch increment or release is permitted. A lost qualification,
+expired review or changed/dead owner cannot be adopted. Cancellation, automatic repair/retry and
+recovery-chain operational orchestration remain deferred.
+
+### C3c.3 local validation and remaining limits
+
+Local validation used Darwin/arm64, GraalVM JDK 21.0.7, Python 3.12.15, PySpark 4.0.2,
+DuckDB 1.4.5 and disposable PostgreSQL 17.11. The database used
+postgres:17.11-bookworm@sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826,
+bound only to loopback. JAVA_HOME, DDIP_TEST_PYTHON, PYSPARK_PYTHON,
+PYSPARK_DRIVER_PYTHON, SPARK_LOCAL_IP=127.0.0.1 and DDIP_TEST_DB_URL/USER/PASSWORD
+selected the local runtimes and disposable database. Native tests required native process-inspection
+permissions; sandbox denial did not relax identity or cleanup checks. No AWS/cloud service was used.
+Documentation checks used Node.js 26.12.0 and lockfile-pinned Markdown tooling; CI Node.js 24 was not
+validated locally.
+
+The stabilized focused run preceded one full content-api PostgreSQL regression. Commands from the
+repository root, timed with /usr/bin/time -p, were:
+
+~~~bash
+mvn -o -q -Daether.syncContext.named.factory=noop -f services/content-api/pom.xml \
+  -Ppostgres -Dtest=VerifierProcessTest,RecoveryQuiescenceTest,RunInspectionTest \
+  -Dit.test=RecoveryFinalizationIT verify
+mvn -o -q -Daether.syncContext.named.factory=noop -f services/content-api/pom.xml \
+  -Ppostgres -Dddip.test.bootstrap-restart-signal=/private/tmp/ddip-c3c3-bootstrap \
+  -Dddip.test.verification-restart-signal=/private/tmp/ddip-c3c3-verification \
+  -Dddip.test.finalization-restart-signal=/private/tmp/ddip-c3c3-finalization verify
+npm run check
+~~~
+
+The offline/named-lock options accommodate this local Maven cache, not application behavior.
+The optional restart properties require an external test controller to wait for each signal,
+restart only the disposable container, await pg_isready and write its .done file. That controller
+completed all three actual restarts in this full run. Without those properties the cases exercise
+historical/replacement-guard behavior without claiming a database restart.
+
+| Executed check | Result and measured elapsed time |
+| --- | --- |
+| Stabilized focused finalization plus process/quiescence/history units | 53 PostgreSQL + 36 unit cases; zero failures/errors/skips; 118.48 seconds |
+| One full content-api PostgreSQL profile after stabilization | 323 unit/component + 667 PostgreSQL integration cases; zero failures/errors/skips; 975.08 seconds (16m15s) |
+| New RecoveryFinalizationIT in the full run | 53 cases, 118.090 seconds, including native JSONL/Parquet fixture creation and actual PostgreSQL restart; slowest individual case 2.343 seconds |
+| Retained RecoveryHandoffIT and RecoveryVerificationIT in that full run | 118 cases in 87.306 seconds; 40 cases in 77.672 seconds; all passed |
+| Markdown/local links and hygiene | Passed across 47 Markdown files; 1.67 seconds |
+| Whitespace and production JAR boundaries | Passed; unchanged C3c.2 adapter included, test fixture classes/publisher excluded |
+
+New cases cover real independent JSONL/Parquet recovery and exact result/dependency linkage; absent,
+incomplete, corrupt/changed output and missing/changed dependencies; unavailable I/O versus positive
+corruption proof; changed/missing original provenance, root/private-file identity drift, stale owner/
+review and lost guard (including inside the final transaction); uncertain child cleanup/launch;
+rollback after every disposition mutation; real SQL artifact/audit insertion failures; lost commit
+acknowledgment, duplicate/concurrent finalizers, outage before/during/after commit, database restart
+and replacement-guard historical lookup. Matching artifact evidence is reused exactly; conflicting
+evidence blocks the entire disposition. An unrelated queued run remains blocked through recovery
+and can be claimed only after safe release and fresh worker registration. Replaying old completion
+after that new claim preserves the newer occupied binding.
+
+Native batch/reference/output/staging byte hashes, sizes and modification times are unchanged
+across recovery in both successful and known-failure cases. Fault fixtures introduce bad/missing
+files before their preservation snapshot; recovery never repairs them. Snapshot assertions also
+cover failure/rollback/acknowledgment paths. The only Spark publications are test-fixture preparation,
+not the recovery path. SQL assertions confirm old INTERRUPTED attempt outcomes and exact result/ownership bindings; existing
+immutability guards protect submission/frozen inputs and sealed history. Finalization updates no
+original stage or audit row. Only fully qualified success registers/links a result. All
+unresolved cases retain occupied RECOVERY_ONLY with no completion audit/result registration.
+
+Development runs exposed sandbox process-identity denial and a queued-run fixture that needed a
+healthy pre-handoff coordinator heartbeat; those issues were corrected without weakening guards.
+No failing case remains in the stabilized focused or full run. Generated harnesses/logs/reports stay
+ignored under outputs/ and target/. The disposable PostgreSQL container was removed after validation.
+No branch/index/history/GitHub operation was performed.
+
+The new class adds about two minutes locally, including approximately 30 seconds constructing its
+two native fixtures; no new individual case exceeded three seconds in the full run. The unchanged
+processing/API CI job has a 60-minute budget and additional Python checks. Hosted results, total
+job margin and Linux runtime behavior remain unverified; these local timings are not benchmarks.
+Large evidence trees, the cooperative 60-second seal deadline/review window and the 8-GiB/8,192-entry
+bounds have not been scale-qualified. Conservative invalid-output diagnosis can intentionally keep
+otherwise diagnosable native schema/analytical failures blocked when a separate byte fault cannot
+be established. Immediate original EXECUTE provenance and the existing native compatibility allowlist
+remain prerequisites; full recovery-chain/expired-qualification operation is still future work.
+
+The last native/process/guard observation and PostgreSQL commit are not atomic. Byte/identity seals,
+short SQL fences and explicit fresh operator review narrow but do not eliminate the filesystem/
+database time-of-check/time-of-use gap. Cooperative locks cannot fence hostile/unmanaged writers or
+prove universal descendant containment. Filesystem power loss, hostile mutation, hard blocked-I/O
+deadlines, production recovery activation and hosted CI are not claimed. Operational activation still
+needs an owner-reviewed invocation/authorization/diagnostics workflow, retained-evidence handling,
+recovery-chain and expired/ambiguous qualification procedures, cancellation/retry policy integration,
+installation-level orphan review and hosted regression evidence. These are not enabled by this slice.
