@@ -2,7 +2,7 @@
 
 Status: **Accepted — October 20, 2026**, with the Stage A.1 refinements, under [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md). The owner accepted additive [ADR 0011](../adr/0011-artifact-import-maintenance-ownership.md) on October 21. Architecture acceptance alone passes no E5 test group. Current implementation and authorization are recorded below; earlier checkpoint status paragraphs and counts remain historical. Accepted ADRs and native data contracts are unchanged.
 
-Current checkpoint: the fixed Reliability worker remains active with one pinned profile per startup. The owner has authorized C3a–C3c.3 internal Reliability reconciliation: admission, occupied handoff, guarded bootstrap, independent verification and transactional finalization. The C3c.3 implementation and local evidence are recorded below. No production recovery command, endpoint, dispatcher invocation or automatic takeover is enabled. Execution Recovery remains **Partially implemented**. Content execution, cancellation and guarded retry remain deferred. Earlier checkpoint status paragraphs and counts are historical.
+Current checkpoint: the fixed Reliability worker remains active with one pinned profile per startup. [C3c.4 controlled operational recovery](#c3c4-controlled-operational-recovery) connects C3a–C3c.3 admission, occupied handoff, guarded bootstrap, independent verification and transactional finalization through a trusted local non-web operator command. Fresh explicit process/evidence review is required before handoff and finalization. Its packaged acceptance and complete backend regression evidence are recorded below. Execution Recovery remains **Partially implemented**; Content execution, cancellation, guarded retry, automatic recovery and Operations UI remain deferred. Earlier checkpoint status paragraphs and counts are historical.
 
 ## Boundary and invariants
 
@@ -2914,3 +2914,196 @@ deadlines, production recovery activation and hosted CI are not claimed. Operati
 needs an owner-reviewed invocation/authorization/diagnostics workflow, retained-evidence handling,
 recovery-chain and expired/ambiguous qualification procedures, cancellation/retry policy integration,
 installation-level orphan review and hosted regression evidence. These are not enabled by this slice.
+
+## C3c.4 controlled operational recovery
+
+C3c.4 adds a trusted `operator-recovery` non-web role to the existing packaged application. Its
+[operator procedure](../operations/reliability-recovery.md) defines prerequisites, exact control
+selection, bounded read-only inspection, two fresh challenge-bound confirmations, guarded execution,
+interruption/restart procedures and supported outcomes. [ADR 0014](../adr/0014-controlled-operational-recovery.md)
+is an implementation record, not a new accepted ADR. ADRs 0010/0011 remain accepted and unchanged;
+0012/0013 retain their implementation-record statuses. Earlier checkpoint sections are historical.
+
+The role does not admit controls or dispatch work. It obtains the original approved installation
+guard before registering the exact recovery process/profile, then retains it through qualification,
+fenced handoff, exact committed-packet bootstrap, separate live-owner authorization, independent
+verification, fresh final qualification and conditional atomic disposition/release. Inspection
+never registers a process or grants authority. Confirmation binds a fresh nonce, phase, exact target,
+private inventory and process/status/checkpoint evidence; manual handler/orphan/unmanaged-writer
+review and explicit known-descendant start identities remain mandatory. Output is bounded to safe
+IDs, hashes and fixed states/codes. No native paths/payloads, SQL, secrets or exception diagnostics
+are printed. Input is one bounded 128-KiB JSON line, expiring after 60 seconds; metadata is reread and
+external process/filesystem evidence is checked outside SQL transactions.
+
+Repeated completed controls resolve exact immutable historical finalization facts without a new
+worker/attempt/artifact/completion audit or changing a newer occupied owner. An uncompleted successor
+cannot be adopted by another JVM. A fresh C3a control targeting that successor must establish a new
+fenced owner. The new owner can follow at most twenty immutable handoff packets to the original
+EXECUTE provenance: exact run, selection, historical process/attempt/epoch relationships, packet
+hashes/runtime and private inventories must agree. The operator reviews all ancestor recorded
+processes/unresolved checkpoints and retained descendants again. Native verification keeps the
+original EXECUTE command identity; historical evidence never supplies live owner authority. Missing,
+changed or unsupported ancestry stays blocked. No old verifier intent is reopened.
+
+C3c.3's outcome matrix and atomic release remain authoritative. Unsupported/unavailable observations
+report that final qualification cannot proceed and stop occupied. Pending cancellation never becomes
+CANCELLED. A safe completion stops the recovery worker; ordinary dispatch requires a separate fresh
+worker/guard registration. There are no migrations, native module/data-contract changes, new services,
+public recovery routes, arbitrary commands, automatic takeover/retry/publication, AWS or UI changes.
+
+### C3c.4 validation and technical review
+
+The stabilized checkpoint passed focused packaged acceptance and a subsequent complete content-api
+PostgreSQL regression. Production Java/resources/POM SHA-256 snapshots remained unchanged across
+those final passes. All final cases below passed with zero failures/errors/skips. C3c.3's recorded
+323/667/three-restart evidence remains historical; the following results were executed for C3c.4.
+
+Local environment: macOS 27.0.1 / Darwin 27.0.0 arm64, GraalVM JDK 21.0.7, Python 3.12.15,
+PySpark 4.0.2, DuckDB 1.4.5 and disposable PostgreSQL 17.11 using the pinned image digest in the
+tracked harness. Native children use UTC; the broad Python regression requires TZ=UTC. Maven used
+the populated local cache with -o and -Daether.syncContext.named.factory=noop. Markdown checks used
+Node.js 26.12.0 and lockfile-pinned tooling; hosted Node.js 24/Linux behavior remains unverified.
+These are local elapsed observations with small synthetic fixtures, not performance benchmarks.
+
+| Final executed validation phase | Cases / result | Measured elapsed seconds |
+| --- | --- | --- |
+| Packaged operator acceptance plus role units | 35 PostgreSQL + 17 unit cases; one actual restart | 226.45 |
+| Subsequent full content-api PostgreSQL profile | 702 PostgreSQL + 324 unit/component cases; four actual restarts | 1214.82 |
+| Complete Python processing regression with UTC | 373 cases | 422.60 |
+| Java ingestion | 29 cases | 4.65 |
+| Batch-launch argument/behavior script | Passed | 0.36 |
+| Fresh synthetic Gold/JDBC fixture generation | Passed | 17.73 |
+| Java JDBC API | 48 cases | 3.34 |
+| Spring analytics HTTP/native compatibility | 20 cases | 13.87 |
+| Sum of these final successful phase executions | 31m43.82s, excluding development iterations and documentation checks | 1903.82 |
+
+The complete backend phase sum excluding the preceding focused operator pass is 1677.37 seconds
+(27m57.37s). Phases were measured individually across local resumed invocations, not as one uninterrupted
+benchmark. PostgreSQL phase times include disposable-container setup/teardown; suite times below are
+Maven-reported class times. Test reports/logs stay ignored under outputs/ and target/. Every disposable
+container and its test volume was removed; the harness now removes anonymous volumes on teardown.
+
+The final focused pass preceded the full profile with these repository-root commands; configure
+JAVA_HOME and DDIP_TEST_PYTHON as described in the [operator guide](../operations/reliability-recovery.md):
+
+~~~sh
+python3 scripts/test-recovery-postgres.py --operator-only --offline
+python3 scripts/test-recovery-postgres.py --full --offline
+TZ=UTC PYTHONPATH=processing "$DDIP_TEST_PYTHON" -B -m unittest discover -s processing/tests -v
+mvn -o -q -Daether.syncContext.named.factory=noop -f ingestion/pom.xml verify
+bash scripts/test-run-batch.sh
+PYTHONPATH=processing:processing/tests "$DDIP_TEST_PYTHON" -B \
+  services/api/tests/generate_fixtures.py --output services/api/target/fixtures
+mvn -o -q -Daether.syncContext.named.factory=noop -f services/api/pom.xml verify
+mvn -o -q -Daether.syncContext.named.factory=noop -f services/content-api/pom.xml \
+  -Pintegration -Dtest=NoSuchTest -Dsurefire.failIfNoSpecifiedTests=false \
+  -Danalytics.python="$DDIP_TEST_PYTHON" verify
+npm run check
+~~~
+
+Fixture generation requires a fresh target directory. The previous generated fixture directory was
+preserved under target before generation. The integration command omits units already covered by the
+full PostgreSQL profile. No application scaffolding, dependency changes or CI restructuring were added.
+The five actual restarts in the final focused/full passes were verified by postmaster-start changes;
+operator-only mode coordinates one, and full mode coordinates bootstrap, verification, finalization
+and operator barriers. Both restart outcomes are safe: the same JVM may continue after fresh checks,
+or a database error exits occupied and requires a new explicit operator invocation. Tests never
+require automatic application retry or reconstruct authority from an old receipt.
+
+| Acceptance scenario | Executed evidence |
+| --- | --- |
+| Interrupted JSONL and equivalent Parquet | Actual packaged ordinary workers publish native output, then are forcibly terminated at a test-controlled verification boundary; the packaged operator independently verifies and finalizes SUCCEEDED |
+| Known failed publication | Absent, incomplete and byte-proven invalid output resolve FAILED through the existing atomic finalizer; stable changed dependency resolves DEPENDENCY_CHANGED |
+| Changed or unavailable evidence | Post-observation mutation, unreadable native dependencies, missing/changed retained origin packets, stale ownership and pending cancellation retain occupied recovery with no result/completion audit |
+| Ambiguous acknowledgments | A test-only PostgreSQL wire proxy drops actual COMMIT acknowledgments at handoff and finalization; exact same-process/historical resolution yields one attempt/artifact/completion |
+| Live/unknown writers and operator approval | Actual active old-writer and live descendant vetoes; missing, expired, inconsistent, wrong-challenge/process/checkpoint/lineage review and changed ownership after inspection all block |
+| Recovery JVM interruption | Termination before handoff permits fresh inspection of the same control; after handoff the old control cannot be adopted and an explicitly admitted new control recovers through reviewed immutable ancestry |
+| Outage, restart and contention | Startup outage has a fixed safe diagnostic; outage during final confirmation retains ownership; actual restarts and competing guarded JVMs preserve exact ownership |
+| Return to ordinary operation | An unrelated queued run ID remains blocked, then completes under a fresh packaged ordinary worker after atomic release; this run reuses the same synthetic input selection through the normal native replay contract |
+| Repeated invocation | JSONL/Parquet completed controls add no artifact, completion audit, worker registration or attempt; replay after subsequent ordinary work preserves newer facts |
+
+Operator acceptance compares native batch/reference/output/staging SHA-256, size and modification-time
+snapshots across successful and blocked recovery. For native mutation faults, preservation snapshots
+are taken after the deliberate mutation. Actual-worker cases retain observed Python/Spark descendant PID/start
+identities and explicitly review them; no synthetic timestamp is invented for an unknown PID. The
+only native publishers run during fixture preparation or ordinary worker execution. Recovery invokes
+the existing fixed read-only adapter and two independent verifiers. The production JAR contains the
+operator role and existing adapter, and excludes test fixtures, fault proxy and test process classes.
+
+Technical review covered role isolation, bounded/sanitized summaries, fresh challenge binding,
+coordinator-first fences, host-guard lifetime, same-live-owner bootstrap, bounded original-provenance
+chains, ambiguous acknowledgments and exact historical replay. Original C3b metadata-only handoff/
+bootstrap acceptance remains independent of native provenance; the operator wrapper and native
+verification enforce the additional ancestry checks. Accepted ADRs, migrations V1–V7, native modules,
+WorkerRepository, WorkerIdleLifecycle and InstallationHostGuard are unchanged.
+
+Final delivery review rechecked all nine changed production-file hashes against the saved final-test
+snapshot, the passing suite totals and actual-restart markers, and the packaged role/bridge/test-class
+boundary. It corrected stale current-status introductions in the root/module guides, contract and
+ADR index while preserving historical checkpoint text. Fresh Markdown/link and repository-hygiene
+checks passed across 49 Markdown files in 1.74 seconds; git diff --check passed. These final edits are
+documentation-only; the application suites above were not repeated after this consistency review.
+
+Development checks exposed a fixture lookup typo, overly broad ancestry checks at the C3b metadata
+boundary, Docker's reassignment of automatically allocated ports on restart, missing UTC/test-fixture
+path settings in the broad local driver, and an overly strong expectation that a pooled connection
+must survive restart. These were corrected in the fixture/harness/integration boundary. A final review
+also refreshed the guarded summary immediately before confirmation. The subsequent focused and full
+passes above are clean; no production file changed during them. Python's successful processing run
+still emitted existing PySpark socket ResourceWarnings; no unrelated processing change was made.
+
+The unchanged hosted processing/API job has a 60-minute timeout and additional dependency/setup work.
+OperatorRecoveryIT costs 225.881 seconds locally in the full run, including native fixture preparation,
+actual worker publications, subprocess startup and a deliberate 61-second stale-confirmation wait.
+Cached local totals cannot establish hosted CI margin; cold setup, Linux/process-identity behavior and
+native timing variance remain risks. No new timeout, optimization or hosted CI result is claimed.
+
+The [operator procedure](../operations/reliability-recovery.md) documents trusted-OS-user approval,
+manual orphan/unmanaged-writer review, cooperative POSIX guard limitations and the non-atomic final
+filesystem/SQL observation gap. The existing native bounds and 60-second review/seal windows remain
+conservative safety limits, not scale qualification. CANCEL/RETRY, managed RSS/Content execution,
+Operations UI, multiworker/automatic recovery, hosted release evidence and broader E5 closeout remain
+unfinished. No automatic recovery, distributed failover, exactly-once effects or production readiness
+is claimed. The root capability row records the new scoped workflow while retaining partial status
+for broader Execution Recovery.
+
+| PostgreSQL integration suite in the final full run | Cases | Measured seconds |
+| --- | --- | --- |
+| ImportOwnershipIT | 42 | 9.875 |
+| OperatorRecoveryIT | 35 | 225.881 |
+| PersistenceIT | 28 | 13.010 |
+| RecoveryFinalizationIT | 53 | 112.047 |
+| RecoveryHandoffIT | 118 | 84.404 |
+| RecoveryVerificationIT | 40 | 79.427 |
+| ReliabilityExecutionIT | 27 | 207.725 |
+| ReliabilityPreflightIT | 41 | 28.965 |
+| ReliabilityWorkerIT | 23 | 146.557 |
+| ImportWorkflowIT | 38 | 22.392 |
+| SilverImportIT | 23 | 139.630 |
+| ControlAdmissionIT | 52 | 25.005 |
+| RunHistoryIT | 46 | 35.850 |
+| RunSubmissionIT | 44 | 20.049 |
+| SourceManagementIT | 36 | 14.692 |
+| WorkerCoordinationIT | 56 | 30.192 |
+
+### C3c.4 exact changed files
+
+- [README.md](../../README.md)
+- [docs/adr/0014-controlled-operational-recovery.md](../../docs/adr/0014-controlled-operational-recovery.md)
+- [docs/adr/README.md](../../docs/adr/README.md)
+- [docs/architecture/durable-execution.md](../../docs/architecture/durable-execution.md)
+- [docs/operations/reliability-recovery.md](../../docs/operations/reliability-recovery.md)
+- [scripts/test-recovery-postgres.py](../../scripts/test-recovery-postgres.py)
+- [services/content-api/README.md](../../services/content-api/README.md)
+- [services/content-api/pom.xml](../../services/content-api/pom.xml)
+- [services/content-api/src/main/java/platform/contentapi/ContentApiApplication.java](../../services/content-api/src/main/java/platform/contentapi/ContentApiApplication.java)
+- [services/content-api/src/main/java/platform/contentapi/execution/OperatorRecoveryConfiguration.java](../../services/content-api/src/main/java/platform/contentapi/execution/OperatorRecoveryConfiguration.java)
+- [services/content-api/src/main/java/platform/contentapi/execution/RecoveryOperatorInspection.java](../../services/content-api/src/main/java/platform/contentapi/execution/RecoveryOperatorInspection.java)
+- [services/content-api/src/main/java/platform/contentapi/execution/RecoveryHandoff.java](../../services/content-api/src/main/java/platform/contentapi/execution/RecoveryHandoff.java)
+- [services/content-api/src/main/java/platform/contentapi/execution/RecoveryFinalization.java](../../services/content-api/src/main/java/platform/contentapi/execution/RecoveryFinalization.java)
+- [services/content-api/src/main/java/platform/contentapi/execution/RuntimeRole.java](../../services/content-api/src/main/java/platform/contentapi/execution/RuntimeRole.java)
+- [services/content-api/src/main/java/platform/contentapi/execution/RuntimeEnvironment.java](../../services/content-api/src/main/java/platform/contentapi/execution/RuntimeEnvironment.java)
+- [services/content-api/src/main/resources/application.properties](../../services/content-api/src/main/resources/application.properties)
+- [services/content-api/src/test/java/platform/contentapi/execution/OperatorRecoveryIT.java](../../services/content-api/src/test/java/platform/contentapi/execution/OperatorRecoveryIT.java)
+- [services/content-api/src/test/java/platform/contentapi/execution/RecoveryAcknowledgmentProxy.java](../../services/content-api/src/test/java/platform/contentapi/execution/RecoveryAcknowledgmentProxy.java)
+- [services/content-api/src/test/java/platform/contentapi/execution/RuntimeRoleTest.java](../../services/content-api/src/test/java/platform/contentapi/execution/RuntimeRoleTest.java)

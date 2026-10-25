@@ -12,7 +12,7 @@ import tools.jackson.databind.JsonNode;
 import static platform.contentapi.execution.RecoveryFailure.Code.*;
 import static platform.contentapi.execution.RecoveryFailure.need;
 
-/** C3b/C3c.1 internal seam only: no bean, public factory, application role, HTTP or dispatcher caller.
+/** C3b/C3c.1 internal seam used by the trusted local operator role; no HTTP or dispatcher caller.
  * Transfers an occupied slot; has no native executor, stage-launch, final-outcome or release operation.
  */
 final class RecoveryHandoff {
@@ -38,11 +38,15 @@ final class RecoveryHandoff {
         private Target(Snapshot snapshot,WorkerRepository.Session recovery){this.snapshot=snapshot;this.recovery=recovery;}
         String digest(){return snapshot.digest();} UUID controlId(){return snapshot.controlId();} UUID runId(){return snapshot.runId();} UUID attemptId(){return snapshot.oldId();}
         Set<UUID> unresolvedCheckpoints(){return snapshot.unresolved();}
+        List<RecoveryQuiescence.Identity> processes(){return snapshot.processes();}
         @Override public String toString(){return "RecoveryTarget[redacted]";}
     }
     private static class Evidence {
         final Target target;final String address,sha;
         Evidence(Target target,String address,String sha){this.target=target;this.address=address;this.sha=sha;}
+    }
+    private record Lineage(List<Snapshot> snapshots,List<RecoveryPacket> packets) {
+        Snapshot origin(){return snapshots.getLast();}
     }
     static final class Bootstrap extends Evidence {
         private final RecoveryFiles.Retained retained;private final RecoveryPacket packet;private final ReliabilityRuntime runtime;
@@ -116,6 +120,22 @@ final class RecoveryHandoff {
         held(guard,recovery);need(control!=null,INVALID_REQUEST);
         return tx.required(()->{var s=read(control,recovery.instanceId());validateOriginal(guard,recovery,s);return new Target(s,recovery);});
     }
+    /** No writes or child launches. Private inventory is represented only by its digest and PID hints. */
+    JsonNode reviewEvidence(InstallationHostGuard guard,Target target,String runtimeProfile) {
+        held(guard,target.recovery);var s=target.snapshot;
+        var frozen=FrozenRunSelection.canonical((byte[])s.run.get("captured_selection"),(String)s.run.get("selection_sha256"),PreflightFiles.LARGE);
+        var runtime=ReliabilityRuntime.load(jdbc,tx,guard,new WorkerRepository.Owner(target.recovery,s.runId(),s.oldId(),number(s.run,"row_version"),number(s.attempt,"row_version"),(String)s.attempt.get("state")),runtimeProfile,frozen);
+        runtime.check();var files=RecoveryFiles.capture(guard,s.runId(),s.oldId(),number(s.coordinator,"epoch"),(String)s.run.get("selection_sha256"),runtime.json(),s.stages);
+        var n=SourceJson.object().put("targetSha256",target.digest()).put("privateEvidenceSha256",SourceJson.sha(SourceJson.canonical(files.inventory())));
+        var lineage=lineage(guard,target,runtime);
+        var ps=n.putArray("recordedProcesses");lineage.snapshots().stream().flatMap(v->v.processes().stream()).distinct().forEach(p->ps.add(RecoveryOperatorInspection.process(p)));
+        var ids=n.putArray("unresolvedCheckpoints");target.unresolvedCheckpoints().stream().map(UUID::toString).sorted().forEach(ids::add);
+        var hints=n.putArray("descendantPidHints");files.descendantPids().stream().sorted().map(Object::toString).forEach(hints::add);
+        var ancestors=n.putArray("lineageCheckpoints");lineage.snapshots().stream().skip(1).flatMap(v->v.unresolved().stream()).map(UUID::toString).distinct().sorted().forEach(ancestors::add);
+        var anchors=n.putArray("lineageEvidenceSha256");lineage.packets().forEach(p->anchors.add(SourceJson.sha(SourceJson.canonical(p.descriptor))));
+        var descendants=n.putArray("previouslyReviewedDescendants");lineage.packets().stream().flatMap(p->p.review.descendants().stream()).distinct().forEach(p->descendants.addObject().put("pid",Long.toString(p.pid())).put("startedAt",p.startedAt().toString()));
+        return n;
+    }
     Qualified qualify(InstallationHostGuard guard,Target target,RecoveryQuiescence.Review review,String runtimeProfile) {
         need(target!=null,INVALID_REQUEST);held(guard,target.recovery);
         var s=tx.required(()->{var current=read(target.controlId(),target.recovery.instanceId());validateOriginal(guard,target.recovery,current);need(current.digest().equals(target.digest()),EVIDENCE_CHANGED);return current;});
@@ -135,6 +155,10 @@ final class RecoveryHandoff {
         descriptor.set("operatorReview",review.json());descriptor.set("privateEvidence",captured.inventory());
         byte[] bytes=SourceJson.canonical(descriptor);String address=RecoveryFiles.write(guard,s.controlId(),qualificationId,bytes);
         var q=new Qualified(target,review,runtime,captured,address,SourceJson.sha(bytes),at);fresh(guard,q);return q;
+    }
+    /** Operational caller additionally reviews native ancestry; the C3b metadata seam stays independent. */
+    Result transferReviewed(InstallationHostGuard guard,Qualified q) {
+        need(q!=null,INVALID_REQUEST);held(guard,q.target.recovery);reviewLineage(guard,q.target,q.runtime,q.review);return transfer(guard,q);
     }
     Result transfer(InstallationHostGuard guard,Qualified q) {
         need(q!=null,INVALID_REQUEST);held(guard,q.target.recovery);
@@ -233,9 +257,10 @@ final class RecoveryHandoff {
         need(review!=null && review.descendants().containsAll(evidence.packet.review.descendants()),QUIESCENCE_REQUIRED);
         try{need(processes.inspect(identity(evidence.target.snapshot.recovery,"pid","process_started_at"))==RecoveryQuiescence.State.LIVE,PROCESS_UNRESOLVED);}catch(RuntimeException ex){throw new RecoveryFailure(PROCESS_UNRESOLVED);}
         checkProcesses(evidence.target.snapshot,review,evidence.target.digest());checkHints(evidence.target.snapshot,review,checkBootstrapFiles(guard,evidence));
+        reviewLineage(guard,evidence.target,evidence.runtime,review);
     }
     JsonNode verificationPack(InstallationHostGuard guard,Bootstrap evidence,Owner owner) {
-        var s=evidence.target.snapshot;
+        var s=lineage(guard,evidence.target,evidence.runtime).origin();
         var found=s.stages.stream().filter(v->"CHECK_INPUTS".equals(v.get("stage")) && number(v,"item_ordinal")==0 && "VERIFIED".equals(v.get("state"))).toList();
         need("EXECUTE".equals(s.attempt.get("kind")) && found.size()==1,EVIDENCE_UNAVAILABLE);
         var stage=found.getFirst();String base="runs/"+s.runId()+"/attempts/"+s.oldId()+"/check-inputs/"+stage.get("checkpoint_id");
@@ -254,7 +279,7 @@ final class RecoveryHandoff {
         fenced(guard,owner,()->null);return pack;
     }
     JsonNode verificationExpectedPublication(InstallationHostGuard guard,Bootstrap evidence) {
-        var s=evidence.target.snapshot;var found=s.stages.stream().filter(v->"VERIFY_RESULT".equals(v.get("stage")) && number(v,"item_ordinal")==0 && "VERIFIED".equals(v.get("state"))).toList();
+        var s=lineage(guard,evidence.target,evidence.runtime).origin();var found=s.stages.stream().filter(v->"VERIFY_RESULT".equals(v.get("stage")) && number(v,"item_ordinal")==0 && "VERIFIED".equals(v.get("state"))).toList();
         if(found.isEmpty())return SourceJson.object().putNull("v").get("v");need(found.size()==1,EVIDENCE_CHANGED);
         String base="runs/"+s.runId()+"/attempts/"+s.oldId()+"/verify-result/"+found.getFirst().get("checkpoint_id");
         var e=PreflightFiles.canonical(RecoveryFiles.readPrivate(guard,base+"/evidence.json",PreflightFiles.LARGE),PreflightFiles.LARGE);
@@ -264,6 +289,33 @@ final class RecoveryHandoff {
         need(a.get("commandSha256").stringValue().equals(SourceJson.sha(SourceJson.canonical(c))) && a.get("resultSha256").stringValue().equals(SourceJson.sha(SourceJson.canonical(r))) && a.get("cleanup").stringValue().equals("OBSERVED_CLEAN_EXIT"),EVIDENCE_CHANGED);
         ReliabilityExecution.validate(c,r,e,new ReadOnlyVerifierProcess.Result(0,null,0,0,Set.of()));
         return e.get("publication");
+    }
+    /** Follow immutable handoff provenance only, never receipt authority. Bounded by the run's 20 attempts. */
+    private Lineage lineage(InstallationHostGuard guard,Target target,ReliabilityRuntime runtime) {
+        var snapshots=new ArrayList<Snapshot>();var packets=new ArrayList<RecoveryPacket>();var seen=new HashSet<UUID>();var s=target.snapshot;
+        while(true) {
+            need(seen.add(s.oldId()) && seen.size()<=20,EVIDENCE_CHANGED);snapshots.add(s);
+            if("EXECUTE".equals(s.attempt.get("kind")))return new Lineage(List.copyOf(snapshots),List.copyOf(packets));
+            need("RECONCILE".equals(s.attempt.get("kind")),EVIDENCE_UNAVAILABLE);
+            UUID predecessor=s.oldId(),run=s.runId();
+            var rows=tx.required(()->jdbc.queryForList("SELECT details_bytes FROM ddip_management.audit_events WHERE run_id=? AND control_id=? AND attempt_id=? AND action='RECOVERY_HANDOFF' ORDER BY event_seq LIMIT 2",run,predecessor,predecessor));need(rows.size()==1,EVIDENCE_UNAVAILABLE);
+            var anchor=PreflightFiles.canonical((byte[])rows.getFirst().get("details_bytes"),8192);String address=SourceJson.text(anchor.get("qualificationAddress")),sha=SourceJson.text(anchor.get("qualificationSha256"));
+            var packet=RecoveryPacket.parse(RecoveryFiles.read(guard,address),address,sha,guard);var r=packet.rows;
+            var origin=new Snapshot(r.get(0),r.get(1),r.get(2),r.get(3),r.get(4),r.get(5),packet.stages,packet.history);
+            need(origin.controlId().equals(predecessor) && origin.runId().equals(run) && origin.recovery.get("instance_id").equals(s.attempt.get("instance_id")) && number(origin.coordinator,"epoch")+1==number(s.attempt,"owner_epoch") && origin.run.get("selection_sha256").equals(s.run.get("selection_sha256")) && origin.digest().equals(SourceJson.text(packet.descriptor.get("snapshotSha256"))) && SourceJson.sha(SourceJson.canonical(runtime.json())).equals(SourceJson.text(packet.descriptor.get("runtimeSha256"))),EVIDENCE_CHANGED);
+            var found=s.history.stream().filter(h->h.get("attempt_id").equals(origin.oldId())).toList();need(found.size()==1 && found.getFirst().get("instance_id").equals(origin.attempt.get("instance_id")) && found.getFirst().get("owner_epoch").equals(origin.attempt.get("owner_epoch")),EVIDENCE_CHANGED);
+            var files=RecoveryFiles.capture(guard,origin.runId(),origin.oldId(),number(origin.coordinator,"epoch"),(String)origin.run.get("selection_sha256"),runtime.json(),origin.stages);need(files.inventory().equals(packet.descriptor.get("privateEvidence")),EVIDENCE_CHANGED);
+            packets.add(packet);s=origin;
+        }
+    }
+    private void reviewLineage(InstallationHostGuard guard,Target target,ReliabilityRuntime runtime,RecoveryQuiescence.Review review) {
+        var chain=lineage(guard,target,runtime);
+        for(var packet:chain.packets())need(review.descendants().containsAll(packet.review.descendants()),QUIESCENCE_REQUIRED);
+        for(var s:chain.snapshots()) {
+            var bound=new RecoveryQuiescence.Review(s.digest(),review.inspectedAt(),review.handlersStopped(),review.unmanagedWritersStopped(),review.orphanReviewComplete(),s.unresolved(),review.descendants());
+            checkProcesses(s,bound,s.digest());
+            checkHints(s,bound,RecoveryFiles.capture(guard,s.runId(),s.oldId(),number(s.coordinator,"epoch"),(String)s.run.get("selection_sha256"),runtime.json(),s.stages));
+        }
     }
     private Snapshot read(UUID control,UUID recovery) {
         var c=one(jdbc.queryForList("SELECT installation_id,mode,epoch,active_attempt_id,owner_instance_id,active_import_id,heartbeat_at,row_version FROM ddip_management.coordinator WHERE singleton_id=1 FOR UPDATE"));

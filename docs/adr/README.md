@@ -37,6 +37,13 @@ The owner has since sequenced ADR 0009 as **E3 correctness now, E4a performance 
 
 The owner accepted [ADR 0011](0011-artifact-import-maintenance-ownership.md) on **October 21, 2026**, additive to ADR 0010, and authorized **B2b-1A durable import ownership only**. The implementation uses an exclusive coordinator import pointer, a durable operation/recovery chain and atomic fenced recovery handoff; STOPPING remains shutdown state. Native identity uniqueness is scoped by product/kind/version/format. [Current evidence](../architecture/durable-execution.md#stage-b2b-1a-durable-import-ownership) distinguishes coordination tests from actual imports. B2b-1B native qualification/functional imports, B2b-2 submission and worker execution remain pending separate authorization.
 
-[ADR 0012](0012-recovery-verification-provenance.md) records the bounded C3c.2 implementation strategy for separate recovery ownership and original native provenance under ADR 0010. It is an implementation record, not a new owner-accepted architecture decision. Production recovery remains inactive; the C3c.3 implementation record below covers internal final disposition.
+[ADR 0012](0012-recovery-verification-provenance.md) records the bounded C3c.2 implementation strategy for separate recovery ownership and original native provenance under ADR 0010. It is an implementation record, not a new owner-accepted architecture decision. C3c.2 supplied internal verification; the C3c.3 implementation record below covers internal final disposition.
 
-[ADR 0013](0013-recovery-finalization-evidence.md) records the bounded C3c.3 finalization strategy, conservative native-error interpretation, fresh qualification and atomic disposition/release under ADR 0010. It is an implementation record, not an owner-accepted ADR. Operational recovery activation remains unfinished.
+[ADR 0013](0013-recovery-finalization-evidence.md) records the bounded C3c.3 finalization strategy, conservative native-error interpretation, fresh qualification and atomic disposition/release under ADR 0010. It is an implementation record, not an owner-accepted ADR. C3c.4 supplies the local operational invocation described below.
+
+[ADR 0014](0014-controlled-operational-recovery.md) records C3c.4's trusted local non-web operator role,
+fresh challenge-bound process/evidence confirmation, guarded lifecycle and explicit recovery-chain
+handling. It is an implementation record, not an owner-accepted ADR. The
+[operator procedure](../operations/reliability-recovery.md) and
+[current evidence](../architecture/durable-execution.md#c3c4-controlled-operational-recovery) supersede
+earlier operational-activation limitations only to the extent implemented and validated there.

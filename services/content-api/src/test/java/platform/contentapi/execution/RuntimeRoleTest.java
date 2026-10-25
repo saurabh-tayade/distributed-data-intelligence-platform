@@ -36,10 +36,10 @@ class RuntimeRoleTest {
         assertThatThrownBy(() -> DatabaseSettings.from(env)).isInstanceOf(ManagementFailure.class)
                 .hasMessage("MANAGEMENT_CONFIGURATION_INVALID").hasNoCause();
     }
-    @Test void operatorImportIsNonAnalyticsDatabaseRole() {
-        var role=RuntimeRole.from(new MockEnvironment().withProperty("ddip.role","operator-import"));
+    @ParameterizedTest @ValueSource(strings={"operator-import","operator-recovery"}) void operatorRolesAreNonAnalyticsDatabaseRoles(String name) {
+        var role=RuntimeRole.from(new MockEnvironment().withProperty("ddip.role",name));
         assertThat(role.databaseRequired()).isTrue();assertThat(role.analyticsEnabled()).isFalse();
-        var env=new MockEnvironment().withProperty("ddip.role","operator-import");
+        var env=new MockEnvironment().withProperty("ddip.role",name);
         new RuntimeEnvironment().postProcessEnvironment(env,new org.springframework.boot.SpringApplication());
         assertThat(env.getProperty("spring.main.web-application-type")).isEqualTo("none");
     }

@@ -3,7 +3,7 @@ package platform.contentapi.execution;
 import org.springframework.core.env.Environment;
 
 public enum RuntimeRole {
-    ANALYTICS, API, WORKER, MIGRATE, OPERATOR_IMPORT;
+    ANALYTICS, API, WORKER, MIGRATE, OPERATOR_IMPORT, OPERATOR_RECOVERY;
 
     public static RuntimeRole from(Environment environment) {
         return switch (environment.getProperty("ddip.role", "analytics")) {
@@ -12,6 +12,7 @@ public enum RuntimeRole {
             case "worker" -> WORKER;
             case "migrate" -> MIGRATE;
             case "operator-import" -> OPERATOR_IMPORT;
+            case "operator-recovery" -> OPERATOR_RECOVERY;
             default -> throw new ManagementFailure(ManagementFailure.Code.MANAGEMENT_CONFIGURATION_INVALID);
         };
     }
