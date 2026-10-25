@@ -77,7 +77,7 @@ final class RecoveryPacket {
     static String text(JsonNode n,String key){return SourceJson.text(n.get(key));}
     private static long number(String n){need(n.matches("0|[1-9][0-9]{0,18}"),EVIDENCE_CHANGED);return Long.parseLong(n);}
     private static UUID uuid(String n){UUID id=UUID.fromString(n);need(id.toString().equals(n),EVIDENCE_CHANGED);return id;}
-    private static RecoveryQuiescence.Review review(JsonNode n) {
+    static RecoveryQuiescence.Review review(JsonNode n) {
         SourceJson.fields(n,"targetSha256","inspectedAt","handlersStopped","unmanagedWritersStopped","orphanReviewComplete","reviewedCheckpoints","descendants");
         need(n.get("reviewedCheckpoints").isArray() && n.get("descendants").isArray(),EVIDENCE_CHANGED);
         var checkpoints=new HashSet<UUID>();for(var v:n.get("reviewedCheckpoints"))need(checkpoints.add(uuid(SourceJson.text(v))),EVIDENCE_CHANGED);

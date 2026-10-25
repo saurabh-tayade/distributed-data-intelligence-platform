@@ -20,7 +20,7 @@ Statuses describe scoped capabilities and evidence, not production readiness.
 | Gold REST APIs and React Analytics | ✓ Implemented and locally tested | Four analytical endpoints and dashboard views; final browser acceptance and closeout remain pending |
 | Managed Reliability Processing | ✓ Implemented and locally tested | JSONL/Parquet inputs, fixed-profile worker execution, Spark publication and independent output verification |
 | Durable Source and Run Management | ✓ Implemented and locally tested | Source revisions, verified imports, frozen run submissions and bounded execution history |
-| Execution Recovery | ◐ Partially implemented | Reconciliation admission, fenced handoff and guarded evidence bootstrap exist; native outcome resolution and production recovery activation remain unfinished |
+| Execution Recovery | ◐ Partially implemented | Reconciliation admission, fenced handoff, guarded bootstrap and internal native verification exist; final disposition and production recovery activation remain unfinished |
 | Managed Content Processing | ○ Planned | Worker-managed RSS-to-Content execution |
 | Cancellation, Retry and React Operations | ○ Planned | Execution controls and an operator UI |
 | Streaming, Performance Benchmarks, AWS Validation and Multiworker Execution | — Deferred | Scale experiments and additional execution/deployment models |
