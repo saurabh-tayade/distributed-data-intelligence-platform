@@ -35,7 +35,7 @@ class OperatorRecoveryIT extends RecoveryVerificationFixtures {
     Child start(String action,String databaseUrl)throws Exception {
         var command=new ArrayList<>(List.of(Path.of(System.getProperty("java.home"),"bin/java").toString(),"-jar",repo.resolve("services/content-api/target/content-api-0.1.0-SNAPSHOT.jar").toString(),"--ddip.role=operator-recovery","--ddip.recovery.action="+action,"--ddip.recovery.control-id="+control,"--ddip.worker.execution-profile-id="+PROFILE,"--ddip.worker.control-binding-id="+binding.id(),"--ddip.worker.runtime-profile-id="+RUNTIME,"--ddip.worker.deployment-sha256="+fixture.get("command").get("runtime").get("configuration").get("deploymentSha256").stringValue()));
         var builder=new ProcessBuilder(command).redirectErrorStream(true);builder.environment().putAll(Map.of("DDIP_DB_URL",databaseUrl,"DDIP_DB_USER",user,"DDIP_DB_PASSWORD",password,"DDIP_INSTALLATION_ID",INSTALL.toString()));
-        var child=new Child(builder.start());children.add(child);return child;
+        var child=new Child(builder.start(),this::recoveryDiagnostics);children.add(child);return child;
     }
     ObjectNode answer(JsonNode prompt) {
         var n=SourceJson.object().put("approval","AUTHORIZE_"+prompt.get("phase").stringValue()).put("challenge",prompt.get("challenge").stringValue()).put("inspectionSha256",prompt.get("inspectionSha256").stringValue()).put("handlersStopped",true).put("unmanagedWritersStopped",true).put("orphanReviewComplete",true).put("reviewMethod","LOCAL_PROCESS_TREE_AND_WRITERS_REVIEWED");
@@ -65,7 +65,17 @@ class OperatorRecoveryIT extends RecoveryVerificationFixtures {
         admit();var first=start("recover");first.await("CONFIRMATION_REQUIRED");long workers=jdbc.queryForObject("SELECT count(*) FROM ddip_management.worker_instances",Long.class);var second=start("recover");assertThat(second.await("RECOVERY_REQUIRED").get("code").stringValue()).isEqualTo("HOST_GUARD_OCCUPIED");second.exited(2);assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.worker_instances",Long.class)).isEqualTo(workers);unresolved(owner.attemptId());
     }
     @ParameterizedTest @ValueSource(strings={"RECOVERY_HANDOFF","RECOVERY_FINALIZED"}) void lostAcknowledgmentAtActualProcessBoundaryResolvesOnlyExactFacts(String action)throws Exception {
-        admit();var before=nativeSnapshot();try(var proxy=new RecoveryAcknowledgmentProxy(url,action)){var child=start("recover",proxy.url());child.send(answer(child.await("CONFIRMATION_REQUIRED")));child.await("OBSERVED");child.send(answer(child.await("CONFIRMATION_REQUIRED")));assertThat(child.await("COMPLETED").get("runState").stringValue()).isEqualTo("SUCCEEDED");child.exited(0);assertThat(proxy.dropped).isTrue();}
+        admit();var before=nativeSnapshot();
+        try(var proxy=new RecoveryAcknowledgmentProxy(url,action)) {
+            var child=start("recover",proxy.url());
+            try {
+                var handoff=child.await("CONFIRMATION_REQUIRED");assertThat(handoff.get("phase").stringValue()).isEqualTo("HANDOFF");child.send(answer(handoff));
+                assertThat(child.await("OBSERVED").get("classification").stringValue()).isEqualTo("VERIFIED_PUBLICATION");
+                var finalization=child.await("CONFIRMATION_REQUIRED");assertThat(finalization.get("phase").stringValue()).isEqualTo("FINALIZATION");
+                assertThat(proxy.dropped.get()).isEqualTo(action.equals("RECOVERY_HANDOFF"));child.send(answer(finalization));
+                assertThat(child.await("COMPLETED").get("runState").stringValue()).isEqualTo("SUCCEEDED");child.exited(0);assertThat(proxy.dropped).isTrue();
+            }finally{System.out.println("ACK_BOUNDARY action="+action+" dropped="+proxy.dropped+" events="+child.events+" transactions="+proxy.transactionSummary());}
+        }
         assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.audit_events WHERE action='RECOVERY_FINALIZED'",Long.class)).isEqualTo(1);assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.attempts",Long.class)).isEqualTo(2);assertThat(nativeSnapshot()).isEqualTo(before);
     }
     @Test void staleConfirmationCannotTransfer()throws Exception {
@@ -164,11 +174,45 @@ class OperatorRecoveryIT extends RecoveryVerificationFixtures {
         if(mode.equals("originalEvidence")){UUID checkpoint=jdbc.queryForObject("SELECT checkpoint_id FROM ddip_management.stage_invocations WHERE attempt_id=? AND stage='CHECK_INPUTS'",UUID.class,owner.attemptId());Files.delete(binding.root().resolve("runs/"+run+"/attempts/"+owner.attemptId()+"/check-inputs/"+checkpoint+"/verified.json"));}
         var next=start("recover");if(mode.equals("lineageApproval")){var prompt=next.await("CONFIRMATION_REQUIRED");assertThat(prompt.get("evidence").get("lineageCheckpoints").size()).isPositive();var reply=answer(prompt);reply.putArray("lineageCheckpoints");next.send(reply);}next.await("RECOVERY_REQUIRED");next.exited(2);unresolved(occupied);assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.attempts",Long.class)).isEqualTo(2);assertThat(nativeSnapshot()).isEqualTo(before);
     }
+    /** Fixed fields only: never dump command/retained/native payloads, paths or exception messages. */
+    String recoveryDiagnostics() {
+        try {
+            var result=SourceJson.object();var stages=result.putArray("verificationStages");
+            for(var row:jdbc.queryForList("SELECT item_ordinal,checkpoint_id,state,outcome_code,child_pid,started_at,finished_at FROM ddip_management.stage_invocations WHERE attempt_id=? AND stage='VERIFY_RESULT' ORDER BY item_ordinal LIMIT 2",control)) {
+                var codes=new HashSet<>(RecoveryVerification.OBSERVATIONS);codes.addAll(Set.of("NONE","PROCESS_START_FAILED","STAGE_TIMEOUT","STAGE_OUTPUT_LIMIT","EVIDENCE_INVALID","EVIDENCE_UNAVAILABLE","INTERRUPTED","TERMINATION_UNCONFIRMED"));
+                String code=Objects.toString(row.get("outcome_code"),"NONE");
+                var n=stages.addObject().put("item",((Number)row.get("item_ordinal")).intValue()).put("checkpointId",row.get("checkpoint_id").toString()).put("state",Set.of("INTENT","RUNNING","VERIFIED","FAILED","UNKNOWN").contains(row.get("state"))?row.get("state").toString():"UNRECOGNIZED").put("outcome",codes.contains(code)?code:"UNRECOGNIZED").put("childRecorded",row.get("child_pid")!=null);
+                if(row.get("started_at")!=null && row.get("finished_at")!=null)n.put("stageMillis",Duration.between(((java.sql.Timestamp)row.get("started_at")).toInstant(),((java.sql.Timestamp)row.get("finished_at")).toInstant()).toMillis());
+                try {
+                    var e=SourceJson.parse(PreflightFiles.read(binding.root().resolve("runs/"+run+"/attempts/"+control+"/verify-result/"+row.get("checkpoint_id")+"/evidence.json"),PreflightFiles.LARGE,true),PreflightFiles.LARGE);
+                    var safe=n.putObject("nativeObservation");
+                    diagnosticField(safe,e,"classification",RecoveryVerification.OBSERVATIONS);diagnosticField(safe,e,"phase",Set.of("RUNTIME","DEPENDENCIES","OUTPUT"));diagnosticField(safe,e,"readiness",Set.of("READY","FAILED","NOT_CHECKED"));
+                    var nativeCodes=new HashSet<>(ReliabilityPreflight.NATIVE_CODES);nativeCodes.addAll(Set.of("PUBLICATION_INVALID","PUBLICATION_CHANGED","PUBLICATION_UNAVAILABLE","PUBLICATION_INCOMPLETE","QUERY_FAILED"));diagnosticField(safe,e,"code",nativeCodes);
+                }catch(Exception unavailable){n.put("nativeObservation","UNREADABLE_OR_ABSENT");}
+            }
+            result.put("occupied",Boolean.TRUE.equals(jdbc.queryForObject("SELECT active_attempt_id IS NOT NULL OR active_import_id IS NOT NULL FROM ddip_management.coordinator",Boolean.class)));
+            result.put("completionAudits",jdbc.queryForObject("SELECT count(*) FROM ddip_management.audit_events WHERE control_id=? AND action='RECOVERY_FINALIZED'",Long.class,control));
+            return result.toString();
+        }catch(Exception unavailable){return "DIAGNOSTICS_UNAVAILABLE";}
+    }
+    private static void diagnosticField(ObjectNode safe,JsonNode source,String key,Set<String> allowed){var value=source.get(key);if(value!=null && value.isNull())safe.putNull(key);else safe.put(key,value!=null && value.isString() && allowed.contains(value.stringValue())?value.stringValue():"UNRECOGNIZED");}
     static final class Child implements AutoCloseable {
         final Process process;final BlockingQueue<String> lines=new LinkedBlockingQueue<>();final List<String> output=new CopyOnWriteArrayList<>();
-        Child(Process process){this.process=process;Thread.ofPlatform().daemon().start(()->{try(var reader=process.inputReader()){String line;while((line=reader.readLine())!=null){output.add(line);lines.add(line);}}catch(IOException ignored){}});}
+        final List<JsonNode> events=new CopyOnWriteArrayList<>();final long started=System.nanoTime();final java.util.function.Supplier<String> diagnostics;
+        Child(Process process){this(process,()->"NO_RECOVERY_FIXTURE");}
+        Child(Process process,java.util.function.Supplier<String> diagnostics){this.process=process;this.diagnostics=diagnostics;Thread.ofPlatform().daemon().start(()->{try(var reader=process.inputReader()){String line;while((line=reader.readLine())!=null){output.add(line);lines.add(line);}}catch(IOException ignored){}});}
         JsonNode await(String status)throws Exception {return await(Set.of(status));}
-        JsonNode await(Set<String> statuses)throws Exception {long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(40);while(System.nanoTime()<end){String line=lines.poll(100,TimeUnit.MILLISECONDS);if(line==null){if(!process.isAlive() && lines.isEmpty())break;continue;}assertThat(line).startsWith("{").doesNotContain("jdbc:","PRIVATE", "Exception", "command.json", "retained.json");var n=SourceJson.parse(line.getBytes(StandardCharsets.UTF_8),1024*1024);if(statuses.contains(n.get("status").stringValue()))return n;}throw new AssertionError("Missing "+statuses+" in "+output);}
+        JsonNode await(Set<String> statuses)throws Exception {
+            long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(40);
+            while(System.nanoTime()<end){String line=lines.poll(100,TimeUnit.MILLISECONDS);if(line==null){if(!process.isAlive() && lines.isEmpty())break;continue;}assertThat(line).startsWith("{").doesNotContain("jdbc:","PRIVATE", "Exception", "command.json", "retained.json");var n=SourceJson.parse(line.getBytes(StandardCharsets.UTF_8),1024*1024);
+                var event=SourceJson.object().put("status",n.get("status").stringValue()).put("elapsedMillis",TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started));
+                for(String key:List.of("phase","code","classification"))if(n.has(key))event.set(key,n.get(key));
+                if(n.has("inspectedAt"))event.put("confirmationAgeMillis",Duration.between(Instant.parse(n.get("inspectedAt").stringValue()),Instant.now()).toMillis());events.add(event);
+                if(statuses.contains(n.get("status").stringValue()))return n;
+                if(Set.of("RECOVERY_REQUIRED","COMPLETED").contains(n.get("status").stringValue()))break;
+            }
+            throw new AssertionError("Expected "+statuses+"; events="+events+"; recovery="+diagnostics.get());
+        }
         void send(JsonNode n)throws Exception {process.getOutputStream().write(SourceJson.canonical(n));process.getOutputStream().write('\n');process.getOutputStream().flush();}
         void exited(int code)throws Exception {assertThat(process.waitFor(15,TimeUnit.SECONDS)).isTrue();assertThat(process.exitValue()).withFailMessage(output.toString()).isEqualTo(code);}
         public void close(){process.destroyForcibly();try{process.waitFor(10,TimeUnit.SECONDS);}catch(InterruptedException ex){Thread.currentThread().interrupt();}}
