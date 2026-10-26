@@ -5,8 +5,10 @@ This Java 21 module implements `GET /api/v1/publishers`, `/api/v1/articles`, `/a
 E5's current worker entry point is the [active Reliability worker](#c2b-2-active-reliability-worker).
 The passive-worker sections below describe earlier checkpoints. [C3a control admission](#c3a-reconciliation-intent-only)
 records recovery intent. [C3b internal handoff](#c3b-internal-recovery-handoff) is tested without
-enabling an operational recovery invocation; C3c native reconciliation/closure and Content execution
-remain deferred. Analytics-only startup and its publication selection are unchanged.
+granting native disposition authority by itself. [C3c.4 controlled local recovery](#c3c4-controlled-local-operational-recovery)
+connects handoff, bootstrap, independent native verification and atomic finalization through a trusted
+non-web operator role. Managed Content execution, cancellation and retry remain deferred.
+Analytics-only startup and its publication selection are unchanged.
 
 ## Acceptance and structure
 
@@ -1694,3 +1696,19 @@ Native byte hashes, sizes and modification times remained unchanged. The new fin
 took about two minutes including fixture creation; hosted CI and its total timing margin remain
 unverified. Exact commands, runtime pins, conservative blocked outcomes and scale limits are in the
 contract. The disposable database was removed after validation.
+
+## C3c.4 controlled local operational recovery
+
+The dedicated **operator-recovery** non-web role connects the existing handoff, bootstrap, independent
+native verification and fresh atomic finalization. It selects one existing C3a control and holds the
+approved installation guard in the same JVM throughout the authorized operation. `inspect` is
+read-only and grants no authority. `recover` requires fresh challenge-bound manual process/evidence
+confirmation before handoff and finalization; no boolean startup flag authorizes recovery.
+
+Follow the [exact operator procedure](../../docs/operations/reliability-recovery.md) for prerequisites,
+configuration, commands, confirmation schema, supported outcomes and interruption/new-control handling.
+The [C3c.4 evidence](../../docs/architecture/durable-execution.md#c3c4-controlled-operational-recovery)
+records validation and limits. Earlier sections describing absent production invocation are historical;
+this section supersedes that invocation boundary only. CANCEL/RETRY, automatic startup recovery,
+RSS/Content execution, multiworker operation and Operations UI remain outside this checkpoint.
+No accepted ADR/native contract changes or new infrastructure/dependencies are introduced.

@@ -12,7 +12,7 @@ import tools.jackson.databind.JsonNode;
 import static platform.contentapi.execution.RecoveryFailure.Code.*;
 import static platform.contentapi.execution.RecoveryFailure.need;
 
-/** Internal C3c.3 only. No bean, command, dispatcher, retry, cancellation or native writer. */
+/** Internal C3c.3 disposition used by the local operator. No dispatcher, retry, cancellation or native writer. */
 final class RecoveryFinalization {
     static final String POLICY="E5_RECOVERY_FINALIZATION_V1";
     enum Step { ARTIFACT, DEPENDENCY, LINK, ATTEMPT, RUN, CONTROL, WORKER, COORDINATOR, AUDIT }
@@ -50,8 +50,9 @@ final class RecoveryFinalization {
         }catch(RecoveryFailure | ManagementFailure | ImportOwnershipFailure | PreflightFailure ex){throw ex;}catch(RuntimeException ex){throw new RecoveryFailure(EVIDENCE_CHANGED);}
     }
     private static void eligible(RecoveryVerification.Inspection facts) {
-        need(facts.evidence()!=null && Set.of("VERIFIED","FAILED").contains(facts.state()) && Set.of("VERIFIED_PUBLICATION","OUTPUT_ABSENT","OUTPUT_INCOMPLETE","OUTPUT_INVALID","OUTPUT_CHANGED","DEPENDENCY_CHANGED","DEPENDENCY_INVALID").contains(facts.classification()) && facts.evidence().get("readiness").stringValue().equals("READY"),EVIDENCE_UNAVAILABLE);
+        need(supports(facts),EVIDENCE_UNAVAILABLE);
     }
+    static boolean supports(RecoveryVerification.Inspection facts){return facts.evidence()!=null && Set.of("VERIFIED","FAILED").contains(facts.state()) && Set.of("VERIFIED_PUBLICATION","OUTPUT_ABSENT","OUTPUT_INCOMPLETE","OUTPUT_INVALID","OUTPUT_CHANGED","DEPENDENCY_CHANGED","DEPENDENCY_INVALID").contains(facts.classification()) && facts.evidence().get("readiness").stringValue().equals("READY");}
     private static Decision decision(RecoveryVerification.Inspection facts,RecoveryNativeSeal seal,String fingerprint) {
         String code=facts.evidence().get("code").isNull()?null:facts.evidence().get("code").stringValue();
         return switch(facts.classification()) {
