@@ -3,8 +3,9 @@
 The [CI workflow](../../.github/workflows/ci.yml) classifies pull requests to main and runs the
 backend suites selected by a conservative dependency map. Every push to main runs full regression.
 There are no workflow-level path filters: required contexts are created for every supported event.
-Documentation/hygiene and frontend validation still run on every event. Application code, native
-contracts, action/dependency pins, test commands, Maven profiles, resource limits and timeouts are unchanged.
+Documentation/hygiene and frontend validation still run on every event. Classification preserves native
+contracts, existing suite commands, action/dependency pins, resource limits and timeouts. D1's added
+PostgreSQL test and prebuilt-adapter preparation are described below.
 
 ## Acceptance criteria and workflow graph
 
@@ -44,6 +45,11 @@ flowchart LR
 | processing | Existing required backend context; classification and five-suite aggregate | 5 minutes |
 | documentation | Existing Markdown/link/hygiene checks plus focused CI policy tests | 5 minutes |
 | frontend | Existing typecheck, lint, component tests and production build | 10 minutes |
+
+D1 adds RssFetchIT to the existing PostgreSQL Failsafe profile without removing any earlier selector.
+The content_postgres job now packages the ingestion JAR/dependencies before its existing verification
+command so managed fetch tests execute a prebuilt adapter. Each job still owns its own workspace.
+See [managed RSS validation](managed-rss-fetch.md) for the local harness and actual restart coverage.
 
 The five backend suites depend only on changes and remain parallel with one another. Fixtures are
 never shared between job workspaces. The aggregate has no checkout, installation or network dependency.
@@ -229,6 +235,7 @@ dedicated disposable PostgreSQL 17.11 instance, following the
 
 ```sh
 export DDIP_TEST_PYTHON="$(command -v python)"
+mvn -B -ntp -f ingestion/pom.xml package -DskipTests
 mvn -B -ntp -f services/content-api/pom.xml verify -Ppostgres
 ```
 
@@ -241,7 +248,7 @@ mvn -B -ntp -f services/content-api/pom.xml verify -Pintegration -Danalytics.pyt
 
 The two content-api invocations deliberately retain ordinary unit/component execution as well as
 their respective Failsafe profiles. Neither test selectors nor failure reporting are suppressed.
-The postgres profile still includes all 16 existing integration classes, including packaged
+The postgres profile includes all 16 earlier integration classes plus D1 RssFetchIT, including packaged
 OperatorRecoveryIT. The integration profile still selects GoldApiIT only.
 
 Existing independent ingestion checks:
@@ -403,10 +410,12 @@ required context names, read-only permissions, the sole PostgreSQL service and r
 Application regression commands are unchanged; focused orchestration tests do not establish new
 hosted application counts or fixture readiness.
 
-Local validation on October 26, 2026 passed all **21 focused tests**, including the 32,768-case gate
+The original D02 local validation on October 26, 2026 passed all **21 focused tests**, including the 32,768-case gate
 matrix, on Python 3.12.14 in 1.44s. This local interpreter is not the hosted suites' pinned 3.12.15.
 Actionlint 1.7.12 passed; Node.js 24.19.0 ran Markdown/local-link checks across 51 files and repository
 hygiene successfully; git diff --check passed. A parsed YAML comparison against merged main dd725da
 confirmed every existing suite step, Maven profile, pin, timeout, environment and service setting is
 unchanged. Documentation adds only the focused policy-test step, and frontend is identical.
-No application regression, hosted Phase 2 run or performance benchmark was executed locally.
+No application regression, hosted Phase 2 run or performance benchmark was executed for that D02
+configuration change. Subsequent [D1 validation](managed-rss-fetch.md#local-validation-and-reproduction)
+records its added ingestion/Content API regression and current dependency cases separately.
