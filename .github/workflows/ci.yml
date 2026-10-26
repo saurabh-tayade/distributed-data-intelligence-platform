@@ -10,6 +10,46 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Classify changed paths
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      classified: ${{ steps.classify.outputs.classified }}
+      mode: ${{ steps.classify.outputs.mode }}
+      ingestion: ${{ steps.classify.outputs.ingestion }}
+      processing_python: ${{ steps.classify.outputs.processing_python }}
+      analytics_jdbc: ${{ steps.classify.outputs.analytics_jdbc }}
+      content_postgres: ${{ steps.classify.outputs.content_postgres }}
+      analytics_http: ${{ steps.classify.outputs.analytics_http }}
+    steps:
+      - name: Check out complete event history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Classify with trusted base policy
+        id: classify
+        env:
+          POLICY_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: |
+          # Read policy from the immutable base commit, never execute PR policy/content.
+          # The first deployment has no base policy yet and must validate everything.
+          if git cat-file -e "$POLICY_SHA:.github/ci/classify.py"; then
+            git show "$POLICY_SHA:.github/ci/classify.py" > "$RUNNER_TEMP/ddip-classify.py"
+            python3 -I -B "$RUNNER_TEMP/ddip-classify.py"
+          else
+            {
+              echo 'classified=true'
+              echo 'mode=full'
+              for job in ingestion processing_python analytics_jdbc content_postgres analytics_http; do
+                echo "$job=true"
+              done
+            } >> "$GITHUB_OUTPUT"
+            echo 'Trusted policy unavailable; full regression required.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   documentation:
     name: Documentation and repository hygiene
     runs-on: ubuntu-24.04
@@ -29,9 +69,13 @@ jobs:
         run: npm run lint:markdown
       - name: Check repository hygiene
         run: npm run check:hygiene
+      - name: Test CI classification and required gate
+        run: python3 -I -B -m unittest discover -s .github/ci/tests -v
 
   ingestion:
     name: Java 21 ingestion and Bronze storage
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.ingestion != 'false') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -49,8 +93,10 @@ jobs:
 
   processing_python:
     name: Python 3.12 processing, Spark and DuckDB
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.processing_python != 'false') }}
     runs-on: ubuntu-24.04
-    # C3c.4 PR hosted baseline: 13m19s for the processing test step.
+    # Phase 1 main hosted test step: 18m21s; retain the existing timeout.
     timeout-minutes: 30
     env:
       SPARK_LOCAL_IP: 127.0.0.1
@@ -83,6 +129,8 @@ jobs:
 
   analytics_jdbc:
     name: Java 21 JDBC and Gold fixture compatibility
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.analytics_jdbc != 'false') }}
     runs-on: ubuntu-24.04
     # Includes one fresh Spark fixture generation, not the Python test suite.
     timeout-minutes: 15
@@ -116,8 +164,10 @@ jobs:
 
   content_postgres:
     name: Java 21 PostgreSQL execution and recovery
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.content_postgres != 'false') }}
     runs-on: ubuntu-24.04
-    # C3c.4 PR hosted baseline: 33m52s; retain headroom for native/process lifecycle cases.
+    # Phase 1 main hosted test step: 47m05s; retain native/process lifecycle headroom.
     timeout-minutes: 60
     services:
       postgres:
@@ -164,8 +214,10 @@ jobs:
 
   analytics_http:
     name: Java 21 Spring Boot analytics HTTP and native integration
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.analytics_http != 'false') }}
     runs-on: ubuntu-24.04
-    # C3c.4 PR hosted HTTP step: 43s; this job also creates its own Gold fixtures.
+    # Phase 1 main hosted job: 2m15s, including its own Gold fixture generation.
     timeout-minutes: 15
     env:
       SPARK_LOCAL_IP: 127.0.0.1
@@ -204,32 +256,53 @@ jobs:
     name: Python 3.12, local Spark processing and DuckDB analytics
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    needs: [ingestion, processing_python, analytics_jdbc, content_postgres, analytics_http]
+    needs: [changes, ingestion, processing_python, analytics_jdbc, content_postgres, analytics_http]
     # Run after failed/skipped dependencies too; an implicitly skipped gate is unsafe.
     if: ${{ always() }}
     steps:
-      - name: Require every backend validation job to succeed
+      - name: Require successful classification and every selected backend suite
         env:
-          INGESTION_RESULT: ${{ needs.ingestion.result }}
-          PYTHON_RESULT: ${{ needs.processing_python.result }}
-          JDBC_RESULT: ${{ needs.analytics_jdbc.result }}
-          POSTGRES_RESULT: ${{ needs.content_postgres.result }}
-          HTTP_RESULT: ${{ needs.analytics_http.result }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_REF: ${{ github.ref }}
         run: |
-          failed=0
-          for entry in \
-            "ingestion=$INGESTION_RESULT" \
-            "processing_python=$PYTHON_RESULT" \
-            "analytics_jdbc=$JDBC_RESULT" \
-            "content_postgres=$POSTGRES_RESULT" \
-            "analytics_http=$HTTP_RESULT"
-          do
-            printf '%s\n' "$entry"
-            if [[ "${entry#*=}" != "success" ]]; then
-              failed=1
-            fi
-          done
-          exit "$failed"
+          python3 -I -B - <<'PY'
+          import json
+          import os
+
+          def check_gate(needs, event_name, event_ref):
+              jobs = ('ingestion', 'processing_python', 'analytics_jdbc', 'content_postgres', 'analytics_http')
+              if event_name not in ('pull_request', 'push'):
+                  return False
+              if not isinstance(needs, dict) or set(needs) != {'changes', *jobs}:
+                  return False
+              changes = needs['changes']
+              if not isinstance(changes, dict) or changes.get('result') != 'success':
+                  return False
+              outputs = changes.get('outputs')
+              if not isinstance(outputs, dict) or outputs.get('classified') != 'true':
+                  return False
+              if outputs.get('mode') not in ('full', 'selective'):
+                  return False
+              if event_name == 'push' and (event_ref != 'refs/heads/main' or outputs['mode'] != 'full'):
+                  return False
+              for job in jobs:
+                  required = outputs.get(job)
+                  result = needs[job].get('result') if isinstance(needs[job], dict) else None
+                  print(f'{job}: required={required}, result={result}')
+                  if required not in ('true', 'false'):
+                      return False
+                  if outputs['mode'] == 'full' and required != 'true':
+                      return False
+                  expected = 'success' if required == 'true' else 'skipped'
+                  if result != expected:
+                      return False
+              return True
+
+          if __name__ == '__main__':
+              passed = check_gate(json.loads(os.environ['NEEDS_JSON']), os.environ['EVENT_NAME'], os.environ['EVENT_REF'])
+              raise SystemExit(0 if passed else 1)
+          PY
 
   frontend:
     name: React publisher dashboard
