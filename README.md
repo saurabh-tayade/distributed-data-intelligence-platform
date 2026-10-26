@@ -21,7 +21,7 @@ Statuses describe scoped capabilities and evidence, not production readiness.
 | Managed Reliability Processing | ✓ Implemented and locally tested | JSONL/Parquet inputs, fixed-profile worker execution, Spark publication and independent output verification |
 | Durable Source and Run Management | ✓ Implemented and locally tested | Source revisions, verified imports, frozen run submissions and bounded execution history |
 | Execution Recovery | ◐ Partially implemented | [Controlled local Reliability recovery](docs/operations/reliability-recovery.md) is implemented and tested for JSONL/Parquet with explicit operator approval, native verification and atomic disposition; broader E5 recovery remains unfinished |
-| Managed Content Processing | ○ Planned | Worker-managed RSS-to-Content execution |
+| Managed Content Processing | ◐ Partially implemented | Internal D1 RSS fetch/private journal; complete worker-managed pipeline remains planned |
 | Cancellation, Retry and React Operations | ○ Planned | Execution controls and an operator UI |
 | Streaming, Performance Benchmarks, AWS Validation and Multiworker Execution | — Deferred | Scale experiments and additional execution/deployment models |
 
@@ -79,6 +79,8 @@ flowchart TB
 Solid arrows show implemented paths; dashed arrows show planned managed Content execution. Content batches already work independently of the worker. The current React application consumes Gold analytics, while enriched Content and Reliability reports have standalone readers. PostgreSQL stores control and qualification metadata; native files remain the data authority. A newly verified worker result does not automatically replace the API's selected analytics publication.
 
 One worker startup is pinned to one approved execution profile and deployment digest. JSONL and Parquet use separate reviewed startups; stop the worker before changing profiles. It processes compatible runs in submission order. Content and other-profile runs remain queued. Ambiguous execution retains occupied ownership and blocks further dispatch; an expired heartbeat is never permission to take over.
+
+[D1 managed RSS fetch and private journaling](docs/operations/managed-rss-fetch.md) is implemented as an internal checkpoint. It preserves one authorized retrieval and its original provenance; it does not enable Content dispatch, Bronze PUT, Silver/Gold/Content processing or publication activation.
 
 ## Execution bounds and performance evidence
 

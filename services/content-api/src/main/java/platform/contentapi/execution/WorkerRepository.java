@@ -123,17 +123,103 @@ public final class WorkerRepository {
                               String selectionSha256,String state,boolean authorized) { }
     public record StageReceipt(String phase,String state,long rowVersion,boolean currentOwner) { }
     public tools.jackson.databind.JsonNode frozenReliability(InstallationHostGuard guard,Owner owner) {
+        return frozen(guard,owner,"RELIABILITY_V2");
+    }
+    public tools.jackson.databind.JsonNode frozenContent(InstallationHostGuard guard,Owner owner) {
+        return frozen(guard,owner,"CONTENT_RSS_V1");
+    }
+    private tools.jackson.databind.JsonNode frozen(InstallationHostGuard guard,Owner owner,String pipeline) {
         held(guard,owner.worker());
         return ownerTransaction(()->{
             slot();
             var sources=jdbc.queryForList("SELECT s.source_id,s.enabled,s.profile_family,r.revision,r.captured_gate_version,r.captured_enabled,v.configuration_bytes,v.configuration_sha256,v.endpoint_id,v.endpoint_sha256 FROM ddip_management.run_sources r JOIN ddip_management.sources s ON (s.product_id,s.source_id)=(r.product_id,r.source_id) JOIN ddip_management.source_revisions v ON (v.product_id,v.source_id,v.revision)=(r.product_id,r.source_id,r.revision) WHERE r.run_id=? ORDER BY s.product_id COLLATE \"C\",s.source_id COLLATE \"C\" LIMIT 33 FOR UPDATE OF s",owner.runId());
             owned(owner);controls(owner);
             var run=one(jdbc.queryForList("SELECT run_id,product_id,pipeline,pipeline_version,idempotency_key,normalized_request,request_sha256,captured_selection,selection_sha256,execution_profile_id FROM ddip_management.runs WHERE run_id=?",owner.runId()));
-            require("RELIABILITY_V2".equals(run.get("pipeline")),RUNTIME_MISMATCH);
+            require(pipeline.equals(run.get("pipeline")),RUNTIME_MISMATCH);
             try{FrozenRunSelection.validate(jdbc,installation,run,sources,owner.worker().profileId(),owner.worker().profileDigest(),owner.worker().deploymentDigest());return FrozenRunSelection.canonical((byte[])run.get("captured_selection"),(String)run.get("selection_sha256"),16*1024*1024);}
             catch(org.springframework.dao.DataAccessException ex){throw ex;}catch(RuntimeException ex){throw new WorkerFailure(RUNTIME_MISMATCH);}
         });
     }
+    /** D1 internal seam only. Production capability/dispatch still supports Reliability exclusively. */
+    public record FetchStage(Owner owner,UUID checkpoint,int ordinal,String source,String configSha,String commandSha,
+                             String namespace,long version,String state,boolean authorized) { }
+    public FetchStage beginFetch(InstallationHostGuard guard,Owner owner,int ordinal,UUID checkpoint,String source,String configSha,String commandSha) {
+        held(guard,owner.worker());require(capability.available() && capability.supports("CONTENT_RSS_V1") && checkpoint!=null && ordinal>=0 && ordinal<32 && source!=null && source.matches("[a-z0-9][a-z0-9_-]{0,127}") && hash(configSha) && hash(commandSha),WORKER_NOT_READY);
+        var frozen=frozenContent(guard,owner);
+        String namespace="runs/"+owner.runId()+"/attempts/"+owner.attemptId()+"/fetch-source/"+source+"/"+checkpoint;
+        return ownerTransaction(()->{owned(owner);controls(owner);attemptDeadline(owner);
+            require(Boolean.TRUE.equals(jdbc.queryForObject("SELECT pipeline='CONTENT_RSS_V1' FROM ddip_management.runs WHERE run_id=?",Boolean.class,owner.runId())),RUNTIME_MISMATCH);
+            require(jdbc.queryForObject("SELECT count(*) FROM ddip_management.stage_invocations s JOIN ddip_management.attempts a USING(attempt_id) WHERE a.run_id=? AND s.stage='FETCH_SOURCE' AND (s.intended_identity=? OR s.item_ordinal=?)",Long.class,owner.runId(),source,ordinal)==0,OWNERSHIP_LOST);
+            var selected=frozen.get("sources");
+            require(ordinal<selected.size() && selected.get(ordinal).get("sourceId").stringValue().equals(source) && selected.get(ordinal).get("configurationSha256").stringValue().equals(configSha),RUNTIME_MISMATCH);
+            // Source order is frozen at submission. Earlier selected deliveries must be checkpointed.
+            require(jdbc.queryForObject("SELECT count(*) FROM ddip_management.rss_deliveries WHERE run_id=? AND state='FETCH_JOURNALED'",Long.class,owner.runId())==ordinal,WORKER_NOT_READY);
+            long av=owner.attemptVersion();
+            if(owner.attemptState().equals("CLAIMED")){
+                exactly(jdbc.update("UPDATE ddip_management.attempts SET state='RUNNING',row_version=row_version+1 WHERE attempt_id=? AND state='CLAIMED' AND row_version=?",owner.attemptId(),av));
+                audit(owner.runId(),owner.attemptId(),"ATTEMPT_STARTED","CLAIMED","RUNNING",av,av+1,"STARTED");av++;
+            }else require(owner.attemptState().equals("RUNNING"),OWNERSHIP_LOST);
+            jdbc.update("INSERT INTO ddip_management.stage_invocations(attempt_id,stage,item_ordinal,checkpoint_id,state,input_evidence_sha256,intended_identity,intended_namespace) VALUES (?,'FETCH_SOURCE',?,?,'INTENT',?,?,?)",owner.attemptId(),ordinal,checkpoint,commandSha,source,namespace);
+            exactly(jdbc.update("UPDATE ddip_management.runs SET current_stage='FETCH_SOURCE',row_version=row_version+1 WHERE run_id=? AND current_attempt_id=? AND state='RUNNING' AND row_version=?",owner.runId(),owner.attemptId(),owner.runVersion()));
+            audit(owner.runId(),owner.attemptId(),"STAGE_INTENT",null,"INTENT",null,0L,"ACCEPTED");
+            return new FetchStage(new Owner(owner.worker(),owner.runId(),owner.attemptId(),owner.runVersion()+1,av,"RUNNING"),checkpoint,ordinal,source,configSha,commandSha,namespace,0,"INTENT",false);
+        });
+    }
+    public FetchStage authorizeFetch(InstallationHostGuard guard,FetchStage stage) {
+        held(guard,stage.owner().worker());return ownerTransaction(()->{owned(stage.owner());controls(stage.owner());attemptDeadline(stage.owner());fetchStage(stage);
+            require(!stage.authorized() && stage.state().equals("INTENT"),OWNERSHIP_LOST);
+            exactly(jdbc.update("UPDATE ddip_management.stage_invocations SET command_address=?,command_sha256=?,row_version=row_version+1 WHERE attempt_id=? AND stage='FETCH_SOURCE' AND item_ordinal=? AND checkpoint_id=? AND state='INTENT' AND command_address IS NULL AND row_version=?",stage.namespace()+"/command.json",stage.commandSha(),stage.owner().attemptId(),stage.ordinal(),stage.checkpoint(),stage.version()));
+            audit(stage.owner().runId(),stage.owner().attemptId(),"STAGE_LAUNCH_AUTHORIZED","INTENT","INTENT",stage.version(),stage.version()+1,"STARTED");return nextFetch(stage,stage.owner(),"INTENT",true);
+        });
+    }
+    public FetchStage recordFetchChild(InstallationHostGuard guard,FetchStage stage,InstallationHostGuard.ProcessIdentity child) {
+        held(guard,stage.owner().worker());return ownerTransaction(()->{owned(stage.owner());fetchStage(stage);require(stage.authorized() && stage.state().equals("INTENT") && child!=null && child.pid()>0 && child.startedAt()!=null,OWNERSHIP_LOST);
+            exactly(jdbc.update("UPDATE ddip_management.stage_invocations SET state='RUNNING',child_pid=?,child_started_at=?,child_instance_id=?,started_at=clock_timestamp(),row_version=row_version+1 WHERE attempt_id=? AND stage='FETCH_SOURCE' AND item_ordinal=? AND checkpoint_id=? AND state='INTENT' AND row_version=?",child.pid(),java.sql.Timestamp.from(child.startedAt()),child.instanceId(),stage.owner().attemptId(),stage.ordinal(),stage.checkpoint(),stage.version()));
+            audit(stage.owner().runId(),stage.owner().attemptId(),"STAGE_STARTED","INTENT","RUNNING",stage.version(),stage.version()+1,"STARTED");return nextFetch(stage,stage.owner(),"RUNNING",true);
+        });
+    }
+    /** Read-only authority check, including current controls/deadline. Never refreshes a stale token. */
+    public void checkFetch(InstallationHostGuard guard,FetchStage stage) {
+        held(guard,stage.owner().worker());ownerTransaction(()->{owned(stage.owner());controls(stage.owner());attemptDeadline(stage.owner());fetchStage(stage);return null;});
+    }
+    public FetchStage heartbeatFetch(InstallationHostGuard guard,FetchStage stage) {
+        checkFetch(guard,stage);Owner next=heartbeat(guard,stage.owner());
+        return new FetchStage(next,stage.checkpoint(),stage.ordinal(),stage.source(),stage.configSha(),stage.commandSha(),stage.namespace(),stage.version(),stage.state(),stage.authorized());
+    }
+    public void checkpointFetch(InstallationHostGuard guard,FetchStage stage,RssJournalFiles.Evidence evidence) {
+        checkFetch(guard,stage);var d=evidence.descriptor();byte[] raw=evidence.descriptorBytes(),expected=evidence.checkpointReference();
+        require(stage.state().equals("RUNNING") && stage.authorized() && evidence.address().equals(stage.namespace()) && d.get("commandSha256").stringValue().equals(stage.commandSha()) && d.get("capturedConfigSha256").stringValue().equals(stage.configSha()) && d.get("runId").stringValue().equals(stage.owner().runId().toString()) && d.get("attemptId").stringValue().equals(stage.owner().attemptId().toString()) && d.get("checkpointId").stringValue().equals(stage.checkpoint().toString()) && d.get("sourceId").stringValue().equals(stage.source()) && d.get("ownerEpoch").longValue()==stage.owner().worker().epoch(),RUNTIME_MISMATCH);
+        ownerTransaction(()->{owned(stage.owner());controls(stage.owner());attemptDeadline(stage.owner());fetchStage(stage);
+            jdbc.update("INSERT INTO ddip_management.rss_deliveries(run_id,source_id,revision,owning_attempt_id,journal_address,journal_descriptor,journal_sha256,ingestion_id,original_ingested_at_text,expected_evidence,expected_sha256,payload_length,payload_sha256,state) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'FETCH_JOURNALED')",stage.owner().runId(),stage.source(),d.get("revision").intValue(),stage.owner().attemptId(),stage.namespace(),raw,SourceJson.sha(raw),UUID.fromString(d.get("ingestionId").stringValue()),d.get("ingestedAt").stringValue(),expected,SourceJson.sha(expected),d.get("payloadByteLength").longValue(),d.get("payloadSha256").stringValue());
+            exactly(jdbc.update("UPDATE ddip_management.stage_invocations SET state='VERIFIED',result_address=?,result_sha256=?,finished_at=clock_timestamp(),outcome_code='VERIFIED',row_version=row_version+1 WHERE attempt_id=? AND stage='FETCH_SOURCE' AND item_ordinal=? AND checkpoint_id=? AND state='RUNNING' AND row_version=?",stage.namespace()+"/complete.json",evidence.completionSha(),stage.owner().attemptId(),stage.ordinal(),stage.checkpoint(),stage.version()));
+            audit(stage.owner().runId(),stage.owner().attemptId(),"STAGE_VERIFIED","RUNNING","VERIFIED",stage.version(),stage.version()+1,"VERIFIED");return null;
+        });
+    }
+    /** Historical exact-match receipt after an unknown commit; no write, token refresh or orphan adoption. */
+    public boolean fetchCheckpointPresent(FetchStage stage,RssJournalFiles.Evidence evidence) {
+        return tx.required(()->{
+            var rows=jdbc.queryForList("SELECT d.journal_address,d.journal_descriptor,d.journal_sha256,d.expected_evidence,d.expected_sha256,s.result_sha256 FROM ddip_management.rss_deliveries d JOIN ddip_management.stage_invocations s ON s.attempt_id=d.owning_attempt_id AND s.stage='FETCH_SOURCE' AND s.item_ordinal=? WHERE d.run_id=? AND d.source_id=? AND d.owning_attempt_id=? AND d.state='FETCH_JOURNALED' AND s.state='VERIFIED' AND s.checkpoint_id=?",stage.ordinal(),stage.owner().runId(),stage.source(),stage.owner().attemptId(),stage.checkpoint());
+            if(rows.isEmpty())return false;var row=one(rows);
+            require(stage.namespace().equals(row.get("journal_address")) && Arrays.equals(evidence.descriptorBytes(),(byte[])row.get("journal_descriptor")) && SourceJson.sha(evidence.descriptorBytes()).equals(row.get("journal_sha256")) && evidence.completionSha().equals(row.get("result_sha256")) && Arrays.equals(evidence.checkpointReference(),(byte[])row.get("expected_evidence")) && SourceJson.sha(evidence.checkpointReference()).equals(row.get("expected_sha256")),RUNTIME_MISMATCH);return true;
+        });
+    }
+    public void blockFetch(InstallationHostGuard guard,FetchStage stage) {
+        blockFetch(guard,stage,"FETCH_EVIDENCE_LOST");
+    }
+    void blockFetch(InstallationHostGuard guard,FetchStage stage,String code) {
+        require(Set.of("FETCH_EVIDENCE_LOST","FETCH_HTTP","FETCH_TRANSPORT","FETCH_PAYLOAD_TOO_LARGE","FETCH_INTERRUPTED","FETCH_DISABLED").contains(code),WORKER_NOT_READY);
+        String publicCode=code.equals("FETCH_EVIDENCE_LOST")?code:"FETCH_FAILED";
+        held(guard,stage.owner().worker());ownerTransaction(()->{owned(stage.owner());fetchStage(stage);
+            exactly(jdbc.update("UPDATE ddip_management.stage_invocations SET state='UNKNOWN',outcome_code=?,row_version=row_version+1 WHERE attempt_id=? AND stage='FETCH_SOURCE' AND item_ordinal=? AND checkpoint_id=? AND row_version=?",publicCode,stage.owner().attemptId(),stage.ordinal(),stage.checkpoint(),stage.version()));
+            audit(stage.owner().runId(),stage.owner().attemptId(),"STAGE_UNKNOWN",stage.state(),"UNKNOWN",stage.version(),stage.version()+1,publicCode);interruptOwned(stage.owner());return null;
+        });
+    }
+    private void fetchStage(FetchStage s) {
+        var row=one(jdbc.queryForList("SELECT * FROM ddip_management.stage_invocations WHERE attempt_id=? AND stage='FETCH_SOURCE' AND item_ordinal=? FOR UPDATE",s.owner().attemptId(),s.ordinal()));
+        require(s.checkpoint().equals(row.get("checkpoint_id")) && s.version()==number(row,"row_version") && s.state().equals(row.get("state")) && s.namespace().equals(row.get("intended_namespace")) && s.source().equals(row.get("intended_identity")) && s.commandSha().equals(row.get("input_evidence_sha256")),OWNERSHIP_LOST);
+        require(s.authorized()?s.commandSha().equals(row.get("command_sha256")) && (s.namespace()+"/command.json").equals(row.get("command_address")):row.get("command_sha256")==null && row.get("command_address")==null,OWNERSHIP_LOST);
+    }
+    private static FetchStage nextFetch(FetchStage s,Owner o,String state,boolean authorized){return new FetchStage(o,s.checkpoint(),s.ordinal(),s.source(),s.configSha(),s.commandSha(),s.namespace(),s.version()+1,state,authorized);}
     public CheckInputs beginCheckInputs(InstallationHostGuard guard,Owner owner,UUID checkpoint,String commandSha,String selectionSha) {
         held(guard,owner.worker());require(capability.available() && capability.supports("RELIABILITY_V2") && checkpoint!=null && hash(commandSha) && hash(selectionSha),WORKER_NOT_READY);
         String namespace="runs/"+owner.runId()+"/attempts/"+owner.attemptId()+"/check-inputs/"+checkpoint;

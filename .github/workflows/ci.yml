@@ -201,6 +201,11 @@ jobs:
             processing/requirements-analytics.txt
       - name: Install pinned processing dependencies
         run: python -m pip install -r processing/requirements-bronze.txt -r processing/requirements-analytics.txt
+      - name: Build prebuilt Java RSS adapter for managed fetch acceptance
+        run: |
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          mvn -B -ntp -f ingestion/pom.xml package -DskipTests
       - name: Verify PostgreSQL migrations, persistence and isolated runtime roles
         env:
           DDIP_TEST_DB_URL: jdbc:postgresql://127.0.0.1:5432/ddip_test

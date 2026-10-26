@@ -25,7 +25,16 @@ import static platform.ingestion.bronze.BronzeStorageException.Stage.*;
 public final class S3BronzeStorage implements BronzeStorage {
     private final S3Client client;
     private final String bucket;
-    private final ObjectMapper json = new ObjectMapper();
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    /** Exact existing wire metadata for a private journal; performs no object-store I/O. */
+    public static byte[] preparedMetadata(RssSource source, RawFeed feed) throws BronzeStorageException {
+        if (source == null || feed == null || !source.sourceId().equals(feed.sourceId())) {
+            throw new BronzeStorageException(VALIDATION, VALIDATE, null);
+        }
+        byte[] payload = feed.body();
+        return metadata(source, feed, BronzeKeys.forFeed(feed).payload(), payload.length, sha256(payload));
+    }
 
     public S3BronzeStorage(S3Client client, String bucket) {
         this.client = Objects.requireNonNull(client, "client");
@@ -73,7 +82,7 @@ public final class S3BronzeStorage implements BronzeStorage {
         }
     }
 
-    private byte[] metadata(RssSource source, RawFeed feed, String key, int length, String sha)
+    private static byte[] metadata(RssSource source, RawFeed feed, String key, int length, String sha)
             throws BronzeStorageException {
         var fields = new LinkedHashMap<String, Object>();
         fields.put("schemaVersion", 1);
@@ -88,7 +97,7 @@ public final class S3BronzeStorage implements BronzeStorage {
         fields.put("payloadSha256", sha);
         fields.put("payloadKey", key);
         try {
-            return json.writeValueAsBytes(fields);
+            return JSON.writeValueAsBytes(fields);
         } catch (JsonProcessingException failure) {
             throw new BronzeStorageException(PERSISTENCE, SERIALIZE, failure);
         }
