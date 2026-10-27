@@ -1,12 +1,15 @@
-# E5 D1 — managed RSS fetch and private journal
+# E5 D1/D2 — managed RSS journal and verified Bronze receipts
 
 Status: **Partially implemented, internal checkpoint — October 26, 2026**, under
 [issue #49](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/issues/49).
 This implements the accepted [RSS journal protocol](../architecture/durable-execution.md#rss-journal-and-recovery-protocol),
 [ADR 0001](../adr/0001-rss-raw-ingestion-contract.md), [ADR 0002](../adr/0002-bronze-object-storage.md)
 and [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md).
-It does not enable managed Content dispatch or implement Bronze PUT, Silver, Gold, Content publication,
-activation, cancellation, retry, scheduling or automatic recovery.
+D2 adds internal fenced Bronze publication, independent object reads and durable receipt confirmation.
+Managed Content remains **Partially implemented**. Production Content dispatch, managed Silver/Gold,
+Content publication, activation, cancellation, retry, scheduling and automatic recovery remain deferred.
+The D1 sections below describe the original fetch checkpoint; the [D2 lifecycle](#d2-storage-and-receipt-lifecycle)
+and validation record describe the extension without changing those journal bytes or native contracts.
 
 ## Lifecycle and authorization
 
@@ -149,9 +152,9 @@ or exactly-once HTTP transport guarantee is implied. A committed intent permits 
 fetch invocation; a lost acknowledgment is not proof that a request did not reach the publisher.
 Existing explicit Reliability recovery remains restricted to its qualified pipeline. D1 introduces
 no Content recovery command, lease takeover or automatic slot release. Keep production Content
-dispatch disabled; qualified Content recovery and D2 storage receipt handling are prerequisites.
+dispatch disabled; qualified Content recovery and the remaining managed processing stages are prerequisites.
 
-## Local validation and reproduction
+## D1 local validation and reproduction (historical)
 
 Use the repository-pinned JDK 21 selection and a disposable PostgreSQL 17.11 image, never an operational
 database. From the repository root, with JAVA_HOME pointing to JDK 21:
@@ -208,7 +211,7 @@ validation used Maven. Development faults found and corrected an endpoint-ID fix
 integer/stamp comparison and acknowledgment-proxy leakage between test cases. Production endpoint
 immutability and database foreign-key guards were preserved.
 
-## Changed file inventory
+## D1 changed file inventory (historical)
 
 ```text
 .github/ci/tests/test_policy.py
@@ -230,16 +233,241 @@ services/content-api/src/test/java/platform/contentapi/execution/RssFetchTestSup
 services/content-api/src/test/java/platform/contentapi/management/RssFetchIT.java
 ```
 
-## D2 prerequisites and remaining limits
+## D2 storage and receipt lifecycle
 
-D2 must reopen this exact journal against its committed database reference, resolve the original frozen
-Bronze binding/credentials, commit STORE_BRONZE intent and use the identical original RawFeed and prepared
-metadata through existing storage semantics. It must independently verify exact keys/objects and
-reconcile receipt acknowledgments. Neither a current source URI nor a newly fetched response can replace
-lost evidence. Complete orphans require explicit process/evidence qualification; D1 provides no adoption.
+Acceptance requires a committed D1 reference; unchanged journal bytes, original RawFeed identity and
+frozen source/storage linkage; one durable storage authorization; actual bounded reads of both objects;
+an atomic fenced receipt/stage/audit checkpoint; and no refetch, implicit repair or downstream execution.
+The package-private RssBronzeExecution adapter is internal acceptance wiring, with no production caller,
+HTTP endpoint, worker flag or operator retry command. WorkerExecutionCapability remains Reliability-only.
 
-Manual retention is required: private journals contain original publisher bytes and provenance. Keep
-the CONTROL volume persistent and restricted; do not copy it into public artifacts/logs or prune active,
-unresolved or referenced evidence. No automatic retention, backup/restore, recovery, disk quota or
-Content activation is supplied. Full Reliability native/Spark regression and hosted D1 CI are separate
-from the focused local metadata/supervision regression; no new end-to-end Content claim is made.
+```mermaid
+flowchart LR
+  d1[Committed verified D1 journal] --> reopen[Revalidate frozen source/runtime/storage and exact evidence]
+  reopen --> intent[Atomic STORE_BRONZE INTENT and BRONZE_WRITING]
+  intent --> auth[One launch authorization and supervised fixed Java child]
+  auth --> get[Bounded GET inspection of original two keys]
+  get -->|both proven absent| put[Existing S3BronzeStorage original RawFeed write]
+  get -->|exact pair| verify[Fresh independent GET verification]
+  put --> verify
+  get -->|partial/conflict/unavailable| blocked[Retain evidence and occupied ownership]
+  verify --> anchor[Read-back of private result and verification anchor]
+  anchor --> receipt[Atomic BRONZE_VERIFIED receipt + VERIFIED stage + audit]
+  receipt --> stop[Stop before managed Silver/Gold; run remains RUNNING]
+```
+
+The parent resolves the captured revision/endpoint, immutable original fetch runtime/JAR hashes and
+the exact frozen BRONZE binding. A newer source revision is never substituted. A separate immutable
+bronzeRuntimeVersion=1 profile has exactly adapter (fixed to platform.ingestion.managed.ManagedBronze),
+fetchRuntimeId, fetchRuntimeSha256, runProfileId, runProfileSha256, deploymentSha256, controlBindingId,
+storageBindingId and storageBindingSha256. Its CONTROL and BRONZE associations must match the installation
+and exact binding bytes. The original deployment/classpath remains authoritative. No new dependency,
+migration, configurable command or alternative S3 client is introduced.
+
+The accepted importBronzeVersion=1 binding supplies only endpoint, region, bucket and credentialsFile.
+The existing LocalS3 restrictions remain: explicit HTTP loopback endpoint/port, no user info, query,
+fragment or non-root path; explicit static credentials; no ambient credential chain or proxy; path-style
+SDK requests, maxAttempts=1, and existing 5/10/30/20-second connection/acquisition/call/attempt bounds.
+The private canonical credentials file must be owner-only 0600, bounded to 8 KiB, with exactly accessKey
+and secretKey. Bytes/hash/file stamp are rechecked; no secrets enter commands, SQL, public audit or
+stdout. The child has the existing restricted environment and 128 MiB heap. The supervisor allows at
+most 180 seconds for the bounded sequence of SDK calls, rejects descendants and checks runtime,
+host guard, evidence and database authority on the existing five-second heartbeat.
+
+The existing coordinator locks, exact worker/attempt/epoch/versions, controls and attempt deadline fence
+every authorization and checkpoint. Intent changes FETCH_JOURNALED to BRONZE_WRITING. A prior storage
+intent for that ingestion or source ordinal in any attempt vetoes another invocation, including after
+an unknown acknowledgment. Command binding consumes authorization once. PostgreSQL transactions do
+not encompass object I/O. A database epoch cannot stop an already-issued S3 request; loss of authority
+stops further managed authorization/checkpointing and retains the occupied slot for qualified review.
+
+## D2 exact objects and private receipt evidence
+
+The fixed child reopens D1 using its committed descriptor, completion hash/stamp, strict membership and
+file identities, then delegates RawFeed reconstruction and exact metadata comparison to ManagedRssFetch.
+It never calls HttpFeedFetcher. The unchanged BronzeKeys and S3BronzeStorage preserve original UUID,
+nanosecond Instant text, keys, metadata serialization, content and overwrite rules. D1 files remain
+byte-for-byte unchanged, including mtimes/inodes. No native analytical output is created or modified.
+
+BronzeObjectVerifier independently GETs both original keys using the existing LocalS3 factory. Fresh
+clients perform read-back after writing and a second complete confirmation for an exact pair. It checks
+headers, exact body bytes, length and SHA-256 against original payload/metadata, using an 8 KiB read
+buffer, the original 5 MiB/64 KiB bounds and abort-on-mismatch to avoid draining oversized responses.
+Content-Encoding must be absent/empty. Metadata must have application/json. The writer still sends
+application/octet-stream for payload; real pinned SeaweedFS 4.48 returns application/xml for payload.xml.
+Its [GET implementation](https://github.com/seaweedfs/seaweedfs/blob/4.48/weed/s3api/s3api_object_handlers.go#L2185)
+falls back to the filename MIME when stored MIME is absent. D2 accepts only these two payload read types
+and retains the actual observed type in the receipt. It never alters native PUT headers or uses a
+response-content-type override. Other types, encodings, lengths or bytes are conflicts.
+
+New evidence is separate from the original journal:
+
+```text
+runs/<run>/attempts/<original attempt>/store-bronze/<checkpoint>/
+  command.json
+  evidence.json
+  result.json
+  verified.json
+```
+
+Each file is bounded to 64 KiB and uses existing exclusive 0600 writes/read-back, private 0700 directory,
+no-symlink/hard-link checks and file forcing. verified.json anchors checkpoint/command/evidence/result
+hashes plus observed child PID/start and clean exit; the terminal stage stores its exact hash/address.
+No directory fsync or additional power-loss guarantee is claimed. An incomplete anchor is not completion.
+
+The strict receiptVersion=1 object contains original runId, attemptId, sourceId, revision,
+capturedConfigSha256, ingestionId, ingestedAt, payloadByteLength, payloadSha256, journalSha256,
+storageBindingId, storageBindingSha256, bucket, expected (original keys/metadata length/hash),
+payloadContentType and metadataContentType. It contains neither response bodies nor credential bytes.
+One short transaction CASes the original BRONZE_WRITING row with null receipt to BRONZE_VERIFIED,
+stores canonical receipt_bytes and metadata_sha256, verifies the stage and appends audit. Existing
+V1–V7 migrations are unchanged. Application writes are write-once; existing DB guards alone do not
+make every receipt column immutable against direct administrative SQL. Replay additionally checks
+the canonical receipt against original evidence and the immutable terminal stage/private hash anchor;
+tampering is rejected rather than adopted.
+
+## D2 recovery classifications and boundaries
+
+Read-only inspection uses a fresh INSPECT_BRONZE private namespace and the same fixed child in GET-only
+mode. It accepts no Owner token, changes no receipt or object, refreshes no authority and cannot qualify
+writer quiescence. It reports facts, not permission to retry. Repeated store calls cannot launch again.
+
+| Observation | D2 outcome |
+| --- | --- |
+| Both exact objects | Read-only confirmation; a fresh one-shot stage can verify this existing pair without PUT. A committed receipt is confirmed only with its immutable original stage anchor. |
+| Exact NoSuchKey for both keys | ABSENT; a fresh original authorization may publish. Following a consumed intent, inspection only classifies eligibility for future explicit storage-only retry. |
+| Matching payload, exact NoSuchKey metadata | PAYLOAD_ONLY; no PUT by D2. ADR 0002 permits completion only under additional explicit retry authority, which is not activated here. |
+| Metadata only, wrong bytes/type/length/encoding or inconsistent pair | METADATA_ONLY/CONFLICT; no repair, overwrite, delete or adoption. |
+| Generic HTTP 404/NotFound, NoSuchBucket, authentication failure, timeout or I/O error | UNAVAILABLE, never proof of absence; no writes based on that observation. |
+| Crash before first PUT or between PUTs | Keep committed intent, partial files and occupied ownership. Independent inspection distinguishes ABSENT/PAYLOAD_ONLY; it does not relaunch. |
+| Both PUTs complete, read-back unavailable, or crash before receipt transaction | Exact pair may be inspected, but no verified receipt is invented or automatically finalized. Explicit Content reconciliation remains deferred. |
+| Metadata PUT acknowledgment lost, independent GETs exact in the original authorized child | Verify and checkpoint once from actual reads; no repeated PUT. |
+| Receipt transaction acknowledgment lost | Stop further authorization. Read-only inspection confirms the committed receipt/stage facts and original anchor; no second fetch, PUT or receipt rewrite. |
+| Receipt transaction rolls back, or PostgreSQL unavailable | No partial receipt/stage/audit success. Retain original stage/slot; restore DB access for inspection, never infer rollback from a transport error. |
+| Stale worker/epoch/version, host guard loss, changed journal/credentials/runtime/storage binding | Reject authorization/checkpoint; preserve earlier evidence and ownership. Already-issued object effects remain an external ambiguity. |
+
+When ownership is current and DB access works, conflict/partial/unavailable results mark the stage
+UNKNOWN and run RECOVERY_REQUIRED while retaining the active attempt. An interruption or lost DB/guard
+may leave its last committed INTENT/RUNNING state instead. Neither outcome releases uncertain ownership.
+Receipt success alone also leaves the Content run RUNNING with no stage_artifacts or publication.
+
+## D2 local validation and reproduction
+
+With the repository JDK 21 selected, Docker available and no operational database/storage selected:
+
+```sh
+mvn -B -ntp -f ingestion/pom.xml verify
+python3 scripts/test-rss-fetch-postgres.py --offline --bronze
+python3 scripts/test-rss-fetch-postgres.py --offline --bronze --regression
+python3 -I -B -m unittest discover -s .github/ci/tests -v
+actionlint .github/workflows/ci.yml
+npm run check
+git diff --check
+```
+
+The extended harness owns uniquely named PostgreSQL 17.11 and SeaweedFS 4.48 containers, digest-pinned
+to the existing local infrastructure images. Synthetic random credentials, bucket ddip-d2 and random
+host loopback ports are private to the run. It uses actual SDK bucket reads for readiness, restarts
+PostgreSQL independently for D1/D2 receipt tests, and removes only its owned containers/volumes in finally.
+--bronze --case METHOD selects one D2 method; omitting --bronze preserves D1 behavior. --regression
+adds all Content API units and existing persistence/coordination/control plus all D1/D2 cases. It does
+not execute Spark or the native processing chain. No Bronze production dispatch is enabled for testing.
+
+The real storage suite uses synthetic exact RSS bytes, the actual Java child, a signed-request-preserving
+HTTP fault proxy in front of real SeaweedFS, and a direct SDK fixture for seeding/snapshot inspection.
+Only test code can seed conflicting pairs. Faults cover intent/authorization/child/read-back/checkpoint
+and commit-ack boundaries, each PUT boundary, dropped PUT acknowledgment, DB outages/restart/rollback,
+stale/concurrent owners, lost guard, changed private evidence/credentials and receipt/object tampering.
+No production fault flags or test helper classes enter the child classpath.
+
+Validation on October 26, 2026 used macOS 27.0.1/ARM64, Oracle GraalVM JDK 21.0.7+8.1, Maven 3.10.0,
+PostgreSQL 17.11-bookworm and SeaweedFS 4.48 with the pinned digests above. Maven ran offline with
+-Daether.syncContext.named.factory=noop for the local cache environment. The local interpreter was
+Python 3.9.6 for harness/policy orchestration; no pinned Spark runtime is claimed by these tests.
+
+| Executed validation | Actual result | Measured local elapsed |
+| --- | --- | --- |
+| Ingestion Maven verify | 73 cases: all 55 earlier cases plus 18 new verifier cases; zero failures/errors/skips | Maven 4.185s |
+| Scoped stable regression, --offline --bronze --regression | 326 Content API units plus 229 PostgreSQL cases: Persistence 28, WorkerCoordination 56, ControlAdmission 52, D1 51, then-current D2 42; all passed, no skips; actual separate D1/D2 database restarts | Harness 204.18s; Maven 3m21s; D2 78.37s |
+| Final focused D2 pass after metadata-digest guard | 43 runtime/guard/supervisor units and all 43 D2 cases; zero failures/errors/skips; actual database restart | Harness 92.59s; Maven 1m26s; D2 79.71s |
+| CI policy/gate/workflow checks | All 22 passed, including 32,768 gate combinations, new shared-helper selection and pinned storage isolation/cleanup | Python 2.346s |
+| Actionlint 1.7.12 | Workflow syntax/expressions/dependencies passed | No performance claim |
+| Node.js 24.19.0 npm run check | All 52 Markdown files/local links and repository hygiene passed | No performance claim |
+| git diff --check and scope review | Passed; no staged changes; native writer/keys/LocalS3, accepted ADRs, migrations and production worker capability unchanged | No performance claim |
+
+The regression and focused counts overlap. The additional final case rejects tampering with the ledger
+metadata digest; the focused pass rechecked every D2 case after this final guard. The broad pass covers
+existing Reliability metadata, admission, fencing, controls, import/process/recovery unit boundaries;
+full native Reliability execution/recovery and expensive Spark suites were not rerun. CI retains all
+those suites. Hosted D2 execution remains pending. These timings measure local correctness runs, not
+hosted CI improvement, throughput or capacity. The initial sandboxed ingestion attempt could not bind
+its existing loopback fixtures; the same command passed once local socket access was allowed. Earlier
+development fixes canonicalized the test credential path and accounted for the real SeaweedFS MIME
+fallback; production endpoint and native PUT policies were preserved. IntelliJ had no runnable
+configuration for the new integration test, so runtime evidence came from Maven and real services.
+
+The happy-path real SeaweedFS assertions independently read the ten original bytes (base64
+PGZlZWQ+AP8NCg==, SHA-256 7d1b649c3a062baf04233412d57c5c792cb0236a0638cdb61f2584e6e4bbb0e7),
+compare stored metadata byte-for-byte with D1 metadata.json, verify UUID/Instant and the stored metadata
+digest, observe exactly two PUTs and at least eight GETs, then repeat read-only receipt confirmation.
+Backend snapshots include actual Base64/length/type/ETag/last-modified values and remain identical across
+replay. Journal file hashes/mtimes/inodes and native sentinel snapshots are unchanged; RSS retrieval count
+remains one and DELETE count zero. A pre-existing exact pair requires zero PUTs. Receipt bytes and object
+snapshots survive an actual PostgreSQL restart. Conflicting pairs and partial or unavailable states never
+produce a verified receipt or trigger repair. The real storage test fixture is excluded from the
+production child classpath.
+
+### D2 exact changed files
+
+The checkout was on main at merged D1 commit d45a814; no branch switch, staging, commit, push, PR or
+GitHub mutation was performed. The expected feature/e5-d2-managed-bronze-receipts branch still needs
+owner-managed preparation before any publication. All changes are uncommitted:
+
+```text
+.github/ci/classify.py
+.github/ci/tests/test_policy.py
+.github/workflows/ci.yml
+README.md
+docs/architecture/durable-execution.md
+docs/operations/ci.md
+docs/operations/managed-rss-fetch.md
+ingestion/src/main/java/platform/ingestion/bronze/BronzeObjectVerifier.java
+ingestion/src/main/java/platform/ingestion/managed/ManagedBronze.java
+ingestion/src/test/java/platform/ingestion/bronze/BronzeObjectVerifierTest.java
+ingestion/src/test/java/platform/ingestion/managed/BronzeFixture.java
+scripts/test-rss-fetch-postgres.py
+services/content-api/pom.xml
+services/content-api/src/main/java/platform/contentapi/execution/PreflightFiles.java
+services/content-api/src/main/java/platform/contentapi/execution/RssBronzeContext.java
+services/content-api/src/main/java/platform/contentapi/execution/RssBronzeExecution.java
+services/content-api/src/main/java/platform/contentapi/execution/RssFetchExecution.java
+services/content-api/src/main/java/platform/contentapi/execution/RssFetchRuntime.java
+services/content-api/src/main/java/platform/contentapi/execution/WorkerRepository.java
+services/content-api/src/test/java/platform/contentapi/execution/RssBronzeTestSupport.java
+services/content-api/src/test/java/platform/contentapi/management/BronzeFaultProxy.java
+services/content-api/src/test/java/platform/contentapi/management/RssBronzeIT.java
+services/content-api/src/test/java/platform/contentapi/management/RssFetchFixtures.java
+services/content-api/src/test/java/platform/contentapi/management/RssFetchIT.java
+```
+
+No consequential departure from ADR 0002/0010 required a new ADR. The narrow SeaweedFS read-MIME mapping
+is an observed adapter compatibility rule; the original writer, metadata serializer, key scheme and
+standalone Content pipeline are unchanged. Owner-managed next steps are to prepare the intended branch,
+review the uncommitted patch and run hosted CI after publication, retaining existing branch protection.
+Do not activate production Content dispatch from this checkpoint.
+
+## D3 prerequisites and remaining limits
+
+Managed Content remains **Partially implemented**. D3 must consume only these original verified receipt
+keys and qualify Silver/retained-history evidence before any later Gold/Content work. Internal storage
+acceptance is not complete worker-managed RSS→Silver→Gold processing. Production Content dispatch,
+operator retry activation, orphan receipt finalization, explicit Content writer-quiescence qualification,
+automatic recovery, cancellation and scheduling remain deferred. A matching payload-only orphan is
+classified but cannot yet be resumed by a managed operator action. Existing Reliability recovery remains
+pipeline-restricted; no Content takeover is introduced.
+
+Keep PostgreSQL/SeaweedFS/CONTROL persistent and restricted. Private journals contain original publisher
+bytes/provenance; do not expose them in public artifacts/logs or prune active, unresolved or referenced
+evidence. Retention, capacity management and qualified recovery remain manual. No automatic cleanup,
+backup/restore certification, distributed fencing, filesystem quota or end-to-end power-loss durability
+is supplied. Hosted CI and full native Spark processing are separate from the scoped local evidence.

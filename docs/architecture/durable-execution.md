@@ -2,7 +2,7 @@
 
 Status: **Accepted — October 20, 2026**, with the Stage A.1 refinements, under [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md). The owner accepted additive [ADR 0011](../adr/0011-artifact-import-maintenance-ownership.md) on October 21. Architecture acceptance alone passes no E5 test group. Current implementation and authorization are recorded below; earlier checkpoint status paragraphs and counts remain historical. Accepted ADRs and native data contracts are unchanged.
 
-Current checkpoint: [D1 managed RSS fetch and private journaling](../operations/managed-rss-fetch.md) implements an internal fenced fetch/checkpoint only; managed Content remains **Partially implemented** with dispatch and the remaining pipeline deferred. The fixed Reliability worker remains active with one pinned profile per startup. [C3c.4 controlled operational recovery](#c3c4-controlled-operational-recovery) connects C3a–C3c.3 admission, occupied handoff, guarded bootstrap, independent verification and transactional finalization through a trusted local non-web operator command. Fresh explicit process/evidence review is required before handoff and finalization. Its packaged acceptance and complete backend regression evidence are recorded below. Execution Recovery remains **Partially implemented**; Content execution, cancellation, guarded retry, automatic recovery and Operations UI remain deferred. Earlier checkpoint status paragraphs and counts are historical.
+Current checkpoint: [D1/D2 managed RSS journal and Bronze receipts](../operations/managed-rss-fetch.md#d2-storage-and-receipt-lifecycle) implement internal fenced fetch/storage stages and independent read-only receipt confirmation. Managed Content remains **Partially implemented**; managed Silver/Gold and production Content dispatch remain deferred. The fixed Reliability worker remains active with one pinned profile per startup. [C3c.4 controlled operational recovery](#c3c4-controlled-operational-recovery) connects C3a–C3c.3 admission, occupied handoff, guarded bootstrap, independent verification and transactional finalization through a trusted local non-web operator command. Fresh explicit process/evidence review is required before handoff and finalization. Its packaged acceptance and complete backend regression evidence are recorded below. Execution Recovery remains **Partially implemented**; Content execution, cancellation, guarded retry, automatic recovery and Operations UI remain deferred. Earlier checkpoint status paragraphs and counts are historical.
 
 ## Boundary and invariants
 
@@ -3107,3 +3107,43 @@ for broader Execution Recovery.
 - [services/content-api/src/test/java/platform/contentapi/execution/OperatorRecoveryIT.java](../../services/content-api/src/test/java/platform/contentapi/execution/OperatorRecoveryIT.java)
 - [services/content-api/src/test/java/platform/contentapi/execution/RecoveryAcknowledgmentProxy.java](../../services/content-api/src/test/java/platform/contentapi/execution/RecoveryAcknowledgmentProxy.java)
 - [services/content-api/src/test/java/platform/contentapi/execution/RuntimeRoleTest.java](../../services/content-api/src/test/java/platform/contentapi/execution/RuntimeRoleTest.java)
+
+## E5 D2 — internal managed Bronze storage and receipt checkpoint
+
+D2 extends the merged D1 journal under accepted ADRs 0001/0002/0010. Managed Content remains
+**Partially implemented** with production dispatch disabled. The [D1/D2 operations guide](../operations/managed-rss-fetch.md#d2-storage-and-receipt-lifecycle)
+records the exact lifecycle, private evidence/receipt schemas, replay matrix, local measurements and
+changed files. This implementation does not alter the accepted storage contract or add a migration.
+
+The committed D1 journal, captured revision/endpoint, original RawFeed UUID/Instant/bytes and frozen
+CONTROL/BRONZE/runtime bindings must revalidate before a STORE_BRONZE intent. Existing PostgreSQL
+coordination CASes the ledger to BRONZE_WRITING and consumes one exact worker/attempt/epoch launch.
+A fixed prebuilt Java child uses the existing LocalS3/S3BronzeStorage implementation. Actual bounded
+GETs independently compare both original keys, all original payload/metadata bytes, lengths/hashes and
+applicable headers. Transactions remain separate from S3 I/O. Only independently verified evidence and
+current ownership permit one atomic receipt + VERIFIED stage + audit commit. The run is not successful,
+no analytical artifact is registered and no Silver/Gold/Content processing or activation follows.
+
+Read-only inspection can confirm a committed receipt after lost acknowledgment from actual object
+reads and the immutable stage/private anchor. It does not reconstruct an Owner token or rewrite a
+receipt. Exact NoSuchKey for both keys classifies absence; matching payload-only state identifies the
+ADR 0002 retry case. Neither classification activates storage retry after a consumed intent. Metadata-only,
+mismatching or unavailable evidence cannot become success. A complete pair without a committed receipt
+remains unconfirmed pending explicit process/evidence-qualified Content reconciliation. Uncertain stages
+retain occupied ownership, including DB/guard loss and crashes before/among/after PUTs. No automatic
+refetch, orphan adoption, repair, delete, takeover or slot release is introduced.
+
+The original D1 journal remains unchanged. New bounded private STORE_BRONZE/INSPECT_BRONZE sidecars anchor
+child identity, command/result/evidence hashes and observed clean exit. Receipts retain exact original
+identity/configuration/keys/hash linkage and actual read Content-Type. The existing writer still emits
+binary payload MIME; pinned SeaweedFS may infer application/xml for payload.xml on GET. Verification
+accepts only this documented mapping or the original binary MIME, requires exact JSON metadata MIME and
+fails other mismatches. Existing receipt columns are write-once through the fenced application CAS;
+immutable terminal-stage hashes plus fresh evidence detect direct administrative receipt/digest changes.
+No directory-fsync, end-to-end power-loss or distributed object fencing claim is added.
+
+D3 still requires exact verified Bronze receipt selection and managed Silver qualification. Production
+Content wiring, explicit storage-only retry authority, orphan receipt finalization and Content recovery
+qualification remain deferred. Reliability production dispatch/recovery and standalone Content/native
+contracts remain unchanged. Hosted D2 validation and full native Spark execution are separate from the
+scoped local D1/D2, metadata, supervision and control regression recorded in the guide.

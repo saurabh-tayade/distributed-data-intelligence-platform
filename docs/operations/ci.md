@@ -4,8 +4,8 @@ The [CI workflow](../../.github/workflows/ci.yml) classifies pull requests to ma
 backend suites selected by a conservative dependency map. Every push to main runs full regression.
 There are no workflow-level path filters: required contexts are created for every supported event.
 Documentation/hygiene and frontend validation still run on every event. Classification preserves native
-contracts, existing suite commands, action/dependency pins, resource limits and timeouts. D1's added
-PostgreSQL test and prebuilt-adapter preparation are described below.
+contracts, existing suite commands, action/dependency pins, resource limits and timeouts. D1/D2's added
+PostgreSQL tests, prebuilt adapters and isolated storage are described below.
 
 ## Acceptance criteria and workflow graph
 
@@ -46,10 +46,14 @@ flowchart LR
 | documentation | Existing Markdown/link/hygiene checks plus focused CI policy tests | 5 minutes |
 | frontend | Existing typecheck, lint, component tests and production build | 10 minutes |
 
-D1 adds RssFetchIT to the existing PostgreSQL Failsafe profile without removing any earlier selector.
-The content_postgres job now packages the ingestion JAR/dependencies before its existing verification
-command so managed fetch tests execute a prebuilt adapter. Each job still owns its own workspace.
-See [managed RSS validation](managed-rss-fetch.md) for the local harness and actual restart coverage.
+D1/D2 add RssFetchIT and RssBronzeIT to the existing PostgreSQL Failsafe profile without removing any
+earlier selector. The content_postgres job packages the ingestion JAR/dependencies before its existing
+verification command, then starts the same digest-pinned SeaweedFS 4.48 mini used by local D2 acceptance.
+Its pre-created test bucket, explicit synthetic credentials and loopback port 8333 are isolated to that
+job. The tests wait for an actual SDK bucket read; an always-running cleanup removes the owned container
+and anonymous volumes. PostgreSQL services, native fixtures, verification commands and timeouts remain
+unchanged. Each job owns its workspace. See [managed RSS/Bronze validation](managed-rss-fetch.md) for
+the local harness and actual restart coverage. Hosted execution of the new storage setup is pending.
 
 The five backend suites depend only on changes and remain parallel with one another. Fixtures are
 never shared between job workspaces. The aggregate has no checkout, installation or network dependency.
@@ -64,7 +68,8 @@ adds no backend suite unless a shared rule also applies.
 | Category | Paths | Backend suites required and reasoning |
 | --- | --- | --- |
 | Documentation/repository hygiene | Explicit module/root READMEs, AGENTS.md, .editorconfig, .gitignore, .markdownlint-cli2.mjs, known placeholders; docs Markdown and image/PDF assets | None; these are not runtime inputs. Unknown executable/config files under docs still select all. |
-| Java ingestion | ingestion/src/test/java; run-batch.sh, test-run-batch.sh, test-ingestion.sh | Ingestion; these checks are not imported by native suites. |
+| Java ingestion | ingestion/src/test/java, except BronzeFixture below; run-batch.sh, test-run-batch.sh, test-ingestion.sh | Ingestion; these checks are not imported by native suites. |
+| Shared Bronze acceptance helper | ingestion/src/test/java/platform/ingestion/managed/BronzeFixture.java | Ingestion and PostgreSQL; RssBronzeIT executes this test-only SDK helper against actual SeaweedFS. |
 | Java ingestion contracts/fixtures | Other ingestion paths, including production Java and ingestion/src/test/resources/feeds | All five; Bronze/Silver consume raw contracts and feed fixtures, and Gold fixture generation calls test_bronze.snapshot, which reads the feed resources. |
 | Python/Spark processing | processing source, tests and fixture helpers | All four native suites; PostgreSQL invokes processing fixtures and native CLIs, while JDBC and HTTP generate Gold from shared Python helpers. |
 | JDBC compatibility | services/api source/tests, except the shared fixture generator directory | JDBC. |
@@ -417,5 +422,6 @@ hygiene successfully; git diff --check passed. A parsed YAML comparison against 
 confirmed every existing suite step, Maven profile, pin, timeout, environment and service setting is
 unchanged. Documentation adds only the focused policy-test step, and frontend is identical.
 No application regression, hosted Phase 2 run or performance benchmark was executed for that D02
-configuration change. Subsequent [D1 validation](managed-rss-fetch.md#local-validation-and-reproduction)
-records its added ingestion/Content API regression and current dependency cases separately.
+configuration change. Subsequent [D1 validation](managed-rss-fetch.md#d1-local-validation-and-reproduction-historical)
+and [D2 validation](managed-rss-fetch.md#d2-local-validation-and-reproduction) record their added
+ingestion/Content API regressions, real storage evidence and current dependency cases separately.
