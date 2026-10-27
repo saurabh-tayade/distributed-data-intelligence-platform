@@ -16,13 +16,16 @@ final class RssFetchRuntime {
     private final InstallationHostGuard guard;private final JsonNode configuration;private final String digest;
     private RssFetchRuntime(InstallationHostGuard guard,JsonNode c,String hash){this.guard=guard;configuration=c.deepCopy();digest=hash;}
     static RssFetchRuntime load(JdbcTemplate jdbc,ManagementTransactions tx,InstallationHostGuard guard,WorkerRepository.Owner owner,String id,JsonNode frozen) {
+        return load(jdbc,tx,guard,owner.worker().profileId(),owner.worker().profileDigest(),owner.worker().deploymentDigest(),id,frozen);
+    }
+    static RssFetchRuntime load(JdbcTemplate jdbc,ManagementTransactions tx,InstallationHostGuard guard,String profileId,String profileDigest,String deploymentDigest,String id,JsonNode frozen) {
         try {
             need(id!=null && id.matches("[A-Za-z0-9_-]{1,128}"),RUNTIME_MISMATCH);
             var rows=tx.required(()->jdbc.queryForList("SELECT configuration_bytes,configuration_sha256 FROM ddip_management.execution_profiles WHERE profile_id=?",id));need(rows.size()==1,RUNTIME_MISMATCH);
             String hash=(String)rows.getFirst().get("configuration_sha256");var c=FrozenRunSelection.canonical((byte[])rows.getFirst().get("configuration_bytes"),hash,65536);
             SourceJson.fields(c,"rssFetchRuntimeVersion","pipeline","runProfileId","runProfileSha256","deploymentSha256","javaHome","manifest","controlBindingId","testEndpoint","httpTimeoutMillis");
-            need(c.get("rssFetchRuntimeVersion").isIntegralNumber() && c.get("rssFetchRuntimeVersion").canConvertToInt() && c.get("rssFetchRuntimeVersion").intValue()==1 && c.get("pipeline").stringValue().equals("CONTENT_RSS_V1") && c.get("runProfileId").stringValue().equals(owner.worker().profileId()) && c.get("runProfileSha256").stringValue().equals(owner.worker().profileDigest()) && c.get("deploymentSha256").stringValue().equals(owner.worker().deploymentDigest()) && SourceJson.sha(SourceJson.canonical(c.get("manifest"))).equals(owner.worker().deploymentDigest()),RUNTIME_MISMATCH);
-            need(frozen.get("pipeline").stringValue().equals("CONTENT_RSS_V1") && frozen.get("executionProfile").get("configurationSha256").stringValue().equals(owner.worker().profileDigest()),RUNTIME_MISMATCH);
+            need(c.get("rssFetchRuntimeVersion").isIntegralNumber() && c.get("rssFetchRuntimeVersion").canConvertToInt() && c.get("rssFetchRuntimeVersion").intValue()==1 && c.get("pipeline").stringValue().equals("CONTENT_RSS_V1") && c.get("runProfileId").stringValue().equals(profileId) && c.get("runProfileSha256").stringValue().equals(profileDigest) && c.get("deploymentSha256").stringValue().equals(deploymentDigest) && SourceJson.sha(SourceJson.canonical(c.get("manifest"))).equals(deploymentDigest),RUNTIME_MISMATCH);
+            need(frozen.get("pipeline").stringValue().equals("CONTENT_RSS_V1") && frozen.get("executionProfile").get("configurationSha256").stringValue().equals(profileDigest),RUNTIME_MISMATCH);
             need(c.get("controlBindingId").stringValue().equals(guard.binding().id()) && c.get("testEndpoint").isBoolean() && c.get("httpTimeoutMillis").isIntegralNumber() && c.get("httpTimeoutMillis").canConvertToInt() && c.get("httpTimeoutMillis").intValue()>0 && c.get("httpTimeoutMillis").intValue()<=30000,RUNTIME_MISMATCH);
             need(tx.required(()->jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.execution_profile_storage p JOIN ddip_management.storage_bindings b USING(binding_id) WHERE p.profile_id=? AND b.binding_id=? AND b.installation_id=? AND b.role='CONTROL' AND b.configuration_bytes=? AND b.configuration_sha256=?)",Boolean.class,id,guard.binding().id(),guard.binding().installationId(),guard.binding().descriptor(),guard.binding().digest())),RUNTIME_MISMATCH);
             boolean control=false;
@@ -61,7 +64,9 @@ final class RssFetchRuntime {
             need(test?Set.of("127.0.0.1","[::1]").contains(host):host.matches("[a-z0-9][a-z0-9.-]*\\.[a-z][a-z0-9.-]*") && !host.endsWith(".localhost") && !host.endsWith(".local") && !host.endsWith(".internal"),RUNTIME_MISMATCH);
         }catch(PreflightFailure ex){throw ex;}catch(RuntimeException ex){throw new PreflightFailure(RUNTIME_MISMATCH);}
     }
-    List<String> command(Path descriptor){var cp=new ArrayList<String>();for(var entry:configuration.get("manifest").get("classpath"))cp.add(entry.get("path").stringValue());return List.of(Path.of(configuration.get("javaHome").stringValue(),"bin/java").toString(),"-Xmx128m","-cp",String.join(File.pathSeparator,cp),MAIN,descriptor.toString());}
+    List<String> command(Path descriptor){return command(descriptor,MAIN);}
+    List<String> bronzeCommand(Path descriptor){return command(descriptor,"platform.ingestion.managed.ManagedBronze");}
+    private List<String> command(Path descriptor,String main){var cp=new ArrayList<String>();for(var entry:configuration.get("manifest").get("classpath"))cp.add(entry.get("path").stringValue());return List.of(Path.of(configuration.get("javaHome").stringValue(),"bin/java").toString(),"-Xmx128m","-cp",String.join(File.pathSeparator,cp),main,descriptor.toString());}
     Map<String,String> environment(){return Map.of("PATH","/usr/bin:/bin","TZ","UTC","LANG","C.UTF-8");}
     String digest(){return digest;}
     String javaRuntime(){return configuration.get("manifest").get("javaRuntime").stringValue();}

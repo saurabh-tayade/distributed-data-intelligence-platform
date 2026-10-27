@@ -38,6 +38,9 @@ def area(path):
         return "documentation", frozenset()
     if path.startswith("frontend/"):
         return "frontend", frozenset()
+    if path == "ingestion/src/test/java/platform/ingestion/managed/BronzeFixture.java":
+        # This test-only SDK helper is also executed by the PostgreSQL/SeaweedFS suite.
+        return "java_ingestion", frozenset({"ingestion", "content_postgres"})
     if path.startswith("ingestion/src/test/java/") or path in {
             "scripts/run-batch.sh", "scripts/test-run-batch.sh", "scripts/test-ingestion.sh"}:
         return "java_ingestion", frozenset({"ingestion"})

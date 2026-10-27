@@ -153,7 +153,7 @@ public final class WorkerRepository {
             var selected=frozen.get("sources");
             require(ordinal<selected.size() && selected.get(ordinal).get("sourceId").stringValue().equals(source) && selected.get(ordinal).get("configurationSha256").stringValue().equals(configSha),RUNTIME_MISMATCH);
             // Source order is frozen at submission. Earlier selected deliveries must be checkpointed.
-            require(jdbc.queryForObject("SELECT count(*) FROM ddip_management.rss_deliveries WHERE run_id=? AND state='FETCH_JOURNALED'",Long.class,owner.runId())==ordinal,WORKER_NOT_READY);
+            require(jdbc.queryForObject("SELECT count(*) FROM ddip_management.rss_deliveries WHERE run_id=?",Long.class,owner.runId())==ordinal,WORKER_NOT_READY);
             long av=owner.attemptVersion();
             if(owner.attemptState().equals("CLAIMED")){
                 exactly(jdbc.update("UPDATE ddip_management.attempts SET state='RUNNING',row_version=row_version+1 WHERE attempt_id=? AND state='CLAIMED' AND row_version=?",owner.attemptId(),av));
@@ -198,7 +198,7 @@ public final class WorkerRepository {
     /** Historical exact-match receipt after an unknown commit; no write, token refresh or orphan adoption. */
     public boolean fetchCheckpointPresent(FetchStage stage,RssJournalFiles.Evidence evidence) {
         return tx.required(()->{
-            var rows=jdbc.queryForList("SELECT d.journal_address,d.journal_descriptor,d.journal_sha256,d.expected_evidence,d.expected_sha256,s.result_sha256 FROM ddip_management.rss_deliveries d JOIN ddip_management.stage_invocations s ON s.attempt_id=d.owning_attempt_id AND s.stage='FETCH_SOURCE' AND s.item_ordinal=? WHERE d.run_id=? AND d.source_id=? AND d.owning_attempt_id=? AND d.state='FETCH_JOURNALED' AND s.state='VERIFIED' AND s.checkpoint_id=?",stage.ordinal(),stage.owner().runId(),stage.source(),stage.owner().attemptId(),stage.checkpoint());
+            var rows=jdbc.queryForList("SELECT d.journal_address,d.journal_descriptor,d.journal_sha256,d.expected_evidence,d.expected_sha256,s.result_sha256 FROM ddip_management.rss_deliveries d JOIN ddip_management.stage_invocations s ON s.attempt_id=d.owning_attempt_id AND s.stage='FETCH_SOURCE' AND s.item_ordinal=? WHERE d.run_id=? AND d.source_id=? AND d.owning_attempt_id=? AND d.state IN ('FETCH_JOURNALED','BRONZE_WRITING','BRONZE_VERIFIED') AND s.state='VERIFIED' AND s.checkpoint_id=?",stage.ordinal(),stage.owner().runId(),stage.source(),stage.owner().attemptId(),stage.checkpoint());
             if(rows.isEmpty())return false;var row=one(rows);
             require(stage.namespace().equals(row.get("journal_address")) && Arrays.equals(evidence.descriptorBytes(),(byte[])row.get("journal_descriptor")) && SourceJson.sha(evidence.descriptorBytes()).equals(row.get("journal_sha256")) && evidence.completionSha().equals(row.get("result_sha256")) && Arrays.equals(evidence.checkpointReference(),(byte[])row.get("expected_evidence")) && SourceJson.sha(evidence.checkpointReference()).equals(row.get("expected_sha256")),RUNTIME_MISMATCH);return true;
         });
@@ -220,6 +220,50 @@ public final class WorkerRepository {
         require(s.authorized()?s.commandSha().equals(row.get("command_sha256")) && (s.namespace()+"/command.json").equals(row.get("command_address")):row.get("command_sha256")==null && row.get("command_address")==null,OWNERSHIP_LOST);
     }
     private static FetchStage nextFetch(FetchStage s,Owner o,String state,boolean authorized){return new FetchStage(o,s.checkpoint(),s.ordinal(),s.source(),s.configSha(),s.commandSha(),s.namespace(),s.version()+1,state,authorized);}
+    record BronzeStage(Owner owner,UUID checkpoint,int ordinal,String source,UUID ingestion,String journalSha,
+                       String commandSha,String namespace,long deliveryVersion,long version,String state,boolean authorized) { }
+    BronzeStage beginBronze(InstallationHostGuard guard,Owner owner,RssBronzeContext context,UUID checkpoint,String commandSha) {
+        held(guard,owner.worker());require(capability.supports("CONTENT_RSS_V1") && owner.attemptState().equals("RUNNING") && context.run.equals(owner.runId()) && context.attempt.equals(owner.attemptId()) && checkpoint!=null && hash(commandSha),WORKER_NOT_READY);
+        frozenContent(guard,owner);UUID ingestion=UUID.fromString(SourceJson.parse(context.descriptor).get("ingestionId").stringValue());
+        String namespace="runs/"+owner.runId()+"/attempts/"+owner.attemptId()+"/store-bronze/"+checkpoint;
+        return ownerTransaction(()->{owned(owner);controls(owner);attemptDeadline(owner);
+            var delivery=one(jdbc.queryForList("SELECT state,row_version,journal_sha256,owning_attempt_id,receipt_bytes FROM ddip_management.rss_deliveries WHERE run_id=? AND source_id=? FOR UPDATE",owner.runId(),context.source));
+            require("FETCH_JOURNALED".equals(delivery.get("state")) && context.deliveryVersion==number(delivery,"row_version") && context.journalSha.equals(delivery.get("journal_sha256")) && owner.attemptId().equals(delivery.get("owning_attempt_id")) && delivery.get("receipt_bytes")==null,OWNERSHIP_LOST);
+            require(jdbc.queryForObject("SELECT count(*) FROM ddip_management.stage_invocations s JOIN ddip_management.attempts a USING(attempt_id) WHERE a.run_id=? AND s.stage='STORE_BRONZE' AND (s.intended_identity=? OR s.item_ordinal=?)",Long.class,owner.runId(),ingestion.toString(),context.ordinal)==0,OWNERSHIP_LOST);
+            jdbc.update("INSERT INTO ddip_management.stage_invocations(attempt_id,stage,item_ordinal,checkpoint_id,state,input_evidence_sha256,intended_identity,intended_namespace) VALUES (?,'STORE_BRONZE',?,?,'INTENT',?,?,?)",owner.attemptId(),context.ordinal,checkpoint,commandSha,ingestion.toString(),namespace);
+            exactly(jdbc.update("UPDATE ddip_management.rss_deliveries SET state='BRONZE_WRITING',row_version=row_version+1 WHERE run_id=? AND source_id=? AND state='FETCH_JOURNALED' AND row_version=? AND receipt_bytes IS NULL",owner.runId(),context.source,context.deliveryVersion));
+            exactly(jdbc.update("UPDATE ddip_management.runs SET current_stage='STORE_BRONZE',row_version=row_version+1 WHERE run_id=? AND current_attempt_id=? AND row_version=? AND state='RUNNING'",owner.runId(),owner.attemptId(),owner.runVersion()));
+            audit(owner.runId(),owner.attemptId(),"STAGE_INTENT",null,"INTENT",null,0L,"ACCEPTED");
+            return new BronzeStage(new Owner(owner.worker(),owner.runId(),owner.attemptId(),owner.runVersion()+1,owner.attemptVersion(),owner.attemptState()),checkpoint,context.ordinal,context.source,ingestion,context.journalSha,commandSha,namespace,context.deliveryVersion+1,0,"INTENT",false);
+        });
+    }
+    BronzeStage authorizeBronze(InstallationHostGuard guard,BronzeStage s) {
+        held(guard,s.owner().worker());return ownerTransaction(()->{owned(s.owner());controls(s.owner());attemptDeadline(s.owner());bronzeStage(s);require(!s.authorized() && s.state().equals("INTENT"),OWNERSHIP_LOST);
+            exactly(jdbc.update("UPDATE ddip_management.stage_invocations SET command_address=?,command_sha256=?,row_version=row_version+1 WHERE attempt_id=? AND stage='STORE_BRONZE' AND item_ordinal=? AND checkpoint_id=? AND row_version=? AND command_address IS NULL AND child_pid IS NULL",s.namespace()+"/command.json",s.commandSha(),s.owner().attemptId(),s.ordinal(),s.checkpoint(),s.version()));
+            audit(s.owner().runId(),s.owner().attemptId(),"STAGE_LAUNCH_AUTHORIZED","INTENT","INTENT",s.version(),s.version()+1,"STARTED");return nextBronze(s,s.owner(),"INTENT",true);
+        });
+    }
+    BronzeStage recordBronzeChild(InstallationHostGuard guard,BronzeStage s,InstallationHostGuard.ProcessIdentity child) {
+        held(guard,s.owner().worker());return ownerTransaction(()->{owned(s.owner());bronzeStage(s);require(s.authorized() && s.state().equals("INTENT") && child!=null && child.pid()>0 && child.startedAt()!=null,OWNERSHIP_LOST);
+            exactly(jdbc.update("UPDATE ddip_management.stage_invocations SET state='RUNNING',child_pid=?,child_started_at=?,child_instance_id=?,started_at=clock_timestamp(),row_version=row_version+1 WHERE attempt_id=? AND stage='STORE_BRONZE' AND item_ordinal=? AND checkpoint_id=? AND row_version=? AND state='INTENT'",child.pid(),java.sql.Timestamp.from(child.startedAt()),child.instanceId(),s.owner().attemptId(),s.ordinal(),s.checkpoint(),s.version()));
+            audit(s.owner().runId(),s.owner().attemptId(),"STAGE_STARTED","INTENT","RUNNING",s.version(),s.version()+1,"STARTED");return nextBronze(s,s.owner(),"RUNNING",true);
+        });
+    }
+    void checkBronze(InstallationHostGuard guard,BronzeStage s){held(guard,s.owner().worker());ownerTransaction(()->{owned(s.owner());controls(s.owner());attemptDeadline(s.owner());bronzeStage(s);return null;});}
+    BronzeStage heartbeatBronze(InstallationHostGuard guard,BronzeStage s){checkBronze(guard,s);var owner=heartbeat(guard,s.owner());return new BronzeStage(owner,s.checkpoint(),s.ordinal(),s.source(),s.ingestion(),s.journalSha(),s.commandSha(),s.namespace(),s.deliveryVersion(),s.version(),s.state(),s.authorized());}
+    void checkpointBronze(InstallationHostGuard guard,BronzeStage s,byte[] receipt,String resultSha) {
+        held(guard,s.owner().worker());var r=SourceJson.parse(receipt);require(Arrays.equals(receipt,SourceJson.canonical(r)) && hash(resultSha) && s.state().equals("RUNNING") && s.authorized() && r.get("ingestionId").stringValue().equals(s.ingestion().toString()) && r.get("journalSha256").stringValue().equals(s.journalSha()) && r.get("runId").stringValue().equals(s.owner().runId().toString()) && r.get("attemptId").stringValue().equals(s.owner().attemptId().toString()) && r.get("sourceId").stringValue().equals(s.source()),RUNTIME_MISMATCH);
+        ownerTransaction(()->{owned(s.owner());controls(s.owner());attemptDeadline(s.owner());bronzeStage(s);
+            exactly(jdbc.update("UPDATE ddip_management.rss_deliveries SET state='BRONZE_VERIFIED',metadata_sha256=?,receipt_bytes=?,row_version=row_version+1 WHERE run_id=? AND source_id=? AND owning_attempt_id=? AND journal_sha256=? AND state='BRONZE_WRITING' AND row_version=? AND receipt_bytes IS NULL",r.get("expected").get("metadataSha256").stringValue(),receipt,s.owner().runId(),s.source(),s.owner().attemptId(),s.journalSha(),s.deliveryVersion()));
+            exactly(jdbc.update("UPDATE ddip_management.stage_invocations SET state='VERIFIED',result_address=?,result_sha256=?,finished_at=clock_timestamp(),outcome_code='VERIFIED',row_version=row_version+1 WHERE attempt_id=? AND stage='STORE_BRONZE' AND item_ordinal=? AND checkpoint_id=? AND state='RUNNING' AND row_version=?",s.namespace()+"/verified.json",resultSha,s.owner().attemptId(),s.ordinal(),s.checkpoint(),s.version()));
+            audit(s.owner().runId(),s.owner().attemptId(),"STAGE_VERIFIED","RUNNING","VERIFIED",s.version(),s.version()+1,"VERIFIED");return null;
+        });
+    }
+    void blockBronze(InstallationHostGuard guard,BronzeStage s,boolean conflict){held(guard,s.owner().worker());ownerTransaction(()->{owned(s.owner());bronzeStage(s);String code=conflict?"BRONZE_CONFLICT":"RECOVERY_REQUIRED";
+        exactly(jdbc.update("UPDATE ddip_management.stage_invocations SET state='UNKNOWN',outcome_code=?,row_version=row_version+1 WHERE attempt_id=? AND stage='STORE_BRONZE' AND item_ordinal=? AND checkpoint_id=? AND row_version=?",code,s.owner().attemptId(),s.ordinal(),s.checkpoint(),s.version()));audit(s.owner().runId(),s.owner().attemptId(),"STAGE_UNKNOWN",s.state(),"UNKNOWN",s.version(),s.version()+1,code);interruptOwned(s.owner());return null;
+    });}
+    private void bronzeStage(BronzeStage s){var row=one(jdbc.queryForList("SELECT * FROM ddip_management.stage_invocations WHERE attempt_id=? AND stage='STORE_BRONZE' AND item_ordinal=? FOR UPDATE",s.owner().attemptId(),s.ordinal()));require(s.checkpoint().equals(row.get("checkpoint_id")) && s.version()==number(row,"row_version") && s.state().equals(row.get("state")) && s.namespace().equals(row.get("intended_namespace")) && s.ingestion().toString().equals(row.get("intended_identity")) && s.commandSha().equals(row.get("input_evidence_sha256")),OWNERSHIP_LOST);require(s.authorized()?s.commandSha().equals(row.get("command_sha256")) && (s.namespace()+"/command.json").equals(row.get("command_address")):row.get("command_address")==null && row.get("command_sha256")==null,OWNERSHIP_LOST);}
+    private static BronzeStage nextBronze(BronzeStage s,Owner owner,String state,boolean authorized){return new BronzeStage(owner,s.checkpoint(),s.ordinal(),s.source(),s.ingestion(),s.journalSha(),s.commandSha(),s.namespace(),s.deliveryVersion(),s.version()+1,state,authorized);}
     public CheckInputs beginCheckInputs(InstallationHostGuard guard,Owner owner,UUID checkpoint,String commandSha,String selectionSha) {
         held(guard,owner.worker());require(capability.available() && capability.supports("RELIABILITY_V2") && checkpoint!=null && hash(commandSha) && hash(selectionSha),WORKER_NOT_READY);
         String namespace="runs/"+owner.runId()+"/attempts/"+owner.attemptId()+"/check-inputs/"+checkpoint;

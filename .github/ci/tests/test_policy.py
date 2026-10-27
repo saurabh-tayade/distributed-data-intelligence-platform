@@ -65,11 +65,14 @@ class ClassificationTests(unittest.TestCase):
             ("tests/.gitkeep", ()), ("frontend/README.md", ()),
             ("frontend/src/App.tsx", ()), ("frontend/src/test/fixtures.ts", ()),
             ("ingestion/src/test/java/ExampleTest.java", ("ingestion",)),
+            ("ingestion/src/test/java/platform/ingestion/managed/BronzeFixture.java", ("ingestion", "content_postgres")),
             ("scripts/run-batch.sh", ("ingestion",)),
             ("scripts/test-run-batch.sh", ("ingestion",)),
             ("scripts/test-ingestion.sh", ("ingestion",)),
             ("ingestion/src/main/java/RawFeed.java", JOBS),
             ("ingestion/src/main/java/platform/ingestion/managed/ManagedRssFetch.java", JOBS),
+            ("ingestion/src/main/java/platform/ingestion/managed/ManagedBronze.java", JOBS),
+            ("ingestion/src/main/java/platform/ingestion/bronze/BronzeObjectVerifier.java", JOBS),
             ("services/content-api/src/test/java/platform/contentapi/management/RssFetchIT.java", ("content_postgres", "analytics_http")),
             ("scripts/test-rss-fetch-postgres.py", JOBS),
             ("ingestion/src/test/resources/feeds/rss-business.xml", JOBS),
@@ -345,6 +348,19 @@ class GateTests(unittest.TestCase):
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_real_bronze_storage_is_isolated_and_cleaned_up(self):
+        body = block("content_postgres")
+        self.assertIn("chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d", body)
+        self.assertIn("--publish 127.0.0.1:8333:8333", body)
+        self.assertIn("BRONZE_S3_ENDPOINT: http://127.0.0.1:8333", body)
+        self.assertIn("--env S3_BUCKET=ddip-d2", body)
+        self.assertIn("-s3.autoCreateBucket=false", body)
+        self.assertIn('docker rm --force --volumes "ddip-ci-bronze-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"', body)
+        self.assertIn("if: ${{ always() }}", body)
+        pom = (ROOT / "services/content-api/pom.xml").read_text(encoding="utf-8")
+        for suite in ("RssFetchIT", "RssBronzeIT", "PersistenceIT", "WorkerCoordinationIT", "ControlAdmissionIT"):
+            self.assertIn(f"**/{suite}.java", pom)
+
     def test_graph_filters_and_required_contexts(self):
         for job in JOBS:
             body = block(job)

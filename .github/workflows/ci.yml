@@ -201,21 +201,38 @@ jobs:
             processing/requirements-analytics.txt
       - name: Install pinned processing dependencies
         run: python -m pip install -r processing/requirements-bronze.txt -r processing/requirements-analytics.txt
-      - name: Build prebuilt Java RSS adapter for managed fetch acceptance
+      - name: Build prebuilt Java RSS and Bronze adapters for managed acceptance
         run: |
           export JAVA_HOME="$JAVA_HOME_21_X64"
           export PATH="$JAVA_HOME/bin:$PATH"
           mvn -B -ntp -f ingestion/pom.xml package -DskipTests
+      - name: Start isolated Bronze acceptance storage
+        run: |
+          docker run --detach --name "ddip-ci-bronze-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --hostname seaweedfs --publish 127.0.0.1:8333:8333 \
+            --env AWS_ACCESS_KEY_ID=ci_test_only --env AWS_SECRET_ACCESS_KEY=ci_test_only \
+            --env S3_BUCKET=ddip-d2 \
+            chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d \
+            mini -dir=/data -ip=seaweedfs -s3.port=8333 -s3.port.iceberg=0 -s3.port.lance=0 \
+            -webdav=false -admin.ui=false -s3.autoCreateBucket=false -s3.allowDeleteBucketNotEmpty=false
       - name: Verify PostgreSQL migrations, persistence and isolated runtime roles
         env:
           DDIP_TEST_DB_URL: jdbc:postgresql://127.0.0.1:5432/ddip_test
           DDIP_TEST_DB_USER: ddip_test
           DDIP_TEST_DB_PASSWORD: ci_test_only
+          BRONZE_S3_ENDPOINT: http://127.0.0.1:8333
+          BRONZE_S3_REGION: us-east-1
+          BRONZE_S3_BUCKET: ddip-d2
+          BRONZE_S3_ACCESS_KEY: ci_test_only
+          BRONZE_S3_SECRET_KEY: ci_test_only
         run: |
           export JAVA_HOME="$JAVA_HOME_21_X64"
           export PATH="$JAVA_HOME/bin:$PATH"
           export DDIP_TEST_PYTHON="$(command -v python)"
           mvn -B -ntp -f services/content-api/pom.xml verify -Ppostgres
+      - name: Remove isolated Bronze acceptance storage
+        if: ${{ always() }}
+        run: docker rm --force --volumes "ddip-ci-bronze-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" || true
 
   analytics_http:
     name: Java 21 Spring Boot analytics HTTP and native integration

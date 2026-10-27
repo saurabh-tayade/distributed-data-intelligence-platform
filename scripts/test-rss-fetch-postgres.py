@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""D1 acceptance against an owned disposable PostgreSQL container, including actual restart.
+"""Managed RSS/Bronze acceptance with disposable PostgreSQL and optional real SeaweedFS.
 
-Requires Docker, Maven and JAVA_HOME (JDK 21). No publisher, S3, Python/Spark or existing DB is used.
+Requires Docker, Maven and JAVA_HOME (JDK 21). Uses synthetic HTTP and owned local storage only;
+no live publisher, AWS, Python/Spark processing or existing database is used.
 """
 import argparse
 import os
@@ -16,13 +17,15 @@ import time
 import uuid
 
 IMAGE = "postgres:17.11-bookworm@sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826"
+SEAWEED = "chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d"
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--offline", action="store_true", help="use populated Maven cache")
     parser.add_argument("--regression", action="store_true", help="also run all content-api units and existing persistence/worker/control integration suites")
-    parser.add_argument("--case", help="run one RssFetchIT method during development")
+    parser.add_argument("--case", help="run one RssFetchIT (or --bronze RssBronzeIT) method during development")
+    parser.add_argument("--bronze", action="store_true", help="D2 acceptance with actual disposable SeaweedFS")
     args = parser.parse_args()
     if args.case and (args.regression or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", args.case)):
         parser.error("--case requires a single method name and cannot be combined with --regression")
@@ -57,6 +60,7 @@ def main():
 
     started = time.monotonic()
     created = False
+    seaweed_created = False
     thread = None
     try:
         with socket.socket() as reservation:
@@ -69,18 +73,34 @@ def main():
         ready()
         env.update(DDIP_TEST_DB_URL=f"jdbc:postgresql://127.0.0.1:{port}/ddip_test",
                    DDIP_TEST_DB_USER="ddip_test", DDIP_TEST_DB_PASSWORD=password, TZ="UTC")
+        if args.bronze:
+            with socket.socket() as reservation:
+                reservation.bind(("127.0.0.1", 0))
+                s3_port = reservation.getsockname()[1]
+            access, secret = uuid.uuid4().hex, uuid.uuid4().hex
+            docker("run", "--detach", "--name", name + "-seaweed", "--hostname", "seaweedfs",
+                   "--publish", f"127.0.0.1:{s3_port}:8333", "--env", "AWS_ACCESS_KEY_ID=" + access,
+                   "--env", "AWS_SECRET_ACCESS_KEY=" + secret, "--env", "S3_BUCKET=ddip-d2", SEAWEED,
+                   "mini", "-dir=/data", "-ip=seaweedfs", "-s3.port=8333", "-s3.port.iceberg=0",
+                   "-s3.port.lance=0", "-webdav=false", "-admin.ui=false", "-s3.autoCreateBucket=false",
+                   "-s3.allowDeleteBucketNotEmpty=false")
+            seaweed_created = True
+            env.update(BRONZE_S3_ENDPOINT=f"http://127.0.0.1:{s3_port}", BRONZE_S3_REGION="us-east-1",
+                       BRONZE_S3_BUCKET="ddip-d2", BRONZE_S3_ACCESS_KEY=access, BRONZE_S3_SECRET_KEY=secret)
         with tempfile.TemporaryDirectory(prefix="ddip-rss-d1-") as temporary:
             signal = Path(temporary) / "rss-restart"
+            bronze_signal = Path(temporary) / "bronze-restart"
 
             def controller():
                 try:
                     while not stop.wait(0.1):
-                        if not restarted and signal.exists():
-                            docker("restart", name)
-                            ready()
-                            restarted.append("rss")
-                            signal.with_name(signal.name + ".done").write_text("RESTARTED\n")
-                            print("Actual PostgreSQL restart: rss", flush=True)
+                        for phase, request in (("rss", signal), ("bronze", bronze_signal)):
+                            if phase not in restarted and request.exists():
+                                docker("restart", name)
+                                ready()
+                                restarted.append(phase)
+                                request.with_name(request.name + ".done").write_text("RESTARTED\n")
+                                print("Actual PostgreSQL restart: " + phase, flush=True)
                 except Exception as error:
                     errors.append(type(error).__name__)
 
@@ -92,22 +112,24 @@ def main():
             subprocess.run(maven + ["-f", "ingestion/pom.xml", "-DskipTests", "package"], cwd=root, env=env, check=True)
             command = maven + ["-f", "services/content-api/pom.xml", "-Ppostgres"]
             if args.regression:
-                command += ["-Dit.test=RssFetchIT,PersistenceIT,WorkerCoordinationIT,ControlAdmissionIT"]
+                command += ["-Dit.test=RssFetchIT,PersistenceIT,WorkerCoordinationIT,ControlAdmissionIT" + (",RssBronzeIT" if args.bronze else "")]
             else:
                 command += ["-Dtest=RuntimeRoleTest,WorkerCapabilityTest,InstallationHostGuardTest,VerifierProcessTest",
-                            "-Dit.test=RssFetchIT" + ("#" + args.case if args.case else "")]
-            command += [f"-Dddip.test.rss-restart-signal={signal}", "verify"]
+                            "-Dit.test=" + ("RssBronzeIT" if args.bronze else "RssFetchIT") + ("#" + args.case if args.case else "")]
+            command += [f"-Dddip.test.rss-restart-signal={signal}", f"-Dddip.test.bronze-restart-signal={bronze_signal}", "verify"]
             result = subprocess.run(command, cwd=root, env=env)
-            assert result.returncode == 0, "D1 acceptance failed"
-            expected_restart = ["rss"] if args.case in (None, "checkpointSurvivesActualDatabaseRestart") else []
-            assert not errors and restarted == expected_restart, f"Restart controller incomplete: {restarted}, {errors}"
+            assert result.returncode == 0, "Managed RSS/Bronze acceptance failed"
+            expected_restart = ({"rss", "bronze"} if args.regression and args.bronze else {"bronze" if args.bronze else "rss"}) if args.case in (None, "checkpointSurvivesActualDatabaseRestart") else set()
+            assert not errors and set(restarted) == expected_restart, f"Restart controller incomplete: {restarted}, {errors}"
     finally:
         stop.set()
         if thread is not None:
             thread.join(timeout=60)
         if created:
             docker("rm", "--force", "--volumes", name)
-        print(f"D1 local elapsed seconds: {time.monotonic() - started:.2f}", flush=True)
+        if seaweed_created:
+            docker("rm", "--force", "--volumes", name + "-seaweed")
+        print(f"Managed RSS/Bronze local elapsed seconds: {time.monotonic() - started:.2f}", flush=True)
 
 
 if __name__ == "__main__":
