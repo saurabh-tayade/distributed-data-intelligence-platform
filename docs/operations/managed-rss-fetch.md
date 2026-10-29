@@ -1,12 +1,13 @@
-# E5 D1/D2 — managed RSS journal and verified Bronze receipts
+# E5 D1/D2/D3 — managed RSS, Bronze receipts and Silver
 
-Status: **Partially implemented, internal checkpoint — October 26, 2026**, under
+Status: **Partially implemented, internal checkpoint — October 29, 2026**, under
 [issue #49](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/issues/49).
 This implements the accepted [RSS journal protocol](../architecture/durable-execution.md#rss-journal-and-recovery-protocol),
 [ADR 0001](../adr/0001-rss-raw-ingestion-contract.md), [ADR 0002](../adr/0002-bronze-object-storage.md)
 and [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md).
 D2 adds internal fenced Bronze publication, independent object reads and durable receipt confirmation.
-Managed Content remains **Partially implemented**. Production Content dispatch, managed Silver/Gold,
+[D3](#d3-managed-silver-lifecycle) adds fenced native Silver processing and independent qualification.
+Managed Content remains **Partially implemented**. D3 adds internal Silver below. Production Content dispatch, managed Gold,
 Content publication, activation, cancellation, retry, scheduling and automatic recovery remain deferred.
 The D1 sections below describe the original fetch checkpoint; the [D2 lifecycle](#d2-storage-and-receipt-lifecycle)
 and validation record describe the extension without changing those journal bytes or native contracts.
@@ -471,3 +472,265 @@ bytes/provenance; do not expose them in public artifacts/logs or prune active, u
 evidence. Retention, capacity management and qualified recovery remain manual. No automatic cleanup,
 backup/restore certification, distributed fencing, filesystem quota or end-to-end power-loss durability
 is supplied. Hosted CI and full native Spark processing are separate from the scoped local evidence.
+
+## D3 managed Silver lifecycle
+
+Status: **Partially implemented, internal checkpoint — October 29, 2026**.
+D3 adds Silver processing to D1/D2. Production Content dispatch remains disabled. The
+historical D2 stop point above describes that checkpoint, not D3's current internal seam.
+The run remains `RUNNING` at `SILVER` with its global ownership slot occupied after verified
+Silver. No Gold or Content enrichment is launched or activated.
+
+Acceptance criteria are exact committed D2 inputs, unchanged D1/D2 evidence, actual native
+accepted/rejected Parquet, independent full qualification, immutable verified replay,
+fenced single-use launch and atomic stage/artifact registration. Failure tests must preserve
+occupied ownership and demonstrate no replacement writer or downstream stage.
+
+### Input selection and native compatibility
+
+`RssSilverExecution` requires a confirmed Content owner and all selected source deliveries
+in `BRONZE_VERIFIED`. It revalidates the frozen source revisions and storage/runtime bindings,
+reopens the original D1 journal, checks the D2 stage's private immutable anchor and uses D2's
+GET-only inspection to compare the original receipt against actual Bronze objects.
+Each Silver invocation consumes exactly one frozen source ordinal and its original receipt.
+The adapter GETs only its metadata and payload keys, checks their object MIME/encoding/length evidence and byte hashes against
+that receipt, validates native metadata/source/ingestion/time/key identity, then passes those
+verified bytes to native `process_one`. Bronze is rechecked after processing and qualification.
+There is no S3 listing, source-prefix discovery, second RSS fetch or implicit retained-history
+expansion. Source enablement/configuration edits cannot replace a captured revision.
+
+The existing CLI already accepts exact `--metadata-key` selection. D3's small private command
+adapter supplies additional receipt checks and supervision without modifying the CLI or
+normalizer. The native `v1/<bucket SHA-256>/source_id=…/ingestion_date=…/ingestion_id=…`
+namespace, completion bytes/identity, schemas, warnings/rejections, repeated observation
+semantics and partitioning stay native. Original Bronze nanosecond timestamp text stays in
+the receipt; native Silver retains its existing microsecond precision.
+
+### Stage, runtime and supervision
+
+| Boundary | Durable behavior |
+| --- | --- |
+| Admission | Confirm owner, complete D2 set, frozen source/run/storage/runtime and D2 evidence; no Silver writer yet |
+| Intent | Insert one `SILVER` row for the frozen ordinal, command digest and exact selection identity; advance run version |
+| Authorization | Commit command address/digest exactly once against attempt/epoch/instance and stage/owner versions |
+| Child | Record PID, process start instant and child instance; `RUNNING`; use the existing Spark-capable supervisor |
+| Qualification | Separate read-only Spark process; capture its identity and hashes in private evidence |
+| Checkpoint | Final GET/hash/inventory recheck; atomically register/reuse exact artifact, link stage, mark `VERIFIED`, append audit |
+| After checkpoint | Return without releasing ownership, completing the run or starting Gold/enrichment |
+
+The additive reviewed runtime profile pins Python 3.12.15, PySpark 4.0.2, Boto3/Botocore
+1.43.114 and Java 21; module hashes bind the adapter, native producer/normalizer, native
+reader and import qualifier. It binds the D2 runtime digest, original run profile/deployment,
+canonical processing root, frozen Silver/TEMP roots and root device/inode identities.
+The Python interpreter is explicit, isolated (`-I -B`), with an environment whitelist; no
+ambient credentials, shell text, dependency installation or runtime build is accepted.
+
+Spark uses the existing `local[2]`, UTC, two shuffle partitions and native publication path.
+A private per-child scratch directory contains Spark temporary state; the read-only qualifier also binds its warehouse there. The existing
+supervisor enforces at most 900 seconds per child, five-second heartbeats, 16 MiB per output
+stream and at most 32 observed descendants; cleanup uses the existing bounded grace/force
+windows. The writer explicitly shuts down and reaps its gateway. The independent import
+qualifier retains its supported shutdown checks. All children run outside PostgreSQL
+transactions; authority and guard are rechecked at launch, heartbeat and checkpoint boundaries.
+Private commands/results and scratch evidence are retained; native outputs are never cleanup
+or recovery targets. This is a trusted single-host worker boundary, not hostile-process
+containment, multi-node Spark or a performance/scalability claim.
+
+### Verification, replay and recovery classifications
+
+The read-only verifier calls existing `silver_import_qualification.execute` and
+`silver_inputs.load_inputs` for the exact intended completion marker. It checks original
+publication identity, completion bytes, physical schema/data files, accepted/rejected counts,
+required row values, replay keys, source/ingestion/Bronze provenance, all namespace membership
+and file hashes/identities. Its evidence preserves the native completion and managed inventory
+fingerprint. Qualification does not reconstruct every content field from the raw feed.
+
+The final read-only recheck compares the entire captured local/Bronze baseline after all
+verification actions and immediately before registration. Existing artifact rows must match
+full qualification bytes; a database row, child exit or completion marker alone is insufficient.
+Stage evidence anchors the original D2 receipt digest, reviewed runtime, qualification
+bytes and native `silver_inputs.inventory` manifest/input-set fingerprint. The manifest is
+retained as private `selection.json`; no native product metadata is rewritten. Registration uses the same format as qualified Silver imports. No migration is added.
+
+| Observation | D3 action |
+| --- | --- |
+| Missing/unverified/changed D2 receipt or object | Reject before Spark processing; never substitute a later snapshot |
+| Changed binding/runtime/module or original identity | Fail closed; never move data to another root or UUID |
+| Launch failure, processing failure, timeout or interrupted child | Block the stage and retain ownership; no automatic relaunch |
+| Missing/incomplete/corrupt/unexpected Silver output | No verified artifact; never overwrite, repair, delete or resume namespace |
+| Output created before a crash or failed verification | Retain output and intent/history, with ownership occupied |
+| Stale owner, guard loss or PostgreSQL outage | Stop authorization/heartbeat progression; supervisor cleans up conservatively; retain occupied evidence |
+| Lost intent/authorization acknowledgment | No launch without confirmed acknowledgment; repeated invocation cannot create a new intent |
+| Lost verification acknowledgment | Full read-only inspection may confirm the existing committed stage/artifact; no owner refresh or duplicate registration |
+| Identical completed publication | Full applicable qualification and original identity/baseline checks required; bytes remain unchanged |
+| Uncertain child termination or unknown acknowledgment | Preserve recovery ownership and private process/evidence records; no automatic retry |
+
+`inspect` is a read-only internal committed-result inspection, not Content reconciliation.
+It can confirm success after a lost acknowledgment; it cannot adopt an owner, finalize a
+failed run or release the global slot. The current Reliability operator-recovery command
+continues to reject Content. Do not use it to force a Content disposition.
+
+### D3 reproduction and evidence
+
+Use the existing pinned local environment; all feeds and storage are disposable synthetic
+fixtures. No publisher requests or cloud credentials are used.
+
+```sh
+export JAVA_HOME=$(/usr/libexec/java_home -v 21)
+export DDIP_TEST_PYTHON="$PWD/outputs/silver-python312/.venv/bin/python"
+export PYSPARK_PYTHON="$DDIP_TEST_PYTHON"
+export SPARK_LOCAL_IP=127.0.0.1
+PYTHONPATH=processing:processing/tests "$DDIP_TEST_PYTHON" -B -m unittest test_managed_silver
+python3 scripts/test-rss-fetch-postgres.py --offline --silver
+# One scoped backend regression after focused stabilization:
+python3 scripts/test-rss-fetch-postgres.py --offline --silver --regression
+# Scoped native regression, using the same pinned runtime:
+PYTHONPATH=processing:processing/tests "$DDIP_TEST_PYTHON" -B -m unittest \
+  test_managed_silver test_bronze test_silver test_silver_inputs test_silver_import_qualification
+```
+
+`--silver --case METHOD` restricts development runs to one D3 method. `--silver` implies
+`--bronze`; the harness creates PostgreSQL 17.11 and SeaweedFS 4.48 at the existing pinned
+image digests, builds the existing ingestion adapter before tests, and removes only its
+owned disposable containers/volumes in `finally`. Regression includes the existing D1/D2
+restart checks. D3 does not introduce a production command or worker dispatch option.
+Measured evidence and exact changed files are recorded below after validation.
+
+### D4 prerequisites
+
+Managed Content Processing remains **Partially implemented**. D4 still needs explicit
+retained-history/fresh-Silver dependency freezing, applicable reference qualification,
+native Gold/Content preparation and publication boundaries, downstream full verification
+and final run disposition. Content-specific occupied-owner/process review and reconciliation
+must be designed and tested before any operational recovery claim. Production dispatch
+requires a separately authorized capability/worker integration and end-to-end acceptance.
+Cancellation/guarded retry, storage-only retry, Operations UI and production performance
+remain outside D3. No accepted ADR is changed by this checkpoint.
+
+### D3 exact changed files
+
+Paths are repository-relative; generated datasets, runtime caches and logs are ignored.
+
+- `docs/adr/0015-managed-silver-receipt-adapter.md`
+
+- `docs/adr/README.md`
+
+- `docs/architecture/durable-execution.md`
+
+- `docs/operations/managed-rss-fetch.md`
+
+- `ingestion/src/test/java/platform/ingestion/managed/BronzeFixture.java`
+
+- `processing/managed_silver.py`
+
+- `processing/tests/test_managed_silver.py`
+
+- `scripts/test-rss-fetch-postgres.py`
+
+- `services/content-api/README.md`
+
+- `services/content-api/pom.xml`
+
+- `services/content-api/src/main/java/platform/contentapi/execution/PreflightFiles.java`
+
+- `services/content-api/src/main/java/platform/contentapi/execution/RssSilverExecution.java`
+
+- `services/content-api/src/main/java/platform/contentapi/execution/RssSilverRuntime.java`
+
+- `services/content-api/src/main/java/platform/contentapi/execution/WorkerRepository.java`
+
+- `services/content-api/src/test/java/platform/contentapi/execution/RssSilverTestSupport.java`
+
+- `services/content-api/src/test/java/platform/contentapi/management/RssFetchFixtures.java`
+
+- `services/content-api/src/test/java/platform/contentapi/management/RssSilverIT.java`
+
+### D3 measured local validation — October 29, 2026
+
+Environment: macOS 27.2 arm64; GraalVM Java 21.0.7; Python 3.12.15; PySpark 4.0.2;
+Boto3/Botocore 1.43.114; disposable PostgreSQL 17.11 and SeaweedFS 4.48 at the harness's
+pinned digests. The scoped regression ran ingestion, backend and native Spark sequentially.
+Timings below measure correctness workloads, not performance or production scalability.
+
+| Run | Actual result | Elapsed |
+| --- | --- | --- |
+| Initial passing exact publication/replay smoke | 43 existing runtime/guard/supervisor units plus 1 D3 case; no failures/errors/skips | Harness 38.21s; D3 29.68s |
+| Initial focused fault matrix | Same 43 units plus 20 then-current D3 cases; no failures/errors/skips | Harness 156.38s; D3 147.2s |
+| Expanded development matrix | 43 units passed; 30 D3 cases: 28 passed, 1 fixture assertion failure, 1 fixture source-revision error | Harness 242.99s; D3 232.9s |
+| Corrected exact publication/replay smoke with final headers/process evidence | 43 units plus 1 D3 case; no failures/errors/skips | Harness 40.56s |
+| Corrected deterministic process-start failure | 43 units plus 1 D3 case; no failures/errors/skips | Harness 10.73s |
+| Final scoped ingestion regression | 73 tests, no failures/errors/skips | Driver 4.75s; Maven 4.014s |
+| Final scoped backend regression | 326 units plus 261 PostgreSQL cases, no failures/errors/skips | Harness 450.65s; driver 450.73s |
+
+The final PostgreSQL cases are WorkerCoordination 56, ControlAdmission 52, D1 51, D2 43,
+Persistence 28 and D3 31. D3 took 245.1s, D1 39.69s and D2 77.35s. D1 and D2 each
+survived a separate actual PostgreSQL container restart. D3's outage fault disables new
+connections and terminates target-database sessions immediately after writer child identity
+registration; supervision then stops on loss of authority. These are distinct fault mechanisms.
+
+Development failures were corrected before the final regression: initial fixture setup lacked
+`PER_CLASS` and used an incorrect Silver binding; the expanded matrix submitted a historical
+source revision for its unrelated queued run and relied on macOS behavior for an invalid
+executable. The final launch test instead removes its disposable executable immediately after
+committed authorization, deterministically exercising `PROCESS_START_FAILED` with occupied
+ownership. Intermediate runs are overlapping development evidence, not additional distinct
+coverage or successful final passes.
+
+The final D3 success fixture produced accepted=1 and rejected=1 using actual native Parquet.
+Its registered artifact was `d6d06843-775b-479d-a8d3-27744a5cbba6`, with completion SHA-256
+`0b99920a896009480d85fecee0d0f223a251c6a71f3e6b185d5c28dd05deeabf` and managed inventory
+SHA-256 `49e4f83be61fea2a9f3982ed76e7570194f393224ec1b9765fc2e1cc8945bdad`.
+These identify this disposable synthetic run; UUIDs, publication bytes and fingerprints vary
+with original ingestion identity/time across fresh runs. Within the run, two full read-only
+inspections preserved all publication hashes, timestamps and inode identities. The original
+D1 journal, D1/D2 stage checkpoint hashes/versions and committed D2 receipt remained unchanged.
+The native selection manifest/input-set fingerprint and qualifier process evidence are bound
+to the private stage anchor; neither management run IDs nor runtime settings enter products.
+Disposable evidence is removed by test teardown; this is a test-log witness, not a retained
+operator artifact or a claim about a private dataset.
+
+The 31 final D3 cases cover committed exact selection, frozen-byte handoff, real publication,
+full verified replay, missing/changed Bronze metadata and payload, unavailable receipt/object
+reads, changed module/runtime veto, malformed feed processing failure, child-start failure,
+crashes before/after authorization and after output/qualification, lost launch/verification
+acknowledgments, stale owner, guard loss, worker interruption, database connection outage,
+incomplete/corrupt/unexpected output, post-qualification Bronze mutation and atomic artifact,
+stage-link, stage-result and audit registration. They assert no second ambiguous writer,
+duplicate artifact/link, unrelated queued execution or managed Gold/enrichment stage.
+
+The final scoped native regression passed **83 tests** in **74.274s** (driver **74.49s**):
+`test_managed_silver`, `test_bronze`, `test_silver`, `test_silver_inputs` and
+`test_silver_import_qualification`. It printed Python socket `ResourceWarning` diagnostics;
+there were no unittest failures/errors/skips. Managed D3 child termination is checked
+separately by the supervised acceptance cases.
+
+The sequential ingestion/backend/native driver took **529.97s**. Its **743 distinct cases**
+are 73 ingestion + 326 backend units + 261 PostgreSQL + 83 native Python/Spark. The native
+group includes the 9 new receipt-adapter tests. Earlier focused runs repeat cases within
+these groups; their counts must not be added. The separate **22 passing CI-policy tests**
+bring distinct test coverage to **765 cases**, not a sum of every development invocation.
+Markdown/hygiene checks are consistency checks and are excluded from test-case totals.
+
+The change-aware classifier was evaluated against the complete working-tree change inventory
+(tracked diff plus new files, since staging/commits were prohibited). It selects all five
+backend jobs: ingestion, processing_python, analytics_jdbc, content_postgres and analytics_http.
+The PostgreSQL Maven profile includes `RssSilverIT`; the existing CI job already builds the
+Java adapters, installs the pinned Bronze/Spark dependencies and starts isolated SeaweedFS.
+No workflow, dependency or migration change is required. Hosted CI and the full platform
+suite were not run locally; the evidence above is the requested scoped backend/Spark regression.
+Production Content dispatch, managed Gold/enrichment, operational Content recovery and
+large-scale validation remain deferred. ADR 0015 remains an implementation record awaiting
+owner acceptance; accepted ADRs are unchanged.
+
+### PR #71 hosted CI correction
+
+The initial hosted D3 run exposed a test ordering dependency on the 30-second active-owner
+admission heartbeat window. Full read-only replay intentionally does not heartbeat execution;
+submitting another run after two slow inspections correctly failed closed. The fixture now
+checks queued admission/competing ownership while actively heartbeating, before replay, and adds
+a deterministic stale-owner replay/admission rejection case. The original immutable publication,
+receipt, duplicate-launch and occupied-slot checks remain. No application fencing, supervision,
+recovery or native processing behavior changes. See the
+[root cause, hosted/local evidence and 90-minute PostgreSQL job budget](ci.md#pr-71--d3-hosted-failure-and-postgresql-budget).
+Managed Content remains **Partially implemented**; D4, Gold/enrichment, operational Content recovery
+and production Content dispatch remain deferred.

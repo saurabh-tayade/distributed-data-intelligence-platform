@@ -15,6 +15,9 @@ public final class BronzeFixture {
         try(var client=local.client()){
             if(args[0].equals("head")){client.headBucket(HeadBucketRequest.builder().bucket(local.bucket()).build());System.out.print("READY");return;}
             Path directory=Path.of(args[1]);byte[] command=ManagedRssFetch.read(directory.resolve("command.json"),65536);var feed=ManagedRssFetch.reopen(directory,command);var keys=BronzeKeys.forFeed(feed);
+            if(args[0].equals("remove-payload") || args[0].equals("remove-metadata")){
+                client.deleteObject(DeleteObjectRequest.builder().bucket(local.bucket()).key(args[0].equals("remove-payload")?keys.payload():keys.metadata()).build());System.out.print("REMOVED");return;
+            }
             if(args[0].equals("seed")){
                 String variant=args[2];byte[] payload=feed.body(),metadata=ManagedRssFetch.read(directory.resolve("metadata.json"),65536);
                 if(variant.equals("bad-payload"))payload=new byte[]{42};if(variant.equals("bad-metadata"))metadata=new byte[]{123,125};

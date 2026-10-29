@@ -47,3 +47,8 @@ handling. It is an implementation record, not an owner-accepted ADR. The
 [operator procedure](../operations/reliability-recovery.md) and
 [current evidence](../architecture/durable-execution.md#c3c4-controlled-operational-recovery) supersede
 earlier operational-activation limitations only to the extent implemented and validated there.
+
+[ADR 0015](0015-managed-silver-receipt-adapter.md) records D3's exact D2 receipt adapter,
+fenced Silver invocation and reuse of native Silver qualification and artifact registration.
+It is an implementation record with owner acceptance pending. Production Content dispatch,
+Gold/enrichment and operational Content recovery remain disabled or deferred.

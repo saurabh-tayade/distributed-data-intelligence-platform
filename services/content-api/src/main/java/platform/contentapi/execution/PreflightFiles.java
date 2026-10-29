@@ -19,7 +19,7 @@ final class PreflightFiles {
         this(guard,run,attempt,checkpoint,"CHECK_INPUTS");
     }
     PreflightFiles(InstallationHostGuard guard,UUID run,UUID attempt,UUID checkpoint,String stage) {
-        need(Set.of("CHECK_INPUTS","PUBLISH_RELIABILITY","VERIFY_RESULT","STORE_BRONZE","INSPECT_BRONZE").contains(stage),INPUT_INVALID);
+        need(Set.of("CHECK_INPUTS","PUBLISH_RELIABILITY","VERIFY_RESULT","STORE_BRONZE","INSPECT_BRONZE","SILVER","VERIFY_SILVER","INSPECT_SILVER","RECHECK_SILVER").contains(stage),INPUT_INVALID);
         address="runs/"+run+"/attempts/"+attempt+"/"+stage.toLowerCase(Locale.ROOT).replace('_','-')+"/"+checkpoint;
         try {
             Path p=guard.binding().root();
@@ -57,7 +57,7 @@ final class PreflightFiles {
         catch(PreflightFailure ex){throw ex;}catch(RuntimeException ex){throw new PreflightFailure(INPUT_INVALID);}
     }
     void write(String name,byte[] bytes,int maximum) {
-        need(Set.of("command.json","selection.json","verified.json","retained.json").contains(name) && bytes.length<=maximum,INPUT_INVALID);
+        need(Set.of("command.json","selection.json","verified.json","retained.json","evidence.json","child.json").contains(name) && bytes.length<=maximum,INPUT_INVALID);
         privateEntry(directory,true);
         try(var channel=FileChannel.open(directory.resolve(name),Set.of(StandardOpenOption.WRITE,StandardOpenOption.CREATE_NEW,LinkOption.NOFOLLOW_LINKS),PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))) {
             var buffer=ByteBuffer.wrap(bytes);while(buffer.hasRemaining())channel.write(buffer);channel.force(true);
@@ -65,6 +65,6 @@ final class PreflightFiles {
         catch(IOException ex){throw new PreflightFailure(INPUT_UNAVAILABLE);}
         need(Arrays.equals(read(directory.resolve(name),maximum,true),bytes),INPUT_CHANGED);
     }
-    byte[] read(String name,int maximum){need(Set.of("command.json","selection.json","result.json","evidence.json","verified.json","retained.json").contains(name),INPUT_INVALID);privateEntry(directory,true);return read(directory.resolve(name),maximum,true);}
+    byte[] read(String name,int maximum){need(Set.of("command.json","selection.json","result.json","evidence.json","verified.json","retained.json","child.json").contains(name),INPUT_INVALID);privateEntry(directory,true);return read(directory.resolve(name),maximum,true);}
     @Override public String toString(){return "PreflightFiles[redacted]";}
 }

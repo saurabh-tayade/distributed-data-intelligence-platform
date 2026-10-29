@@ -4,7 +4,9 @@ The [CI workflow](../../.github/workflows/ci.yml) classifies pull requests to ma
 backend suites selected by a conservative dependency map. Every push to main runs full regression.
 There are no workflow-level path filters: required contexts are created for every supported event.
 Documentation/hygiene and frontend validation still run on every event. Classification preserves native
-contracts, existing suite commands, action/dependency pins, resource limits and timeouts. D1/D2's added
+contracts, existing suite commands, action/dependency pins and native execution limits. The
+[PR #71 correction](#pr-71--d3-hosted-failure-and-postgresql-budget) increases only the PostgreSQL
+job timeout from 60 to 90 minutes. D1/D2's added
 PostgreSQL tests, prebuilt adapters and isolated storage are described below.
 
 ## Acceptance criteria and workflow graph
@@ -51,7 +53,7 @@ earlier selector. The content_postgres job packages the ingestion JAR/dependenci
 verification command, then starts the same digest-pinned SeaweedFS 4.48 mini used by local D2 acceptance.
 Its pre-created test bucket, explicit synthetic credentials and loopback port 8333 are isolated to that
 job. The tests wait for an actual SDK bucket read; an always-running cleanup removes the owned container
-and anonymous volumes. PostgreSQL services, native fixtures, verification commands and timeouts remain
+and anonymous volumes. PostgreSQL services, native fixtures, verification commands and native child timeouts remain
 unchanged. Each job owns its workspace. See [managed RSS/Bronze validation](managed-rss-fetch.md) for
 the local harness and actual restart coverage. Hosted execution of the new storage setup is pending.
 
@@ -314,8 +316,9 @@ documentation, ingestion, frontend and the gate; this is not billed usage.
 | Aggregate runner-minutes | 67.28 | 70.98 | Pending |
 
 The main PostgreSQL test step alone took 47m05s; Python tests took 18m21s. These observed parallel
-runs exceed Phase 1's earlier planning estimates. The existing 60m PostgreSQL and 30m Python budgets
-are retained, as are 15m compatibility budgets. PostgreSQL remains the observed longest-running job.
+runs exceeded Phase 1's earlier planning estimates. At the Phase 2 baseline, the 60m PostgreSQL
+and 30m Python budgets were retained, as were 15m compatibility budgets. PR #71 subsequently
+raised only PostgreSQL to 90m, as documented below. PostgreSQL remains the observed longest-running job.
 No timeout or native execution deadline is reduced.
 
 For historical context, the previous sequential main run
@@ -425,3 +428,217 @@ No application regression, hosted Phase 2 run or performance benchmark was execu
 configuration change. Subsequent [D1 validation](managed-rss-fetch.md#d1-local-validation-and-reproduction-historical)
 and [D2 validation](managed-rss-fetch.md#d2-local-validation-and-reproduction) record their added
 ingestion/Content API regressions, real storage evidence and current dependency cases separately.
+
+## PR #71 — D3 hosted failure and PostgreSQL budget
+
+October 29, 2026. This correction changes a D3 acceptance fixture and the PostgreSQL job
+budget; application execution, admission, recovery and native publication contracts are unchanged.
+Managed Content remains **Partially implemented**, with production Content dispatch disabled.
+
+### Hosted observations
+
+Read-only Actions run/job/check-annotation APIs and full logs were inspected for
+[run 40894298930](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/40894298930),
+head `06de5734e98f048ed9f7107553c62debfe7f2e4a`.
+The [PostgreSQL job 123519203618](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/40894298930/job/123519203618)
+started at 14:43:30 UTC and completed cancellation at 15:43:53 UTC: **60m23s**.
+Its explicit check annotation says it exceeded the maximum execution time of **1h0m0s**.
+The test step ran 14:44:21–15:43:50, **59m29s**, before cancellation in `SilverImportIT`.
+There is no workflow/job `concurrency` or `cancel-in-progress` setting. This was the configured
+60-minute job budget, not an inferred concurrency cancellation. Cleanup steps still ran.
+
+The other four selected backend suites passed. The
+[aggregate job 123555489168](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/40894298930/job/123555489168)
+correctly failed because the required PostgreSQL job was cancelled. The aggregate remains
+fail closed, with the same name, graph, classifier, required checks and success conditions.
+
+The Ubuntu 24.04 D3 matrix completed **31 cases, 1 error, no failures/skips**, in **606.1s**.
+`exactNativePublicationAndFullyVerifiedReplay` errored with
+`SourceFailure: COORDINATOR_RECOVERY_REQUIRED`; its case duration was **82.24s**.
+A native publication with accepted=1/rejected=1 was logged before the error, including completion
+SHA-256 `de386945a749827cdd7287be98a5d49bd0fd44f60d6bbe90dd5cbaf95513e351`.
+The original log lacked phase/heartbeat-age diagnostics; it cannot establish the exact hosted
+heartbeat age. The unique failing call path and bounded reproductions below identify the cause.
+
+### Root cause and correction
+
+The test combined active-execution admission with ownerless read-only replay:
+
+1. D1/D2 committed the original journal and verified Bronze receipt. D3's supervised writer
+   and independent qualifier succeeded; Silver became `VERIFIED` and its artifact/link committed.
+2. The run/attempt remained `RUNNING`, worker/coordinator `READY`, with the global slot occupied.
+   Normal execution heartbeats had stopped because the checkpoint had returned.
+3. Two `inspectSilver()` calls performed full Spark qualification. By design, these inspections
+   have no Owner token and cannot heartbeat, adopt, release or otherwise modify execution authority.
+4. The deliberate duplicate execution was rejected before another Spark writer could start.
+   It stops that repository's authorization channel; it does not release or alter the DB owner.
+5. The test then submitted an unrelated run. `RunRepository.readiness` requires an occupied
+   EXECUTE owner with a coordinator heartbeat no older than **30 seconds**. Slow inspections
+   crossed that window. The existing guard correctly raised `COORDINATOR_RECOVERY_REQUIRED`.
+
+There was **no unintended coordinator transition**: this admission rejection leaves the
+coordinator `READY` and occupied. It does not set `RECOVERY_ONLY` or clear an owner. The defect
+was a timing-dependent test ordering assumption, not corruption, host-guard loss, ambiguous
+launch or an application supervisor failure.
+
+The corrected fixture sends a real guarded owner heartbeat, submits the unrelated queued run
+and asserts `WORKER_NOT_READY` on a competing claim **before** Silver processing/read-only
+inspections. The original run still executes and publishes with the other run queued. Its
+run-state assertion now explicitly selects the executing run, since the queued run exists earlier.
+All original receipt, file-hash/mtime/inode, replay, duplicate-launch, registration and occupancy
+assertions remain. Production freshness thresholds and all execution/recovery code are unchanged.
+
+A separate deterministic `readOnlyReplayDoesNotRenewStaleOwnership` case backdates its
+disposable coordinator heartbeat by 31 seconds in a guarded row-version update, then performs
+real independent Silver replay. The row-version increment also makes the original Owner token stale.
+It requires replay to verify the original artifact without changing the coordinator or publication;
+new admission must still fail with `COORDINATOR_RECOVERY_REQUIRED`, and duplicate execution with
+the old token must fail with `OWNERSHIP_LOST`. It checks unchanged receipt, publication bytes/identities, counts and slot.
+No sleep, weaker admission rule, fabricated owner refresh or automatic ownership release is added.
+
+`D3_CHECKPOINT` test diagnostics report a fixed, bounded scalar projection: phase, guard-held
+status, epoch/version, occupied/current-worker flags, heartbeat age/freshness, worker/run/attempt/
+Silver states and whether child identity was recorded. Failure checkpoints do not mask the original
+exception; diagnostic unavailability emits a fixed classification. They never print credentials,
+paths, source/feed URLs, request/receipt bytes, payloads or raw database/native exception messages.
+These are test diagnostics, not a new management endpoint or production log protocol.
+
+### Budget and optimization scope
+
+Only `content_postgres.timeout-minutes` changes **60 → 90**. Every other timeout, native child
+execution deadline, service, suite command, matrix, pin, gate and classification rule is retained.
+A direct workflow comparison verifies that only this job's comment/budget changed; policy/gate
+regressions also require D3 inclusion. No concurrency cancellation is introduced. PostgreSQL's
+Maven profile still includes the entire D3 matrix and native imports.
+
+Slowest completed hosted PostgreSQL suites were:
+
+| Suite | Cases | Hosted elapsed |
+| --- | ---: | ---: |
+| RssSilverIT | 31 | 606.1s; one fixture error |
+| ReliabilityExecutionIT | 27 | 595.5s |
+| OperatorRecoveryIT | 35 | 499.9s |
+| ReliabilityWorkerIT | 23 | 357.7s |
+| RecoveryFinalizationIT | 53 | 270.6s |
+| RecoveryHandoffIT | 118 | 195.0s |
+| RssBronzeIT | 43 | 189.2s |
+| RecoveryVerificationIT | 40 | 175.6s |
+
+`SilverImportIT` had already consumed approximately **255.5s** when cancellation occurred;
+its total duration and final outcome are unknown. Do not count it as passing or rank that partial
+observation as a completed suite. Hosted timings are separate from local measurements below.
+
+Practical follow-up is to measure fixture construction, Spark JVM startup, native actions and
+qualification/GET/hash phases within these suites before optimizing. Potential test-only savings
+include reusing immutable fixture construction with independent per-test copies where mutation
+and provenance assertions permit it, and reducing redundant setup/packaging. Production child
+isolation, full qualification, fresh recovery evidence, fault coverage and independent test state
+must remain intact. Sharing live Spark gateways across fenced stages, dropping cases or loosening
+verification is not justified by these timings. Larger job splitting/resource changes are deferred.
+The 90-minute budget provides headroom; completion of the full hosted PostgreSQL job still needs
+an owner-triggered Ubuntu rerun and is not demonstrated by local scoped regressions.
+
+### Reproduction and validation procedure
+
+The isolated failing case was run first using the existing disposable harness:
+
+```sh
+export JAVA_HOME=$(/usr/libexec/java_home -v 21)
+export DDIP_TEST_PYTHON="$PWD/outputs/silver-python312/.venv/bin/python"
+python3 scripts/test-rss-fetch-postgres.py --offline --silver \
+  --case exactNativePublicationAndFullyVerifiedReplay
+# Focused D3 matrix, then one broader scoped regression after stabilization:
+python3 scripts/test-rss-fetch-postgres.py --offline --silver
+python3 scripts/test-rss-fetch-postgres.py --offline --silver --regression
+python3 -B -m unittest discover -s .github/ci/tests -v
+outputs/d02-ci/actionlint .github/workflows/ci.yml
+npm run check
+```
+
+For the additional focused admission/supervisor/recovery checks, with disposable `DDIP_TEST_DB_*`,
+`BRONZE_S3_*` and the pinned `DDIP_TEST_PYTHON` configured, the Maven selection was:
+
+```sh
+mvn -B -ntp -o -Daether.syncContext.named.factory=noop -f services/content-api/pom.xml \
+  -Ppostgres \
+  -Dtest=RuntimeRoleTest,WorkerCapabilityTest,InstallationHostGuardTest,VerifierProcessTest,RecoveryQuiescenceTest,RecoveryAcknowledgmentProxyTest \
+  -Dit.test=RssSilverIT,RunSubmissionIT verify
+```
+
+Linux experiments used disposable PostgreSQL/SeaweedFS containers and a test container sharing
+one loopback network namespace, not relaxed storage endpoint policy. The image used Python
+3.12.15 on Debian Bookworm/glibc 2.36, Temurin **21.0.12.1+1-LTS** from its Ubuntu Noble image,
+PySpark 4.0.2 and Boto3/Botocore 1.43.114. Actual kernel/platform was Linux
+7.0.14-linuxkit/aarch64. All stages used approved loopback storage and actual pinned Spark.
+This exercises Linux process/filesystem behavior, but **does not reproduce hosted Ubuntu 24.04
+x86_64 hardware, scheduling or wall-clock performance**. The macOS checks used arm64/macOS
+27.2, GraalVM Java 21.0.7 and the existing pinned Python/Spark environment.
+
+The IDE debugger could not create a runnable test configuration (no discovered run points),
+so runtime evidence came from bounded test diagnostics and actual isolated executions.
+The natural diagnostic reproduction overlapped Linux image construction and crossed the
+heartbeat limit before any test-only aging injection: 5,417ms before the first inspection,
+19,068ms after it and **31,375ms** after the second, with the same coordinator row version 5,
+`READY`/occupied worker, `RUNNING` run/attempt and `VERIFIED` Silver throughout. A temporary
+31-second aging injection additionally reproduced the same admission rejection in Linux;
+that temporary reproduction switch was removed from the final test source. The permanent
+stale-owner case uses explicit disposable-row aging and expects rejection, not success.
+
+### Local results for the correction
+
+These measurements are separate from the hosted observations and from the original D3
+implementation's historical counts. Driver elapsed includes Maven/service setup where applicable.
+
+| Execution | Actual result | Driver elapsed |
+| --- | --- | ---: |
+| Original isolated case, macOS, run before editing | 43 units + 1 D3 case passed; D3 51.64s | 60.33s |
+| Diagnostic/aged reproduction, macOS | 43 units passed; 1 D3 case errored with the same admission classification; D3 62.05s | 74.73s |
+| Original-order isolated case, fast Linux | 43 units + 1 D3 case passed; D3 31.79s, heartbeat stayed fresh | 38.47s |
+| Deterministically aged original-order case, Linux | 43 units passed; 1 D3 case errored with `COORDINATOR_RECOVERY_REQUIRED`; D3 29.46s | 35.93s |
+| Corrected Linux replay pair | 43 units + 2 D3 cases passed; D3 55.52s | 64.91s |
+| Final focused Linux selection | 60 units + 76 PostgreSQL cases passed, no failures/errors/skips | 301.40s |
+
+The focused selection includes **32 D3 cases** (277.2s) and **44 RunSubmissionIT cases**
+(17.41s). Its 60 units include 16 supervisor cases, 9 host-guard cases, 15 recovery-quiescence
+cases, 2 acknowledgment-proxy cases, 17 runtime-role cases and 1 production-capability case.
+The stale-owner case verified the same immutable artifact and rejected admission with an
+unchanged occupied coordinator; the original success fixture still verified accepted=1/rejected=1
+and preserved both read-only replays, D1/D2 receipts/checkpoints and native file identities.
+
+An intermediate corrected Linux pair passed its stale-owner case but exposed a fixture query
+that still assumed one run row after the queued run was moved earlier (1 of 2 cases errored).
+The query was scoped to the executing run before the passing pair and full focused matrix.
+This development attempt is not counted as a successful final pass. Temporary diagnostics/aging
+reproductions are likewise evidence of the failure path, not additional distinct passing coverage.
+
+The **single broader macOS regression after focused stabilization passed**: **326 units + 262
+PostgreSQL cases**, no failures/errors/skips, in **608.60s** (Maven 10m04s). Integration coverage
+was WorkerCoordination 56 (33.08s), D3 32 (385.8s), ControlAdmission 52 (26.84s), D1 51 (46.72s),
+D2 43 (83.67s) and Persistence 28 (13.23s). The harness performed separate actual PostgreSQL
+container restarts for D1 and D2. Expected negative-startup logs inside PersistenceIT did not
+represent test errors. No full-platform or second broad regression was run for this correction.
+
+The final CI-policy/gate regression passed **22 tests in 2.185s**. `actionlint` accepted workflow
+syntax; a complete working-tree classification selected all five backend jobs. Direct comparison
+with HEAD confirmed the workflow changed only the PostgreSQL timeout/comment, preserving all other
+settings. Markdown/relative-link and repository hygiene checks passed.
+
+Distinct final coverage is **654 cases**: 588 in the broader run + 44 additional Linux admission
+cases + 22 CI-policy cases. The focused run's 60 units and 32 D3 cases overlap the broader run;
+isolated pairs/reproductions likewise add no distinct final coverage. Native processing is real
+within these integration cases and is not counted again as separate Python tests. Historical
+D3 implementation/native-suite results elsewhere are not added to this correction's totals.
+
+Exactly five tracked files change: `.github/workflows/ci.yml`, `.github/ci/tests/test_policy.py`,
+`services/content-api/src/test/java/platform/contentapi/management/RssSilverIT.java`,
+`docs/operations/ci.md` and `docs/operations/managed-rss-fetch.md`. Production Java/Python,
+migrations, dependencies and accepted ADRs are unchanged. Generated logs, container recipes
+and disposable data remain ignored/local. No branches, index entries, commits, pushes, PRs,
+issue state or GitHub settings were changed by this work.
+
+Outstanding verification is a fresh hosted Ubuntu 24.04 x86_64 run of the corrected head:
+confirm the complete PostgreSQL profile, including SilverImportIT and later suites, finishes
+within 90 minutes and all five required backend jobs plus the aggregate pass. The exact original
+hosted heartbeat age was not retained; the new phase diagnostics will expose it on future runs.
+The longer budget is not a throughput optimization or scalability result. Operational Content
+recovery, D4/Gold/enrichment and production Content dispatch remain outside this correction.

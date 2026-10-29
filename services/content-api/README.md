@@ -1712,3 +1712,13 @@ records validation and limits. Earlier sections describing absent production inv
 this section supersedes that invocation boundary only. CANCEL/RETRY, automatic startup recovery,
 RSS/Content execution, multiworker operation and Operations UI remain outside this checkpoint.
 No accepted ADR/native contract changes or new infrastructure/dependencies are introduced.
+
+## E5 D3 internal managed Silver
+
+Managed Content Processing remains **Partially implemented**. The internal `RssSilverExecution`
+seam extends D1/D2 with one fenced `SILVER` invocation per exact committed Bronze receipt,
+native Spark publication, independent Silver qualification and atomic artifact/stage linkage.
+Production Content dispatch remains disabled; no Gold/enrichment stage or terminal Content
+run is implemented. Content reconciliation remains unsupported by the Reliability operator
+command. See the [D3 operator contract and measured tests](../../docs/operations/managed-rss-fetch.md#d3-managed-silver-lifecycle)
+and [ADR 0015 implementation record](../../docs/adr/0015-managed-silver-receipt-adapter.md).
