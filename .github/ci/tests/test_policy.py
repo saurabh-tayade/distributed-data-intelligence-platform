@@ -358,7 +358,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('docker rm --force --volumes "ddip-ci-bronze-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"', body)
         self.assertIn("if: ${{ always() }}", body)
         pom = (ROOT / "services/content-api/pom.xml").read_text(encoding="utf-8")
-        for suite in ("RssFetchIT", "RssBronzeIT", "PersistenceIT", "WorkerCoordinationIT", "ControlAdmissionIT"):
+        for suite in ("RssFetchIT", "RssBronzeIT", "RssSilverIT", "PersistenceIT", "WorkerCoordinationIT", "ControlAdmissionIT"):
             self.assertIn(f"**/{suite}.java", pom)
 
     def test_graph_filters_and_required_contexts(self):

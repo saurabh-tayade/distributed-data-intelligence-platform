@@ -721,3 +721,16 @@ suite were not run locally; the evidence above is the requested scoped backend/S
 Production Content dispatch, managed Gold/enrichment, operational Content recovery and
 large-scale validation remain deferred. ADR 0015 remains an implementation record awaiting
 owner acceptance; accepted ADRs are unchanged.
+
+### PR #71 hosted CI correction
+
+The initial hosted D3 run exposed a test ordering dependency on the 30-second active-owner
+admission heartbeat window. Full read-only replay intentionally does not heartbeat execution;
+submitting another run after two slow inspections correctly failed closed. The fixture now
+checks queued admission/competing ownership while actively heartbeating, before replay, and adds
+a deterministic stale-owner replay/admission rejection case. The original immutable publication,
+receipt, duplicate-launch and occupied-slot checks remain. No application fencing, supervision,
+recovery or native processing behavior changes. See the
+[root cause, hosted/local evidence and 90-minute PostgreSQL job budget](ci.md#pr-71--d3-hosted-failure-and-postgresql-budget).
+Managed Content remains **Partially implemented**; D4, Gold/enrichment, operational Content recovery
+and production Content dispatch remain deferred.

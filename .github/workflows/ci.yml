@@ -167,8 +167,8 @@ jobs:
     needs: changes
     if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.content_postgres != 'false') }}
     runs-on: ubuntu-24.04
-    # Phase 1 main hosted test step: 47m05s; retain native/process lifecycle headroom.
-    timeout-minutes: 60
+    # PR #71 hit the 60m job limit with native Silver/import checks still running.
+    timeout-minutes: 90
     services:
       postgres:
         image: postgres:17.11-bookworm@sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826

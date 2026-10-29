@@ -40,17 +40,45 @@ class RssSilverIT extends RssFetchFixtures {
     void occupied(){assertThat(jdbc.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isEqualTo(owner.attemptId());assertThat(count("stage_artifacts")).isZero();assertThat(requests.get()).isEqualTo(1);assertThat(proxy.puts.get()).isEqualTo(2);assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.stage_invocations WHERE stage IN ('PREPARE_GOLD','PUBLISH_GOLD','PUBLISH_CONTENT')",Integer.class)).isZero();}
     void fixture(String mode,String... extra)throws Exception {String cp=Path.of("../../ingestion/target/test-classes").toRealPath()+java.io.File.pathSeparator+String.join(java.io.File.pathSeparator,java.util.stream.StreamSupport.stream(manifest.get("classpath").spliterator(),false).map(n->n.get("path").stringValue()).toList());var command=new ArrayList<>(List.of(Path.of(System.getProperty("java.home"),"bin/java").toString(),"-cp",cp,"platform.ingestion.managed.BronzeFixture",mode,journal.toString()));command.addAll(List.of(extra));var p=new ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.DISCARD).redirectOutput(ProcessBuilder.Redirect.DISCARD).start();assertThat(p.waitFor(40,java.util.concurrent.TimeUnit.SECONDS)).isTrue();assertThat(p.exitValue()).isZero();}
     @Test void exactNativePublicationAndFullyVerifiedReplay()throws Exception {
-        prepare();var original=snapshot(journal);var checkpoints=jdbc.queryForList("SELECT stage,state,row_version,checkpoint_id,command_sha256,result_sha256 FROM ddip_management.stage_invocations ORDER BY stage");byte[] receipt=jdbc.queryForObject("SELECT receipt_bytes FROM ddip_management.rss_deliveries",byte[].class);var stored=execute();owner=stored.owner();
+        prepare();
+        // Admission needs a live execution owner. Read-only replay below intentionally cannot heartbeat it.
+        owner=workers.heartbeat(guard,owner);diagnose("before-queued-admission");
+        var unrelated=content();((tools.jackson.databind.node.ObjectNode)unrelated.get("fetchSources").get(0)).put("revision",2);submit(unrelated,"unrelated-content");
+        assertThatThrownBy(()->workers.claim(guard,owner.worker(),UUID.randomUUID())).isInstanceOf(WorkerFailure.class).hasMessage("WORKER_NOT_READY");
+        var original=snapshot(journal);var checkpoints=jdbc.queryForList("SELECT stage,state,row_version,checkpoint_id,command_sha256,result_sha256 FROM ddip_management.stage_invocations ORDER BY stage");byte[] receipt=jdbc.queryForObject("SELECT receipt_bytes FROM ddip_management.rss_deliveries",byte[].class);
+        var stored=checked("publish",this::execute);owner=stored.owner();
         var evidence=SourceJson.parse(stored.evidence());assertThat(evidence.get("verification").get("native").get("counts")).isEqualTo(SourceJson.object().put("accepted",1).put("rejected",1));
         System.out.println("D3_NATIVE_EVIDENCE "+SourceJson.object().put("accepted",1).put("rejected",1).put("artifactId",stored.artifact().toString()).put("inventorySha256",evidence.get("verification").get("inventoryIdentity").get("sha256").stringValue()).put("completionSha256",SourceJson.sha(Files.readAllBytes(namespace().resolve("complete.json")))));
         assertThat(evidence.get("selection").get("identity").get("ingestionId")).isEqualTo(SourceJson.parse(receipt).get("ingestionId"));
-        var before=snapshot(namespace());assertThat(inspectSilver()).isEqualTo(stored.artifact());assertThat(inspectSilver()).isEqualTo(stored.artifact());assertThat(snapshot(namespace())).isEqualTo(before);
+        var before=snapshot(namespace());diagnose("before-first-inspection");assertThat(checked("first-inspection",this::inspectSilver)).isEqualTo(stored.artifact());diagnose("after-first-inspection");assertThat(checked("second-inspection",this::inspectSilver)).isEqualTo(stored.artifact());diagnose("after-second-inspection");assertThat(snapshot(namespace())).isEqualTo(before);
         assertThat(snapshot(journal)).isEqualTo(original);assertThat(jdbc.queryForObject("SELECT receipt_bytes FROM ddip_management.rss_deliveries",byte[].class)).isEqualTo(receipt);
         assertThat(jdbc.queryForList("SELECT stage,state,row_version,checkpoint_id,command_sha256,result_sha256 FROM ddip_management.stage_invocations WHERE stage<>'SILVER' ORDER BY stage")).isEqualTo(checkpoints);
         assertThat(count("artifacts")).isEqualTo(6);assertThat(count("stage_artifacts")).isEqualTo(1);assertThat(count("stage_invocations")).isEqualTo(3);assertThatThrownBy(this::execute).isInstanceOf(RuntimeException.class);
-        assertThat(jdbc.queryForObject("SELECT state FROM ddip_management.runs",String.class)).isEqualTo("RUNNING");assertThat(requests.get()).isEqualTo(1);assertThat(proxy.puts.get()).isEqualTo(2);
-        var unrelated=content();((tools.jackson.databind.node.ObjectNode)unrelated.get("fetchSources").get(0)).put("revision",2);submit(unrelated,"unrelated-content");assertThatThrownBy(()->workers.claim(guard,owner.worker(),UUID.randomUUID())).isInstanceOf(WorkerFailure.class);assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.runs WHERE state='QUEUED'",Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT state FROM ddip_management.runs WHERE run_id=?",String.class,owner.runId())).isEqualTo("RUNNING");assertThat(requests.get()).isEqualTo(1);assertThat(proxy.puts.get()).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.runs WHERE state='QUEUED'",Integer.class)).isEqualTo(1);
         assertThat(jdbc.queryForList("SELECT child_pid,child_started_at,child_instance_id FROM ddip_management.stage_invocations WHERE stage='SILVER'").getFirst().values()).doesNotContainNull();
+    }
+    @Test void readOnlyReplayDoesNotRenewStaleOwnership()throws Exception {
+        prepare();var stored=checked("publish-for-stale-replay",this::execute);owner=stored.owner();var nativeBefore=snapshot(namespace());byte[] receipt=jdbc.queryForObject("SELECT receipt_bytes FROM ddip_management.rss_deliveries",byte[].class);
+        // Model elapsed time without a 30-second sleep or a relaxed production freshness policy.
+        jdbc.update("UPDATE ddip_management.coordinator SET heartbeat_at=clock_timestamp()-interval '31 seconds',row_version=row_version+1");
+        var coordinator=jdbc.queryForMap("SELECT * FROM ddip_management.coordinator");diagnose("before-stale-inspection");
+        assertThat(checked("stale-inspection",this::inspectSilver)).isEqualTo(stored.artifact());diagnose("after-stale-inspection");
+        var request=content();((tools.jackson.databind.node.ObjectNode)request.get("fetchSources").get(0)).put("revision",2);
+        assertThatThrownBy(()->submit(request,"stale-admission")).isInstanceOf(SourceFailure.class).hasMessage("COORDINATOR_RECOVERY_REQUIRED");
+        assertThat(jdbc.queryForMap("SELECT * FROM ddip_management.coordinator")).isEqualTo(coordinator);
+        assertThat(snapshot(namespace())).isEqualTo(nativeBefore);assertThat(jdbc.queryForObject("SELECT receipt_bytes FROM ddip_management.rss_deliveries",byte[].class)).isEqualTo(receipt);
+        assertThat(count("runs")).isEqualTo(1);assertThat(count("artifacts")).isEqualTo(6);assertThat(count("stage_artifacts")).isEqualTo(1);assertThat(count("stage_invocations")).isEqualTo(3);
+        assertThatThrownBy(this::execute).hasMessage("OWNERSHIP_LOST");assertThat(jdbc.queryForMap("SELECT * FROM ddip_management.coordinator")).isEqualTo(coordinator);
+    }
+    <T> T checked(String phase,java.util.concurrent.Callable<T> action)throws Exception {try{return action.call();}catch(Exception | AssertionError failure){diagnose("failed-"+phase);throw failure;}}
+    void diagnose(String phase){
+        // Fixed scalar projection only: no paths, request/receipt bytes, credentials, payload or raw exceptions.
+        boolean held;try{guard.checkHeld(INSTALL);held=true;}catch(RuntimeException failure){held=false;}
+        try {
+            var rows=jdbc.queryForList("SELECT c.mode,c.epoch,c.row_version,c.active_attempt_id IS NOT NULL AS occupied,c.owner_instance_id=? AS same_worker,c.heartbeat_at>=clock_timestamp()-interval '30 seconds' AS admission_fresh,floor(extract(epoch FROM clock_timestamp()-c.heartbeat_at)*1000)::bigint AS heartbeat_age_ms,w.status AS worker_state,a.state AS attempt_state,r.state AS run_state,r.current_stage,s.state AS silver_state,s.child_pid IS NOT NULL AS child_recorded FROM ddip_management.coordinator c LEFT JOIN ddip_management.worker_instances w ON w.instance_id=c.owner_instance_id LEFT JOIN ddip_management.attempts a ON a.attempt_id=c.active_attempt_id LEFT JOIN ddip_management.runs r ON r.run_id=a.run_id LEFT JOIN ddip_management.stage_invocations s ON s.attempt_id=a.attempt_id AND s.stage='SILVER' AND s.item_ordinal=0 WHERE c.singleton_id=1",guard.process().instanceId());
+            System.out.println("D3_CHECKPOINT "+phase+" guard_held="+held+" "+rows);
+        }catch(RuntimeException failure){System.out.println("D3_CHECKPOINT "+phase+" guard_held="+held+" DIAGNOSTICS_UNAVAILABLE");}
     }
     @ParameterizedTest @ValueSource(strings={"INTENT","BEFORE_AUTHORIZATION","AUTHORIZED","AFTER_CHILD","VERIFIED"}) void crashNeverRelaunchesSpark(String boundary)throws Exception {
         prepare();var latest=new java.util.concurrent.atomic.AtomicReference<WorkerRepository.Owner>();assertThatThrownBy(()->execute((p,o)->{latest.set(o);if(p.equals(boundary))throw new AssertionError("crash");})).isInstanceOf(AssertionError.class);owner=latest.get();occupied();var before=snapshot(roots.get(SILVER_BINDING));workers=WorkerTestSupport.enabled(jdbc,tx,INSTALL);assertThatThrownBy(this::execute).isInstanceOf(RuntimeException.class);assertThat(snapshot(roots.get(SILVER_BINDING))).isEqualTo(before);
