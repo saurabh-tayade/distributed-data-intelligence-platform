@@ -63,18 +63,27 @@ final class RssSilverExecution {
     /** Full read-only qualification and committed linkage lookup after an uncertain acknowledgment.
      * No Owner adoption, stage mutation or Spark writer authorization. */
     UUID inspect(InstallationHostGuard guard,UUID run,String source,String runtimeId){
-        var c=context(guard,run,source,runtimeId);var rows=tx.required(()->jdbc.queryForList("SELECT s.*,a.artifact_id,b.evidence_bytes,b.evidence_sha256 FROM ddip_management.stage_invocations s JOIN ddip_management.stage_artifacts a USING(attempt_id,stage,item_ordinal) JOIN ddip_management.artifacts b USING(artifact_id) WHERE s.attempt_id=? AND s.stage='SILVER' AND s.item_ordinal=? AND s.state='VERIFIED' AND a.role='RESULT' AND a.ordinal=0",c.bronze.attempt,c.bronze.ordinal));
+        var c=context(guard,run,source,runtimeId);var original=committed(guard,c);
+        byte[] evidence=verify(guard,c,UUID.randomUUID(),SourceJson.parse(c.bronze.descriptor).get("ownerEpoch").longValue(),c::check,c::check);
+        need(Arrays.equals(evidence,SourceJson.canonical(original.get("qualification"))),INPUT_CHANGED);return UUID.fromString(original.get("artifactId").stringValue());
+    }
+    /** Original D3 anchor/receipt proof only. Downstream MUST independently qualify the selected files. */
+    JsonNode committed(InstallationHostGuard guard,UUID run,String source,String runtimeId){return committed(guard,context(guard,run,source,runtimeId));}
+    private JsonNode committed(InstallationHostGuard guard,Context c){
+        UUID run=c.bronze.run;
+        var rows=tx.required(()->jdbc.queryForList("SELECT s.*,a.artifact_id,b.evidence_bytes,b.evidence_sha256,b.native_identity,b.storage_binding_id,b.relative_address,b.kind,b.product_id,b.contract_version,b.processor_revision FROM ddip_management.stage_invocations s JOIN ddip_management.stage_artifacts a USING(attempt_id,stage,item_ordinal) JOIN ddip_management.artifacts b USING(artifact_id) WHERE s.attempt_id=? AND s.stage='SILVER' AND s.item_ordinal=? AND s.state='VERIFIED' AND a.role='RESULT' AND a.ordinal=0",c.bronze.attempt,c.bronze.ordinal));
         need(rows.size()==1,INPUT_UNAVAILABLE);var row=rows.getFirst();String namespace=(String)row.get("intended_namespace");
         need(namespace.equals("runs/"+run+"/attempts/"+c.bronze.attempt+"/silver/"+row.get("checkpoint_id")),INPUT_INVALID);
         Path dir=guard.binding().root().resolve(namespace);byte[] anchor=PreflightFiles.read(dir.resolve("verified.json"),65536,true);need(SourceJson.sha(anchor).equals(row.get("result_sha256")),INPUT_CHANGED);var a=PreflightFiles.canonical(anchor,65536);
         byte[] command=PreflightFiles.read(dir.resolve("command.json"),65536,true),result=PreflightFiles.read(dir.resolve("result.json"),65536,true);
         need(SourceJson.sha(command).equals(row.get("command_sha256")) && SourceJson.sha(command).equals(a.get("commandSha256").stringValue()) && SourceJson.sha(result).equals(a.get("resultSha256").stringValue()) && SourceJson.sha(c.bronze.receipt).equals(a.get("receiptSha256").stringValue()) && c.runtime.digest.equals(a.get("runtimeSha256").stringValue()) && SourceJson.sha(SourceJson.canonical(c.artifact)).equals(row.get("intended_identity")),INPUT_CHANGED);
-        byte[] evidence=verify(guard,c,UUID.randomUUID(),SourceJson.parse(command).get("ownerEpoch").longValue(),c::check,c::check);
         Path verification=dir.getParent().getParent().resolve("verify-silver").resolve(row.get("checkpoint_id").toString());
         byte[] verificationAnchor=verificationAnchor(verification);need(SourceJson.sha(verificationAnchor).equals(a.get("verificationSha256").stringValue()),INPUT_CHANGED);
         var v=PreflightFiles.canonical(verificationAnchor,65536);byte[] nativeSelection=PreflightFiles.read(verification.resolve("selection.json"),512*1024,true);
         need(SourceJson.sha(nativeSelection).equals(v.get("selectionSha256").stringValue()) && SourceJson.parse(nativeSelection).get("inputSetFingerprint").equals(a.get("nativeInputSetFingerprint")),INPUT_CHANGED);
-        need(Arrays.equals(evidence,(byte[])row.get("evidence_bytes")) && SourceJson.sha(evidence).equals(row.get("evidence_sha256")) && SourceJson.sha(evidence).equals(a.get("artifactEvidenceSha256").stringValue()),INPUT_CHANGED);return (UUID)row.get("artifact_id");
+        byte[] evidence=(byte[])row.get("evidence_bytes");var qualified=RegisteredImportEvidence.validate(evidence,(String)row.get("evidence_sha256"));
+        need(SourceJson.sha(evidence).equals(a.get("artifactEvidenceSha256").stringValue()) && qualified.evidence().get("selection").equals(c.artifact) && qualified.evidence().get("verification").get("inventoryIdentity").get("sha256").stringValue().equals(row.get("native_identity")) && qualified.selection().bindingId().equals(row.get("storage_binding_id")) && qualified.selection().address().equals(row.get("relative_address")) && "SILVER".equals(row.get("kind")) && "content-intelligence".equals(row.get("product_id")) && ((Number)row.get("contract_version")).intValue()==1 && ((Number)row.get("processor_revision")).intValue()==1,INPUT_CHANGED);
+        var selected=SourceJson.object().put("artifactId",row.get("artifact_id").toString()).put("originRunId",run.toString()).put("sourceId",c.bronze.source).put("evidenceSha256",SourceJson.sha(evidence));selected.set("qualification",qualified.evidence());selected.set("receipt",SourceJson.parse(c.bronze.receipt));selected.set("bronze",c.bronze.storage.get("configuration"));selected.put("credentialsSha256",SourceJson.sha(c.bronze.credentials));return selected;
     }
     private byte[] verify(InstallationHostGuard guard,Context c,UUID checkpoint,long epoch,Runnable before,Runnable heartbeat){
         var files=new PreflightFiles(guard,c.bronze.run,c.bronze.attempt,checkpoint,"VERIFY_SILVER");byte[] command=command(c,checkpoint,epoch,"VERIFY");files.write("command.json",command,65536);

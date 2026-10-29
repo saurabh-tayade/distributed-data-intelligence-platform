@@ -23,7 +23,7 @@ The CLI prints one JSON result: `PROCESSED` or `SKIPPED` with a root-relative pu
 ## Reusable interfaces
 
 ```python
-from gold_publication import run, publish, verify_frames
+from gold_publication import run, publish, verify_frames, verify_publication
 from silver_inputs import load_inputs
 
 result = run(spark, silver_root="outputs/bronze-to-silver",
@@ -32,9 +32,19 @@ result = run(spark, silver_root="outputs/bronze-to-silver",
 # Or reuse a previously validated input set:
 inputs = load_inputs(spark, "outputs/bronze-to-silver")
 result = publish(inputs, "outputs/gold")
+# Full read-only verification of an already completed exact publication:
+completed = verify_publication(inputs, "outputs/gold")
 ```
 
 `publish(inputs, output_root)` builds both Gold DataFrames internally and owns the full write/verification lifecycle. `run(spark, silver_root, output_root, sources=(), markers=())` first calls `load_inputs()`. Both raise `PublicationFailure` for publication errors or propagate M2.2 `InputFailure`. The exceptions expose fixed `code`, relative `path` and `details` fields.
+
+The additive `verify_publication(inputs, output_root)` requires exact validated Silver inputs,
+uses the existing Gold reader for completed metadata, then performs the publisher's full native
+read-back verification against Gold computed from those inputs. It returns completion metadata
+and never invokes the writer, creates an absent namespace or repairs incomplete output. Native
+reader errors also propagate. [Managed D4](../operations/managed-rss-fetch.md#d4-managed-gold-lifecycle)
+runs this entry point in an independent supervised process with additional DuckDB and bounded
+filesystem-evidence checks. Standalone CLI, publication identity and dataset semantics are unchanged.
 
 `verify_frames(inputs, expected, actual)` performs Spark value/key/provenance, reconciliation and full-row checks and returns only two scalar output row counts. The publisher inspects every physical file schema before using this function; it is not a standalone file-integrity check. `output_inventory(directory)` inventories both exact flat dataset directories using root-relative paths, byte lengths and SHA-256 digests; it does not itself validate completion metadata.
 

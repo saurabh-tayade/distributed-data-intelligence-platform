@@ -8,6 +8,9 @@ import tools.jackson.databind.JsonNode;
 public final class RegisteredImportEvidence {
     private RegisteredImportEvidence() { }
     public record Qualified(ImportCatalog.Entry selection,JsonNode evidence) { }
+    /** Imported Silver uses the original address identity; managed D3 uses its qualified inventory digest.
+     * This is metadata compatibility only. D4 additionally requires the committed D3 stage/anchor proof. */
+    public static boolean matchesIdentity(Qualified q,Object identity){return q.selection().nativeIdentity().equals(identity) || q.selection().silver() && q.evidence().get("verification").get("inventoryIdentity").get("sha256").stringValue().equals(identity);}
     public static Qualified validate(byte[] bytes,String digest) {
         try {
         var n=ImportJson.parse(bytes,ImportJson.PROTOCOL_LIMIT);

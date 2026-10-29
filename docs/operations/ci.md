@@ -42,7 +42,7 @@ flowchart LR
 | ingestion | Existing Java ingestion and batch-launch script checks | 10 minutes |
 | processing_python | All Python processing, Spark and DuckDB tests | 30 minutes |
 | analytics_jdbc | Fresh synthetic Gold fixtures, Python references and Java JDBC compatibility | 15 minutes |
-| content_postgres | Content API unit/component tests and complete PostgreSQL execution/recovery profile | 60 minutes |
+| content_postgres | Content API unit/component tests and complete PostgreSQL execution/recovery profile | 90 minutes |
 | analytics_http | Fresh synthetic Gold fixtures, content API unit/component tests and GoldApiIT HTTP/native compatibility | 15 minutes |
 | processing | Existing required backend context; classification and five-suite aggregate | 5 minutes |
 | documentation | Existing Markdown/link/hygiene checks plus focused CI policy tests | 5 minutes |
@@ -56,6 +56,13 @@ job. The tests wait for an actual SDK bucket read; an always-running cleanup rem
 and anonymous volumes. PostgreSQL services, native fixtures, verification commands and native child timeouts remain
 unchanged. Each job owns its workspace. See [managed RSS/Bronze validation](managed-rss-fetch.md) for
 the local harness and actual restart coverage. Hosted execution of the new storage setup is pending.
+
+D4 adds `RssGoldIT` to the same PostgreSQL profile. Its complete dependency selection, real native
+Gold/Spark/DuckDB qualification and acknowledgment/restart faults use the existing pinned setup.
+The local scoped regression additionally covers submission/history metadata compatibility with D3
+artifacts. Shared policy/POM changes select all five backend jobs; no selector, aggregate requirement,
+runtime pin or job timeout changes for D4. Hosted Ubuntu timing and 90-minute job headroom still
+require measurement; local timings appear in the [D4 operator evidence](managed-rss-fetch.md#d4-managed-gold-lifecycle).
 
 The five backend suites depend only on changes and remain parallel with one another. Fixtures are
 never shared between job workspaces. The aggregate has no checkout, installation or network dependency.
