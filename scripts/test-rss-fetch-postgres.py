@@ -2,7 +2,7 @@
 """Managed RSS/Bronze acceptance with disposable PostgreSQL and optional real SeaweedFS.
 
 Requires Docker, Maven and JAVA_HOME (JDK 21). Uses synthetic HTTP and owned local storage only;
-no live publisher, AWS, Python/Spark processing or existing database is used.
+no live publisher, AWS or existing database is used. --silver runs actual pinned Spark.
 """
 import argparse
 import os
@@ -26,7 +26,11 @@ def main():
     parser.add_argument("--regression", action="store_true", help="also run all content-api units and existing persistence/worker/control integration suites")
     parser.add_argument("--case", help="run one RssFetchIT (or --bronze RssBronzeIT) method during development")
     parser.add_argument("--bronze", action="store_true", help="D2 acceptance with actual disposable SeaweedFS")
+    parser.add_argument("--silver", action="store_true", help="D3 acceptance with actual disposable SeaweedFS and pinned Spark")
     args = parser.parse_args()
+    if args.silver:
+        args.bronze = True
+        assert os.environ.get("DDIP_TEST_PYTHON"), "--silver requires the absolute pinned Python executable"
     if args.case and (args.regression or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", args.case)):
         parser.error("--case requires a single method name and cannot be combined with --regression")
     root = Path(__file__).resolve().parent.parent
@@ -112,14 +116,14 @@ def main():
             subprocess.run(maven + ["-f", "ingestion/pom.xml", "-DskipTests", "package"], cwd=root, env=env, check=True)
             command = maven + ["-f", "services/content-api/pom.xml", "-Ppostgres"]
             if args.regression:
-                command += ["-Dit.test=RssFetchIT,PersistenceIT,WorkerCoordinationIT,ControlAdmissionIT" + (",RssBronzeIT" if args.bronze else "")]
+                command += ["-Dit.test=RssFetchIT,PersistenceIT,WorkerCoordinationIT,ControlAdmissionIT" + (",RssBronzeIT" if args.bronze else "") + (",RssSilverIT" if args.silver else "")]
             else:
                 command += ["-Dtest=RuntimeRoleTest,WorkerCapabilityTest,InstallationHostGuardTest,VerifierProcessTest",
-                            "-Dit.test=" + ("RssBronzeIT" if args.bronze else "RssFetchIT") + ("#" + args.case if args.case else "")]
+                            "-Dit.test=" + ("RssSilverIT" if args.silver else "RssBronzeIT" if args.bronze else "RssFetchIT") + ("#" + args.case if args.case else "")]
             command += [f"-Dddip.test.rss-restart-signal={signal}", f"-Dddip.test.bronze-restart-signal={bronze_signal}", "verify"]
             result = subprocess.run(command, cwd=root, env=env)
             assert result.returncode == 0, "Managed RSS/Bronze acceptance failed"
-            expected_restart = ({"rss", "bronze"} if args.regression and args.bronze else {"bronze" if args.bronze else "rss"}) if args.case in (None, "checkpointSurvivesActualDatabaseRestart") else set()
+            expected_restart = ({"rss", "bronze"} if args.regression and args.bronze else set() if args.silver else {"bronze" if args.bronze else "rss"}) if args.case in (None, "checkpointSurvivesActualDatabaseRestart") else set()
             assert not errors and set(restarted) == expected_restart, f"Restart controller incomplete: {restarted}, {errors}"
     finally:
         stop.set()

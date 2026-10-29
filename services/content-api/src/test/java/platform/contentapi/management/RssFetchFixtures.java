@@ -26,6 +26,7 @@ abstract class RssFetchFixtures extends RunApiFixtures {
     final AtomicInteger requests=new AtomicInteger();
     final AtomicInteger nonGet=new AtomicInteger();
     final byte[] payload={'<','f','e','e','d','>',0,(byte)0xff,'\r','\n'};
+    byte[] feedPayload(){return payload;}
     HttpServer http;java.util.concurrent.ExecutorService httpExecutor;String endpoint,behavior;InstallationHostGuard guard;WorkerRepository workers;
     WorkerRepository.Session session;WorkerRepository.Owner owner;JsonNode manifest;
     String runtime="rss-fetch-test";int timeout=1000;
@@ -55,7 +56,7 @@ abstract class RssFetchFixtures extends RunApiFixtures {
                 exchange.getResponseHeaders().add("Content-Type","application/atom+xml; charset=UTF-8");
                 if(behavior.equals("malformed"))exchange.getResponseHeaders().add("Transfer-Encoding","chunked");
                 if(behavior.equals("oversize")){exchange.sendResponseHeaders(200,0);byte[] chunk=new byte[8192];for(int i=0;i<641;i++)exchange.getResponseBody().write(chunk);}
-                else {exchange.sendResponseHeaders(behavior.equals("http-error")?503:200,behavior.equals("chunked")?0:payload.length);exchange.getResponseBody().write(payload);}
+                else {byte[] bytes=feedPayload();exchange.sendResponseHeaders(behavior.equals("http-error")?503:200,behavior.equals("chunked")?0:bytes.length);exchange.getResponseBody().write(bytes);}
             }catch(java.io.IOException ignored){ }finally{exchange.close();}});
             httpExecutor=java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();http.setExecutor(httpExecutor);http.start();endpoint="http://127.0.0.1:"+http.getAddress().getPort()+"/feed";
         }catch(Exception ex){throw new IllegalStateException(ex);}

@@ -2,7 +2,7 @@
 
 Status: **Accepted — October 20, 2026**, with the Stage A.1 refinements, under [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md). The owner accepted additive [ADR 0011](../adr/0011-artifact-import-maintenance-ownership.md) on October 21. Architecture acceptance alone passes no E5 test group. Current implementation and authorization are recorded below; earlier checkpoint status paragraphs and counts remain historical. Accepted ADRs and native data contracts are unchanged.
 
-Current checkpoint: [D1/D2 managed RSS journal and Bronze receipts](../operations/managed-rss-fetch.md#d2-storage-and-receipt-lifecycle) implement internal fenced fetch/storage stages and independent read-only receipt confirmation. Managed Content remains **Partially implemented**; managed Silver/Gold and production Content dispatch remain deferred. The fixed Reliability worker remains active with one pinned profile per startup. [C3c.4 controlled operational recovery](#c3c4-controlled-operational-recovery) connects C3a–C3c.3 admission, occupied handoff, guarded bootstrap, independent verification and transactional finalization through a trusted local non-web operator command. Fresh explicit process/evidence review is required before handoff and finalization. Its packaged acceptance and complete backend regression evidence are recorded below. Execution Recovery remains **Partially implemented**; Content execution, cancellation, guarded retry, automatic recovery and Operations UI remain deferred. Earlier checkpoint status paragraphs and counts are historical.
+Current checkpoint: [D1/D2/D3 managed RSS journal, Bronze receipts and Silver](../operations/managed-rss-fetch.md#d3-managed-silver-lifecycle) implement internal fenced fetch/storage/Silver stages and independent receipt/output verification. Managed Content remains **Partially implemented**; D3 adds internal managed Silver, while Gold and production Content dispatch remain deferred. The fixed Reliability worker remains active with one pinned profile per startup. [C3c.4 controlled operational recovery](#c3c4-controlled-operational-recovery) connects C3a–C3c.3 admission, occupied handoff, guarded bootstrap, independent verification and transactional finalization through a trusted local non-web operator command. Fresh explicit process/evidence review is required before handoff and finalization. Its packaged acceptance and complete backend regression evidence are recorded below. Execution Recovery remains **Partially implemented**; Content execution, cancellation, guarded retry, automatic recovery and Operations UI remain deferred. Earlier checkpoint status paragraphs and counts are historical.
 
 ## Boundary and invariants
 
@@ -3147,3 +3147,47 @@ Content wiring, explicit storage-only retry authority, orphan receipt finalizati
 qualification remain deferred. Reliability production dispatch/recovery and standalone Content/native
 contracts remain unchanged. Hosted D2 validation and full native Spark execution are separate from the
 scoped local D1/D2, metadata, supervision and control regression recorded in the guide.
+
+## D3 managed Bronze-to-Silver checkpoint
+
+Managed Content Processing remains **Partially implemented**. D3 is an internal extension
+of D1/D2; production `WorkerExecutionCapability` and `WorkerIdleLifecycle` still dispatch
+only Reliability. There is no managed Gold/enrichment or operational Content recovery.
+See [the D3 operator contract](../operations/managed-rss-fetch.md#d3-managed-silver-lifecycle)
+and [implementation record ADR 0015](../adr/0015-managed-silver-receipt-adapter.md).
+
+Every selected delivery must be committed `BRONZE_VERIFIED`. For each frozen source ordinal,
+D3 reopens the original D1 journal and committed D2 stage anchor and independently checks
+both actual Bronze objects. The command freezes the exact original receipt, source revision,
+ingestion UUID/time, metadata/payload keys, run/attempt, storage binding and approved runtime.
+No listing, latest selection, implicit expansion or publisher request enters this boundary.
+The adapter calls native `bronze_to_silver.process_one` with verified frozen bytes. Native
+observation semantics, physical Parquet schemas, partition layout and completion identities
+remain unchanged; management IDs never replace ingestion IDs or enter native fingerprints.
+
+The existing fenced `SILVER` stage transitions `INTENT` → single-use launch authorization →
+`RUNNING` → independent qualification → final read-only evidence recheck → `VERIFIED`.
+The intent commits before output-capable launch. Short authority transactions check exact
+owner/epoch/instance/versions, frozen selection, installation guard, controls and deadline.
+The existing supervisor records process identity, drains bounded output, heartbeats every
+five seconds, imposes the reviewed deadline, observes descendants and terminates/reaps on
+failure. There is no PostgreSQL transaction during Spark work. Known supervised failures
+become `UNKNOWN`/`RECOVERY_REQUIRED` when current authority can commit; stale authority or
+lost acknowledgments leave conservative occupied evidence. A duplicate invocation never
+relaunches an existing Silver intent, including one without a recorded child PID.
+
+Process success does not verify Silver. A separate supervised process uses the existing
+Silver import qualifier and `silver_inputs.load_inputs` against only the intended marker.
+It checks physical schemas/files, accounting and provenance, then binds the original marker
+bytes, complete file/directory inventory and Bronze hashes. A final GET/hash/inventory
+recheck precedes the atomic artifact, `stage_artifacts`, verified stage and audit transaction.
+The registered artifact uses the existing Silver qualification format and inventory identity;
+its linkage to the exact D2 receipt is retained in the stage command and verified anchor.
+No schema migration or new data-product version is necessary.
+
+Full read-only inspection may confirm a committed stage after a lost verification
+acknowledgment. It checks the stage anchor, original identity and freshly qualified artifact
+against registered evidence; it neither adopts ownership nor registers another result.
+An incomplete, missing, corrupt or changed namespace cannot be overwritten, repaired, resumed
+or deleted. Occupied ownership remains until a future supported Content recovery procedure.
+Reliability operator reconciliation is explicitly incompatible with these Content stages.
