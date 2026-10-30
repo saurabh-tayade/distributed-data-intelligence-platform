@@ -2,7 +2,7 @@
 
 Status: **Accepted — October 20, 2026**, with the Stage A.1 refinements, under [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md). The owner accepted additive [ADR 0011](../adr/0011-artifact-import-maintenance-ownership.md) on October 21. Architecture acceptance alone passes no E5 test group. Current implementation and authorization are recorded below; earlier checkpoint status paragraphs and counts remain historical. Accepted ADRs and native data contracts are unchanged.
 
-Current checkpoint: [D5a managed Content successful completion](../operations/managed-rss-fetch.md#d5a-managed-content-successful-completion) extends internal D1–D4 with exact-reference Content publication, independent verification and fenced successful finalization. Managed Content remains **Partially implemented**; production Content dispatch and Content operator recovery remain deferred. The fixed Reliability worker remains active with one pinned profile per startup. [C3c.4 controlled operational recovery](#c3c4-controlled-operational-recovery) connects C3a–C3c.3 admission, occupied handoff, guarded bootstrap, independent verification and transactional finalization through a trusted local non-web operator command. Fresh explicit process/evidence review is required before handoff and finalization. Its packaged acceptance and complete backend regression evidence are recorded below. Execution Recovery remains **Partially implemented**; production Content execution, cancellation, guarded retry, automatic recovery and Operations UI remain deferred. Earlier checkpoint status paragraphs and counts are historical.
+Previous checkpoint: [D5a managed Content successful completion](../operations/managed-rss-fetch.md#d5a-managed-content-successful-completion) extends internal D1–D4 with exact-reference Content publication, independent verification and fenced successful finalization. The current [D5b-1 checkpoint](#d5b-1-explicit-managed-content-reconciliation) adds explicit Content operator reconciliation. Managed Content remains **Partially implemented**; production Content dispatch and RESUME remain deferred. The fixed Reliability worker remains active with one pinned profile per startup. [C3c.4 controlled operational recovery](#c3c4-controlled-operational-recovery) connects C3a–C3c.3 admission, occupied handoff, guarded bootstrap, independent verification and transactional finalization through a trusted local non-web operator command. Fresh explicit process/evidence review is required before handoff and finalization. Its packaged acceptance and complete backend regression evidence are recorded below. Execution Recovery remains **Partially implemented**; production Content execution, cancellation, guarded retry, automatic recovery and Operations UI remain deferred. Earlier checkpoint status paragraphs and counts are historical.
 
 ## Boundary and invariants
 
@@ -3304,3 +3304,25 @@ Content operator reconciliation remains unsupported by the Reliability recovery 
 See [D5a operator evidence and validation](../operations/managed-rss-fetch.md#d5a-managed-content-successful-completion)
 for measured results and D5b prerequisites. No analytics/API activation or
 `ANALYTICS_PUBLICATION` selection changes occur.
+
+## D5b-1 explicit managed Content reconciliation
+
+The current implementation extends C3c's guarded, occupied ownership handoff to
+CONTENT_RSS_V1 through a pipeline-specific runtime boundary. Reliability retains its
+original verification/finalization path. See the [Content recovery decision table and
+operator procedure](../operations/managed-rss-fetch.md#d5b-1-explicit-content-recovery) and
+[pending ADR 0018](../adr/0018-managed-content-recovery-boundaries.md).
+
+| Capability | D5b-1 boundary |
+| --- | --- |
+| Explicit Content RECONCILE | Original attempt/epoch/process/configuration; same control schema/idempotency/version/audit contract |
+| Independent read-only qualification | Original journal/GET-only Bronze; selected Silver; frozen Gold; exact reference/native Content |
+| Completed Content recovery | Own reconciliation attempt; fenced atomic registration/disposition/release; immutable native bytes |
+| Earlier verified checkpoint | Content-only PAUSED; no result and no retry flag; writers must be quiescent before release |
+| Uncertain evidence or writer | RECOVERY_REQUIRED with occupied RECOVERY_ONLY; no dispatch |
+| Content RESUME / automatic continuation | Unsupported; no control or transition to RUNNING |
+| Production managed Content dispatch / activation | Disabled / deferred |
+
+Migration V8 adds PAUSED solely for this explicitly requested Content recovery outcome.
+This is an additive implementation departure from ADR 0010's prior pause/resume exclusion,
+with owner acceptance of ADR 0018 pending. Accepted ADR text/status is not rewritten.

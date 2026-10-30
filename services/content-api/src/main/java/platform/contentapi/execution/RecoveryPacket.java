@@ -54,7 +54,7 @@ final class RecoveryPacket {
             need(review.reviewedCheckpoints().equals(unresolved),QUIESCENCE_REQUIRED);
             var qualifiedAt=Instant.parse(text(n,"qualifiedAt"));need(qualifiedAt.toString().equals(text(n,"qualifiedAt")),EVIDENCE_CHANGED);
             RecoveryQuiescence.fresh(review.inspectedAt(),qualifiedAt);
-            SourceJson.fields(n.get("privateEvidence"),"files");need(n.get("privateEvidence").get("files").isArray() && n.get("privateEvidence").get("files").size()==stages.size()*6,EVIDENCE_CHANGED);
+            SourceJson.fields(n.get("privateEvidence"),"files");need(n.get("privateEvidence").get("files").isArray() && ("CONTENT_RSS_V1".equals(rows.get(1).get("pipeline"))?n.get("privateEvidence").get("files").size()<=4096:n.get("privateEvidence").get("files").size()==stages.size()*6),EVIDENCE_CHANGED);
             return new RecoveryPacket(n,rows,stages,history,review);
         }catch(RecoveryFailure ex){throw ex;}catch(RuntimeException ex){throw new RecoveryFailure(EVIDENCE_CHANGED);}
     }

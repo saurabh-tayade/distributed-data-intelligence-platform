@@ -19,6 +19,7 @@ final class RecoveryFiles {
     }
     record Capture(JsonNode inventory,Set<Long> descendantPids) { }
     static Capture capture(InstallationHostGuard guard,UUID run,UUID attempt,long epoch,String selectionSha,JsonNode runtime,List<Map<String,Object>> stages) {
+        if(runtime.has("contentRecoveryRuntimeVersion"))return ContentRecoveryFiles.capture(guard,run,attempt,stages);
         var result=SourceJson.object();var files=result.putArray("files");Set<Long> hints=new HashSet<>();
         try {
             for(var stage:stages) {

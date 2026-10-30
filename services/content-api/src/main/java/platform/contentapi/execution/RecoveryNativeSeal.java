@@ -27,6 +27,18 @@ final class RecoveryNativeSeal {
         result.publication=output.resolve("v2/processor_revision=2/publication="+fingerprint);
         result.target(output,output.relativize(result.publication).toString());runtime.admission();return result;
     }
+    /** Content-specific addresses; the existing byte seal and positive-corruption proof are reused. */
+    static RecoveryNativeSeal captureContent(RssContentRuntime runtime,JsonNode command){
+        runtime.check();var result=new RecoveryNativeSeal();var gold=command.get("goldProof");
+        result.target(Path.of(runtime.gold.gold.get("root").stringValue()),gold.get("artifact").get("relativeAddress").stringValue());
+        result.target(Path.of(runtime.reference.get("root").stringValue()),command.get("reference").get("relativeAddress").stringValue());
+        for(var input:gold.get("command").get("inputs")){
+            String marker=input.get("qualification").get("selection").get("relativeAddress").stringValue();
+            result.target(Path.of(runtime.gold.silver.output.get("root").stringValue()),Path.of(marker).getParent().toString());
+        }
+        Path root=Path.of(runtime.content.get("root").stringValue());result.publication=root.resolve("v1/processor_revision=1/publication="+command.get("prepared").get("fingerprint").stringValue());
+        result.target(root,root.relativize(result.publication).toString());runtime.check();return result;
+    }
     private void target(Path root,String address) {
         Path relative=Path.of(address);need(!relative.isAbsolute() && relative.normalize().equals(relative) && !address.contains("..") && !address.contains("\\"),EVIDENCE_CHANGED);
         try {

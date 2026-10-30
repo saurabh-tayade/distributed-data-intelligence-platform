@@ -42,6 +42,8 @@ public class OperatorRecoveryConfiguration {
                 try(var guard=InstallationHostGuard.acquire(new ImportBindings(jdbc,tx,installation).control(binding,profile))) {
                     // Completion replay is facts only and registers no new process or execution attempt.
                     var finalizer=new RecoveryFinalization(jdbc,tx,new RecoveryHandoff(jdbc,tx,installation));
+                    boolean content=tx.required(()->jdbc.queryForObject("SELECT r.pipeline='CONTENT_RSS_V1' FROM ddip_management.runs r JOIN ddip_management.controls k USING(run_id) WHERE k.control_id=?",Boolean.class,control));
+                    if(content && summary.get("controlState").stringValue().equals("APPLIED")){completeContent(new ContentRecovery(jdbc,tx,new RecoveryHandoff(jdbc,tx,installation)).resolve(guard,control),control);return;}
                     if(summary.get("controlState").stringValue().equals("APPLIED")){complete(historical(guard,control,finalizer));return;}
                     // An existing successor belongs to its original JVM. Never adopt it, even before launch.
                     need(tx.required(()->jdbc.queryForObject("SELECT count(*) FROM ddip_management.attempts WHERE attempt_id=?",Long.class,control))==0,FRESH_QUALIFICATION_REQUIRED);
@@ -61,6 +63,18 @@ public class OperatorRecoveryConfiguration {
                         need(handoffs.resolve(q).status()==RecoveryHandoff.Status.CONFIRMED_HANDOFF,HANDOFF_UNRESOLVED);
                     }
                     var bootstrap=handoffs.bootstrap(guard,q.address(),q.sha256(),runtime);
+                    if(content){
+                        var service=new ContentRecovery(jdbc,tx,handoffs);
+                        var qualified=service.qualify(guard,bootstrap,review);
+                        var finalEvidence=(ObjectNode)handoffs.reviewEvidence(guard,target,runtime);
+                        finalEvidence.put("classification",qualified.observation.get("code").stringValue());
+                        finalEvidence.put("verificationEvidenceSha256",SourceJson.sha(SourceJson.canonical(qualified.observation)));
+                        for(var child:qualified.children)finalEvidence.withArray("recordedProcesses").add(RecoveryOperatorInspection.process(new RecoveryQuiescence.Identity(child.pid(),child.startedAt())));
+                        var finalReview=confirm("FINALIZATION",inspector.inspect(control),finalEvidence,target,review);
+                        ContentRecovery.Receipt receipt;
+                        try{receipt=service.finish(guard,qualified,finalReview);}catch(ManagementFailure ex){receipt=service.resolve(guard,control);}
+                        completeContent(receipt,control);return;
+                    }
                     var verifier=new RecoveryVerification(jdbc,tx,handoffs);
                     var observed=verifier.verify(guard,bootstrap,review); // separate exact live authorization
                     var facts=verifier.inspect(guard,control);boolean supported=RecoveryFinalization.supports(facts);
@@ -88,6 +102,10 @@ public class OperatorRecoveryConfiguration {
         private void complete(RecoveryFinalization.Receipt receipt) {
             need(receipt.status()==RecoveryFinalization.Status.CONFIRMED,EVIDENCE_UNAVAILABLE);
             emit(SourceJson.object().put("status","COMPLETED").put("runId",receipt.runId().toString()).put("controlId",receipt.controlId().toString()).put("runState",receipt.runState()).put("code",receipt.code()).put("retryEligible",receipt.retryEligible()));exitCode=0;
+        }
+        private void completeContent(ContentRecovery.Receipt receipt,UUID control){
+            need(receipt!=null,EVIDENCE_UNAVAILABLE);
+            emit(SourceJson.object().put("status","COMPLETED").put("controlId",control.toString()).put("runId",receipt.run().toString()).put("runState",receipt.state()).put("code",receipt.code()).put("retryEligible",receipt.retryEligible()));exitCode=0;
         }
         private String token(String key){String value=env.getProperty(key,"");need(value.matches("[A-Za-z0-9_-]{1,128}"),INVALID_REQUEST);return value;}
         public int getExitCode(){return exitCode;}

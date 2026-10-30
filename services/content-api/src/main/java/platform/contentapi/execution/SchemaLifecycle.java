@@ -31,7 +31,7 @@ public final class SchemaLifecycle {
             boolean initialSchema = migrate && flyway.info().current()==null;
             boolean appliedMigrations = migrate && flyway.migrate().migrationsExecuted > 0;
             var validation=flyway.validateWithResult();
-            if (!validation.validationSuccessful || flyway.info().pending().length!=0 || Arrays.stream(flyway.info().applied()).filter(i -> i.getVersion()!=null).count()!=7)
+            if (!validation.validationSuccessful || flyway.info().pending().length!=0 || Arrays.stream(flyway.info().applied()).filter(i -> i.getVersion()!=null).count()!=8)
                 throw new ManagementFailure(ManagementFailure.Code.MANAGEMENT_INCOMPATIBLE);
             try {
                 for(String table: List.of("storage_bindings","execution_profiles","execution_profile_storage","worker_instances",

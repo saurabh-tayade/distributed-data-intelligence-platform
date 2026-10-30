@@ -14,14 +14,18 @@ final class RssSilverRuntime {
     final JsonNode config,output,scratch;final String digest;final InstallationHostGuard guard;
     private RssSilverRuntime(JsonNode config,String digest,JsonNode output,JsonNode scratch,InstallationHostGuard guard){this.config=config;this.digest=digest;this.output=output;this.scratch=scratch;this.guard=guard;}
     static RssSilverRuntime load(JdbcTemplate jdbc,ManagementTransactions tx,InstallationHostGuard guard,RssBronzeContext bronze,String id){
+        return load(jdbc,tx,guard,bronze.frozen,bronze.runtimeSha,id);
+    }
+    /** Runtime qualification is independent of delivery completion, including pre-journal recovery. */
+    static RssSilverRuntime load(JdbcTemplate jdbc,ManagementTransactions tx,InstallationHostGuard guard,JsonNode frozen,String bronzeSha,String id){
         try {
             var rows=tx.required(()->jdbc.queryForList("SELECT configuration_bytes,configuration_sha256 FROM ddip_management.execution_profiles WHERE profile_id=?",id));need(rows.size()==1,RUNTIME_MISMATCH);
             var row=rows.getFirst();String sha=(String)row.get("configuration_sha256");var c=FrozenRunSelection.canonical((byte[])row.get("configuration_bytes"),sha,65536);
             SourceJson.fields(c,"silverRuntimeVersion","bronzeRuntimeId","bronzeRuntimeSha256","runProfileSha256","deploymentSha256","python","javaHome","processingRoot","modules","versions","outputBindingId","tempBindingId","seconds");
-            need(c.get("silverRuntimeVersion").isIntegralNumber() && c.get("silverRuntimeVersion").canConvertToInt() && c.get("silverRuntimeVersion").intValue()==1 && c.get("bronzeRuntimeSha256").stringValue().equals(bronze.runtimeSha) && c.get("runProfileSha256").equals(bronze.frozen.get("executionProfile").get("configurationSha256")) && c.get("deploymentSha256").equals(bronze.frozen.get("executionProfile").get("configuration").get("runtime").get("deploymentSha256")),RUNTIME_MISMATCH);
+            need(c.get("silverRuntimeVersion").isIntegralNumber() && c.get("silverRuntimeVersion").canConvertToInt() && c.get("silverRuntimeVersion").intValue()==1 && c.get("bronzeRuntimeSha256").stringValue().equals(bronzeSha) && c.get("runProfileSha256").equals(frozen.get("executionProfile").get("configurationSha256")) && c.get("deploymentSha256").equals(frozen.get("executionProfile").get("configuration").get("runtime").get("deploymentSha256")),RUNTIME_MISMATCH);
             need(c.get("seconds").isIntegralNumber() && c.get("seconds").canConvertToInt() && c.get("seconds").intValue()>0 && c.get("seconds").intValue()<=900,RUNTIME_MISMATCH);
             JsonNode output=null,scratch=null;Set<Path> roots=new HashSet<>();
-            for(var b:bronze.frozen.get("storageBindings")){
+            for(var b:frozen.get("storageBindings")){
                 if(b.get("configuration").has("root")){Path root=Path.of(b.get("configuration").get("root").stringValue());for(Path other:roots)need(!root.startsWith(other) && !other.startsWith(root),RUNTIME_MISMATCH);roots.add(root);}
                 if(b.get("bindingId").equals(c.get("outputBindingId"))){need(b.get("role").stringValue().equals("SILVER"),RUNTIME_MISMATCH);output=b.get("configuration");}
                 if(b.get("bindingId").equals(c.get("tempBindingId"))){need(b.get("role").stringValue().equals("TEMP"),RUNTIME_MISMATCH);scratch=b.get("configuration");}

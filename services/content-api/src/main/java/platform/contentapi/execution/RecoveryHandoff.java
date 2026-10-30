@@ -49,16 +49,16 @@ final class RecoveryHandoff {
         Snapshot origin(){return snapshots.getLast();}
     }
     static final class Bootstrap extends Evidence {
-        private final RecoveryFiles.Retained retained;private final RecoveryPacket packet;private final ReliabilityRuntime runtime;
-        private Bootstrap(Target target,String address,String sha,RecoveryFiles.Retained retained,RecoveryPacket packet,ReliabilityRuntime runtime){super(target,address,sha);this.retained=retained;this.packet=packet;this.runtime=runtime;}
+        private final RecoveryFiles.Retained retained;private final RecoveryPacket packet;private final RecoveryRuntime runtime;
+        private Bootstrap(Target target,String address,String sha,RecoveryFiles.Retained retained,RecoveryPacket packet,RecoveryRuntime runtime){super(target,address,sha);this.retained=retained;this.packet=packet;this.runtime=runtime;}
         String digest(){return target.digest();}
         Set<UUID> unresolvedCheckpoints(){return target.unresolvedCheckpoints();}
         @Override public String toString(){return "RecoveryBootstrap[redacted]";}
     }
     static final class Qualified extends Evidence {
-        private final RecoveryQuiescence.Review review;private final ReliabilityRuntime runtime;
+        private final RecoveryQuiescence.Review review;private final RecoveryRuntime runtime;
         private final RecoveryFiles.Capture files;private final Instant qualifiedAt;private final AtomicBoolean used=new AtomicBoolean();
-        private Qualified(Target target,RecoveryQuiescence.Review review,ReliabilityRuntime runtime,RecoveryFiles.Capture files,String address,String sha,Instant at){super(target,address,sha);this.review=review;this.runtime=runtime;this.files=files;qualifiedAt=at;}
+        private Qualified(Target target,RecoveryQuiescence.Review review,RecoveryRuntime runtime,RecoveryFiles.Capture files,String address,String sha,Instant at){super(target,address,sha);this.review=review;this.runtime=runtime;this.files=files;qualifiedAt=at;}
         String address(){return address;} String sha256(){return sha;}
         @Override public String toString(){return "RecoveryQualification[redacted]";}
     }
@@ -81,7 +81,7 @@ final class RecoveryHandoff {
             var target=new Target(original,w);var proof=new Evidence(target,address,sha);
             need(resolveEvidence(proof).status()!=Status.UNRESOLVED,HANDOFF_UNRESOLVED);
             tx.required(()->{validateFrozen(guard,w,live);return null;});
-            var runtime=ReliabilityRuntime.load(jdbc,tx,guard,new WorkerRepository.Owner(w,original.runId(),original.oldId(),number(original.run,"row_version"),number(original.attempt,"row_version"),(String)original.attempt.get("state")),runtimeProfile,frozen);
+            var runtime=RecoveryRuntime.load(jdbc,tx,guard,new WorkerRepository.Owner(w,original.runId(),original.oldId(),number(original.run,"row_version"),number(original.attempt,"row_version"),(String)original.attempt.get("state")),runtimeProfile,frozen);
             need(SourceJson.sha(SourceJson.canonical(runtime.json())).equals(RecoveryPacket.text(n,"runtimeSha256")),RUNTIME_MISMATCH);
             var result=new Bootstrap(target,address,sha,retained,packet,runtime);checkBootstrapFiles(guard,result);
             need(resolveEvidence(result).status()!=Status.UNRESOLVED,HANDOFF_UNRESOLVED);return result;
@@ -124,7 +124,7 @@ final class RecoveryHandoff {
     JsonNode reviewEvidence(InstallationHostGuard guard,Target target,String runtimeProfile) {
         held(guard,target.recovery);var s=target.snapshot;
         var frozen=FrozenRunSelection.canonical((byte[])s.run.get("captured_selection"),(String)s.run.get("selection_sha256"),PreflightFiles.LARGE);
-        var runtime=ReliabilityRuntime.load(jdbc,tx,guard,new WorkerRepository.Owner(target.recovery,s.runId(),s.oldId(),number(s.run,"row_version"),number(s.attempt,"row_version"),(String)s.attempt.get("state")),runtimeProfile,frozen);
+        var runtime=RecoveryRuntime.load(jdbc,tx,guard,new WorkerRepository.Owner(target.recovery,s.runId(),s.oldId(),number(s.run,"row_version"),number(s.attempt,"row_version"),(String)s.attempt.get("state")),runtimeProfile,frozen);
         runtime.check();var files=RecoveryFiles.capture(guard,s.runId(),s.oldId(),number(s.coordinator,"epoch"),(String)s.run.get("selection_sha256"),runtime.json(),s.stages);
         var n=SourceJson.object().put("targetSha256",target.digest()).put("privateEvidenceSha256",SourceJson.sha(SourceJson.canonical(files.inventory())));
         var lineage=lineage(guard,target,runtime);
@@ -140,10 +140,10 @@ final class RecoveryHandoff {
         need(target!=null,INVALID_REQUEST);held(guard,target.recovery);
         var s=tx.required(()->{var current=read(target.controlId(),target.recovery.instanceId());validateOriginal(guard,target.recovery,current);need(current.digest().equals(target.digest()),EVIDENCE_CHANGED);return current;});
         checkProcesses(s,review,target.digest());
-        ReliabilityRuntime runtime;
+        RecoveryRuntime runtime;
         try {
             var frozen=FrozenRunSelection.canonical((byte[])s.run.get("captured_selection"),(String)s.run.get("selection_sha256"),PreflightFiles.LARGE);
-            runtime=ReliabilityRuntime.load(jdbc,tx,guard,new WorkerRepository.Owner(target.recovery,s.runId(),s.oldId(),number(s.run,"row_version"),number(s.attempt,"row_version"),(String)s.attempt.get("state")),runtimeProfile,frozen);
+            runtime=RecoveryRuntime.load(jdbc,tx,guard,new WorkerRepository.Owner(target.recovery,s.runId(),s.oldId(),number(s.run,"row_version"),number(s.attempt,"row_version"),(String)s.attempt.get("state")),runtimeProfile,frozen);
             runtime.check(); // Hash/root/module inspection only. Never readiness(): it would launch Python.
         }catch(ManagementFailure ex){throw ex;}catch(RuntimeException ex){throw new RecoveryFailure(RUNTIME_MISMATCH);}
         var captured=RecoveryFiles.capture(guard,s.runId(),s.oldId(),number(s.coordinator,"epoch"),(String)s.run.get("selection_sha256"),runtime.json(),s.stages);checkHints(s,review,captured);
@@ -250,7 +250,7 @@ final class RecoveryHandoff {
         RecoveryQuiescence.State observed;try{observed=processes.inspect(new RecoveryQuiescence.Identity(child.pid(),child.startedAt()));}catch(RuntimeException ex){throw new RecoveryFailure(PROCESS_UNRESOLVED);}
         need(observed==RecoveryQuiescence.State.ABSENT || observed==RecoveryQuiescence.State.REUSED,PROCESS_UNRESOLVED);
     }
-    ReliabilityRuntime verificationRuntime(Bootstrap evidence){return evidence.runtime;}
+    ReliabilityRuntime verificationRuntime(Bootstrap evidence){need(evidence.runtime.reliability!=null,RUNTIME_MISMATCH);return evidence.runtime.reliability;}
     /** Fresh launch review plus unchanged private evidence, independently of historical receipt lookup. */
     void verificationReview(InstallationHostGuard guard,Bootstrap evidence,RecoveryQuiescence.Review review,Owner owner) {
         held(guard,owner.worker());need(evidence!=null && owner.controlId().equals(evidence.target.controlId()) && owner.qualificationSha256().equals(evidence.sha) && owner.worker().instanceId().equals(evidence.target.recovery.instanceId()),OWNERSHIP_LOST);
@@ -258,6 +258,17 @@ final class RecoveryHandoff {
         try{need(processes.inspect(identity(evidence.target.snapshot.recovery,"pid","process_started_at"))==RecoveryQuiescence.State.LIVE,PROCESS_UNRESOLVED);}catch(RuntimeException ex){throw new RecoveryFailure(PROCESS_UNRESOLVED);}
         checkProcesses(evidence.target.snapshot,review,evidence.target.digest());checkHints(evidence.target.snapshot,review,checkBootstrapFiles(guard,evidence));
         reviewLineage(guard,evidence.target,evidence.runtime,review);
+    }
+    RecoveryRuntime contentRuntime(Bootstrap b){need(b.runtime.content!=null,RUNTIME_MISMATCH);return b.runtime;}
+    JsonNode contentPack(InstallationHostGuard guard,Bootstrap b,Owner owner){
+        fenced(guard,owner,()->null);
+        var s=lineage(guard,b.target,b.runtime).origin();
+        need("CONTENT_RSS_V1".equals(s.run.get("pipeline")),RUNTIME_MISMATCH);
+        var pack=SourceJson.object().put("runId",s.runId().toString()).put("attemptId",s.oldId().toString()).put("epoch",Long.toString(number(s.attempt,"owner_epoch")));
+        pack.set("stages",json(s.stages));
+        var rows=tx.required(()->jdbc.queryForMap("SELECT captured_selection,selection_sha256 FROM ddip_management.runs WHERE run_id=?",s.runId()));
+        pack.set("frozen",FrozenRunSelection.canonical((byte[])rows.get("captured_selection"),(String)rows.get("selection_sha256"),PreflightFiles.LARGE));
+        return pack;
     }
     JsonNode verificationPack(InstallationHostGuard guard,Bootstrap evidence,Owner owner) {
         var s=lineage(guard,evidence.target,evidence.runtime).origin();
@@ -291,7 +302,7 @@ final class RecoveryHandoff {
         return e.get("publication");
     }
     /** Follow immutable handoff provenance only, never receipt authority. Bounded by the run's 20 attempts. */
-    private Lineage lineage(InstallationHostGuard guard,Target target,ReliabilityRuntime runtime) {
+    private Lineage lineage(InstallationHostGuard guard,Target target,RecoveryRuntime runtime) {
         var snapshots=new ArrayList<Snapshot>();var packets=new ArrayList<RecoveryPacket>();var seen=new HashSet<UUID>();var s=target.snapshot;
         while(true) {
             need(seen.add(s.oldId()) && seen.size()<=20,EVIDENCE_CHANGED);snapshots.add(s);
@@ -308,7 +319,7 @@ final class RecoveryHandoff {
             packets.add(packet);s=origin;
         }
     }
-    private void reviewLineage(InstallationHostGuard guard,Target target,ReliabilityRuntime runtime,RecoveryQuiescence.Review review) {
+    private void reviewLineage(InstallationHostGuard guard,Target target,RecoveryRuntime runtime,RecoveryQuiescence.Review review) {
         var chain=lineage(guard,target,runtime);
         for(var packet:chain.packets())need(review.descendants().containsAll(packet.review.descendants()),QUIESCENCE_REQUIRED);
         for(var s:chain.snapshots()) {
@@ -352,7 +363,7 @@ final class RecoveryHandoff {
             var command=ControlCommands.parse(s.runId().toString(),SourceJson.canonical(body),(String)s.control.get("idempotency_key"),"\""+s.control.get("expected_version")+"\"");
             need(Arrays.equals(command.normalized(),(byte[])s.control.get("normalized_request")) && SourceJson.sha(command.normalized()).equals(s.control.get("request_sha256")),EVIDENCE_CHANGED);
             var sources=jdbc.queryForList("SELECT r.source_id,r.revision,r.captured_gate_version,r.captured_enabled,s.profile_family,v.configuration_bytes,v.configuration_sha256,v.endpoint_id,v.endpoint_sha256 FROM ddip_management.run_sources r JOIN ddip_management.sources s USING(product_id,source_id) JOIN ddip_management.source_revisions v ON (v.product_id,v.source_id,v.revision)=(r.product_id,r.source_id,r.revision) WHERE r.run_id=? ORDER BY r.product_id COLLATE \"C\",r.source_id COLLATE \"C\"",s.runId());
-            need("RELIABILITY_V2".equals(s.run.get("pipeline")),RUNTIME_MISMATCH);
+            need(Set.of("RELIABILITY_V2","CONTENT_RSS_V1").contains(s.run.get("pipeline")),RUNTIME_MISMATCH);
             FrozenRunSelection.validate(jdbc,installation,s.run,sources,recovery.profileId(),recovery.profileDigest(),recovery.deploymentDigest());
         }catch(RecoveryFailure ex){throw ex;}catch(org.springframework.dao.DataAccessException ex){throw ex;}catch(RuntimeException ex){throw new RecoveryFailure(RUNTIME_MISMATCH);}
     }
