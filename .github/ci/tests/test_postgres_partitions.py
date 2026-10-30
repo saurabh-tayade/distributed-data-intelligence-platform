@@ -137,8 +137,9 @@ class PostgresInventoryTests(unittest.TestCase):
         return directory
 
     def test_actual_success_reports_cover_exact_selection(self):
-        directory = self.report(self.groups['gold'][0])
-        self.assertEqual(PARTITIONS.verify_reports(self.groups, 'gold', directory), 1)
+        for name in self.groups['gold']:
+            directory = self.report(name)
+        self.assertEqual(PARTITIONS.verify_reports(self.groups, 'gold', directory), len(self.groups['gold']))
 
     def test_duplicate_and_empty_reports_are_not_completion(self):
         directory = self.report(self.groups['gold'][0])

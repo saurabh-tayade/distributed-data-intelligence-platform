@@ -2,7 +2,7 @@
 
 Status: **Accepted — October 20, 2026**, with the Stage A.1 refinements, under [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md). The owner accepted additive [ADR 0011](../adr/0011-artifact-import-maintenance-ownership.md) on October 21. Architecture acceptance alone passes no E5 test group. Current implementation and authorization are recorded below; earlier checkpoint status paragraphs and counts remain historical. Accepted ADRs and native data contracts are unchanged.
 
-Current checkpoint: [D1/D2/D3/D4 managed RSS, Silver and Gold](../operations/managed-rss-fetch.md#d4-managed-gold-lifecycle) implement internal fenced fetch/storage/Silver/Gold stages and independent receipt/output verification. Managed Content remains **Partially implemented**; D4 adds internal managed Gold; Content enrichment and production Content dispatch remain deferred. The fixed Reliability worker remains active with one pinned profile per startup. [C3c.4 controlled operational recovery](#c3c4-controlled-operational-recovery) connects C3a–C3c.3 admission, occupied handoff, guarded bootstrap, independent verification and transactional finalization through a trusted local non-web operator command. Fresh explicit process/evidence review is required before handoff and finalization. Its packaged acceptance and complete backend regression evidence are recorded below. Execution Recovery remains **Partially implemented**; production Content execution, cancellation, guarded retry, automatic recovery and Operations UI remain deferred. Earlier checkpoint status paragraphs and counts are historical.
+Current checkpoint: [D5a managed Content successful completion](../operations/managed-rss-fetch.md#d5a-managed-content-successful-completion) extends internal D1–D4 with exact-reference Content publication, independent verification and fenced successful finalization. Managed Content remains **Partially implemented**; production Content dispatch and Content operator recovery remain deferred. The fixed Reliability worker remains active with one pinned profile per startup. [C3c.4 controlled operational recovery](#c3c4-controlled-operational-recovery) connects C3a–C3c.3 admission, occupied handoff, guarded bootstrap, independent verification and transactional finalization through a trusted local non-web operator command. Fresh explicit process/evidence review is required before handoff and finalization. Its packaged acceptance and complete backend regression evidence are recorded below. Execution Recovery remains **Partially implemented**; production Content execution, cancellation, guarded retry, automatic recovery and Operations UI remain deferred. Earlier checkpoint status paragraphs and counts are historical.
 
 ## Boundary and invariants
 
@@ -3237,3 +3237,70 @@ Gold retry, repair, overwrite, namespace deletion, owner adoption or Content rec
 A full read-only inspection can confirm a committed publication after a lost verification
 acknowledgment without refreshing ownership or registering another artifact. `VERIFY_RESULT`
 sidecar directories hold independent evidence; no final Content `VERIFY_RESULT` stage runs in D4.
+
+## D5a managed Content publication and successful finalization
+
+Implementation record: [ADR 0017](../adr/0017-managed-content-successful-finalization.md)
+(**owner acceptance pending**). ADRs 0015/0016 retain their existing status. Managed Content
+Processing remains **Partially implemented**; production Content dispatch is disabled.
+
+The internal D5a seam consumes exactly the current attempt's committed, independently
+verified D4 Gold artifact and the publisher-reference artifact captured by the original
+submission. It does not select current references, latest Gold or a broader Silver set.
+Original D4 command/anchor/registry/dependency proof is reopened, including all selected
+D3 receipts and original D2 object evidence. Reference qualification must be valid E1a
+metadata with the exact immutable capture and `publisher_reference.open_snapshot` result.
+Actual Gold/reference bytes, completion, schemas, native identities and bound root identities
+are rechecked before native publication and after verification. Changed/missing/incompatible
+or substituted evidence fails closed.
+
+D5a adds the existing documented `CHECK_INPUTS` as a durable **post-D4 Content dependency
+qualification** stage in this internal checkpoint sequence. It does not introduce an initial
+production Content worker preflight. `CHECK_INPUTS → PUBLISH_CONTENT → VERIFY_RESULT`
+each uses the existing intent/one-use authorization/child identity/heartbeat/version fence.
+The dependency digest binds ordered `GOLD/0` and `PUBLISHER_REFERENCE/0` artifact IDs and
+qualification digests. The native prepared manifest/fingerprint is privately anchored to the
+verified dependency-check result before the publisher intent. Publication identity remains
+`v1/processor_revision=1/publication=<native Content fingerprint>`.
+
+A reviewed additive runtime profile binds the D4 runtime digest, reference/Content bindings,
+six fixed Content modules and a positive deadline no larger than 900 seconds. D4/D3 runtime
+checks continue to pin CPython 3.12.15, Spark 4.0.2, Java 21, boto3/botocore 1.43.114 and
+DuckDB 1.4.5, fixed scripts, approved environment/scratch and installation root identity.
+Only `PUBLISH_CONTENT` may launch Spark descendants. The existing supervisor bounds
+streams, execution and descendant cleanup; native Spark shutdown must also be confirmed.
+Each authorization boundary rechecks guard, current authority, runtime and input metadata.
+No Spark/native process holds a PostgreSQL transaction open.
+
+The verifier calls the supported `content_analytics.open_publication`, which checks full
+physical inventory/hashes/schemas, exact Gold preservation, reference left join, discovery
+aggregation and quality accounting. It executes bounded `catalog`, `reference_coverage`
+and `source_discovery_daily` reports. Store report hashes/row counts and scalar coverage,
+not report rows. A separate final read-only recheck repeats the full applicable reader and
+original dependency checks. Private command/result/child/evidence anchors are revalidated.
+A marker, process exit or SQL registry record alone cannot establish successful publication.
+
+Normal successful finalization uses existing coordinator → run → attempt/stage lock
+ordering and exact worker/attempt/epoch/row versions. Require exactly three verified source
+stages per fresh source plus verified `PREPARE_GOLD`, `PUBLISH_GOLD`, `CHECK_INPUTS`,
+`PUBLISH_CONTENT`, and the current qualified `VERIFY_RESULT`; unknown/additional stages
+block finalization. Require consistent Gold/reference dependency edges, all owned processes
+confirmed stopped, a held host guard and no requested control or applied cancellation.
+In one transaction register the immutable Content artifact and its two dependency edges,
+verify `VERIFY_RESULT`, link its result, finish attempt/run `SUCCEEDED`, bind the run result,
+record safe string counts (`articles`, `rows`) and audit evidence, and clear the exact occupied
+coordinator. No failed terminal Content path is added.
+
+A stale worker cannot finalize or release. Exact publication replay uses native read-only
+verification and does not rewrite bytes. Duplicate invocation cannot obtain another launch.
+Clean launch failure still retains occupied recovery ownership; processing/verification failures
+retain partial output without overwrite, repair, deletion or automatic relaunch. Unknown cleanup,
+DB/guard loss and ambiguous acknowledgments remain blocked. If the final commit actually
+succeeded but acknowledgment was lost, the internal inspector confirms exact committed
+terminal/result/stage/dependency facts and fully reopens native output. It has no ownership,
+heartbeat, registration or release operation and remains safe after another run owns the slot.
+Content operator reconciliation remains unsupported by the Reliability recovery command.
+
+See [D5a operator evidence and validation](../operations/managed-rss-fetch.md#d5a-managed-content-successful-completion)
+for measured results and D5b prerequisites. No analytics/API activation or
+`ANALYTICS_PUBLICATION` selection changes occur.
