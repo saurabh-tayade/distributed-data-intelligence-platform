@@ -21,7 +21,7 @@ Statuses describe scoped capabilities and evidence, not production readiness.
 | Managed Reliability Processing | ✓ Implemented and locally tested | JSONL/Parquet inputs, fixed-profile worker execution, Spark publication and independent output verification |
 | Durable Source and Run Management | ✓ Implemented and locally tested | Source revisions, verified imports, frozen run submissions and bounded execution history |
 | Execution Recovery | ◐ Partially implemented | [Controlled local Reliability recovery](docs/operations/reliability-recovery.md) is implemented and tested for JSONL/Parquet with explicit operator approval, native verification and atomic disposition; broader E5 recovery remains unfinished |
-| Managed Content Processing | ◐ Partially implemented | Internal D1 RSS journal and D2 verified Bronze receipts/read-only replay; managed Silver/Gold and complete worker dispatch remain planned |
+| Managed Content Processing | ◐ Partially implemented | Internal D1–D5a RSS/Bronze/Silver/Gold/Content publication, independent verification and successful finalization; production dispatch and Content recovery remain deferred |
 | Cancellation, Retry and React Operations | ○ Planned | Execution controls and an operator UI |
 | Streaming, Performance Benchmarks, AWS Validation and Multiworker Execution | — Deferred | Scale experiments and additional execution/deployment models |
 
@@ -65,7 +65,7 @@ flowchart TB
     goldSQL --> api
     worker -->|"fixed publisher"| spark
     worker -->|"independent verification"| reliabilitySQL
-    worker -.-> managedContent["Managed Content execution<br/>planned"]
+    worker -.-> managedContent["Managed Content internal success path<br/>production dispatch disabled"]
     managedContent -.-> feeds
 
     classDef standalone fill:#eaf2ff,stroke:#315a8a,color:#172c46;

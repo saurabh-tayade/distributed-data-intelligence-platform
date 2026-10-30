@@ -1052,3 +1052,269 @@ transactional final run disposition/ownership release. Content recovery needs it
 quiescence/evidence/finalization procedure; the current Reliability command is insufficient.
 Production dispatch and activation require separate authorization and end-to-end acceptance.
 No large-scale performance, distributed execution, AWS or end-to-end managed Content claim is made.
+
+## D5a managed Content successful completion
+
+D5a implements the internal normal successful path after D4. Managed Content Processing
+remains **Partially implemented**. Production Content dispatch, public analytics activation
+and Content operator reconciliation remain disabled/unsupported. This is not a new worker
+startup command or an extension of the Reliability recovery command.
+
+### Frozen dependencies and native identity
+
+Select exactly one committed `PUBLISH_GOLD/RESULT/0` artifact from the current managed
+attempt. Reopen its original publisher/verifier commands, private anchors, registered immutable
+bytes and ordered Silver edges; retain the complete D3/D2 dependency chain. Use exactly
+`PUBLISHER_REFERENCE/0` captured in the submitted run. Its qualification must be an existing
+E1a publisher-reference import, with original snapshot identity/version/fingerprint, completed
+four-file capture and native `publisher_reference.open_snapshot` qualification. A SQL artifact
+record alone is not native qualification. Reopen actual retained files and compare original
+captures; source/reference updates do not change the selection.
+
+The native Content fingerprint is SHA-256 of the existing native Content input manifest. It
+includes Gold input/completion descriptors, reference ID/revision/snapshot fingerprint,
+contract/processor/dataset versions and unchanged native semantic configuration. Managed
+artifact IDs and evidence digests additionally bind the exact two registered dependencies.
+No latest lookup, source discovery, RSS fetch or Silver expansion occurs in D5a.
+
+### Stages, runtime and successful disposition
+
+After D4, a durable `CHECK_INPUTS` qualifies the selected Content dependencies and anchors
+the native prepared manifest/fingerprint. This uses the existing documented stage name at
+the Content publication boundary; an initial production worker preflight is still deferred.
+`PUBLISH_CONTENT` invokes the existing standalone Spark publisher with exact Gold/reference
+arguments. `VERIFY_RESULT` invokes the independent Spark-free Content analytics reader.
+Each stage follows `INTENT → single-use authorization → RUNNING → VERIFIED`, under the
+current installation guard, worker/attempt/epoch/coordinator/stage row versions. Authorization
+is committed before process creation. No stage or ambiguous launch is automatically resumed.
+
+The fixed Content runtime profile extends the exact reviewed D4 runtime and hashes six
+Content adapter/native modules. CPython 3.12.15, Spark 4.0.2, Java 21, boto3/botocore
+1.43.114 and DuckDB 1.4.5 remain pinned. Reference/Content/Gold/Silver roots must have their
+captured canonical device/inode identities and remain separate. Private approved scratch,
+bounded streams, deadlines (at most 900 seconds per D5a command), heartbeats, descendant
+supervision and explicit Spark gateway shutdown reuse existing infrastructure. Spark runs
+outside database transactions. Private sidecars retain commands, child identity, native
+evidence and hashes; public management history receives safe states/counts only.
+
+The independent reader validates exact native identity/namespace, completion, file inventory,
+lengths/hashes, physical Parquet schemas, unchanged Gold columns, enrichment/reference
+linkage and discovery/accounting consistency. It executes bounded named `catalog`,
+`reference_coverage` and `source_discovery_daily` queries. Evidence stores report hashes,
+row counts and scalar coverage. It does not store report rows in public history or repair output.
+A final independently supervised read-only check reopens dependencies and output again.
+
+Successful finalization requires every applicable checkpoint: per-source fetch/store/Silver;
+Gold preparation/publication; Content dependency qualification/publication/verification. This
+is exactly `3 * fresh source count + 5` SQL stages; unknown or additional stages block success.
+All original dependencies/edges must match, authority/guard must remain live, owned children
+must be confirmed stopped, and no requested control or applied cancellation may be pending.
+
+Under existing lock ordering and version fencing, one short transaction registers the verified
+`CONTENT` artifact with `GOLD/0` and `PUBLISHER_REFERENCE/0` edges; commits verifier result
+and safe counts; marks attempt/run `SUCCEEDED`; binds the run result; writes audit evidence;
+and clears exactly that coordinator owner. A subsequent unrelated queued run may then be
+claimed. The historical inspector never renews or releases ownership, including when another
+run already occupies the coordinator. No `ANALYTICS_PUBLICATION` or REST/API selection
+changes occur; analytical consumers keep their supported configured publication.
+
+### Replay, failure and investigation
+
+- Exact completed native publication: fully verify it without rewriting files, hashes, inodes or
+  modification times. Completed terminal confirmation registers nothing again.
+- Changed/missing Gold or reference, incompatible versions, substituted dependencies,
+  incomplete/corrupt output or identity collision: reject; retain private/native evidence.
+- Clean publisher/verifier launch failure: no child is recorded and the failed stage retains
+  occupied recovery ownership. It cannot consume a second authorization.
+- Processing/verifier failure, unknown cleanup, worker interruption, lost guard/current owner
+  or PostgreSQL interruption: stop authorization and retain blocked ownership. Partial output
+  is never overwritten, deleted, repaired or treated as a completed Content result.
+- Lost intent/authorization/stage acknowledgment: inspect retained facts; do not relaunch.
+  Partial-stage Content reconciliation remains unsupported.
+- Lost finalization acknowledgment: read-only inspection must prove committed attempt/run
+  success, exact result/stage/registry/dependency linkage, original private anchors and full
+  current native qualification. Otherwise no success is inferred. A committed successful
+  transaction has already safely released the slot; inspection cannot release another owner.
+- Registration, edge, stage, attempt, run, coordinator or audit failure: the entire final
+  transaction rolls back. Gold alone never completes a Content run.
+
+Retain original CONTROL evidence, publisher-reference snapshot, Gold and transitive
+Silver/Bronze objects for explicit investigation. D5a adds no automatic takeover/recovery,
+retry, cancellation, pause/resume or storage-only retry. The Reliability operator command
+continues to reject Content reconciliation.
+
+### Reproducible validation and evidence
+
+Use disposable local PostgreSQL 17.11 and pinned SeaweedFS 4.48, synthetic loopback feeds
+and a real qualified synthetic publisher-reference snapshot. Set `JAVA_HOME` to JDK 21 and
+`DDIP_TEST_PYTHON` to the absolute pinned environment executable. Commands:
+
+```sh
+python3 scripts/test-rss-fetch-postgres.py --offline --content
+python3 scripts/test-rss-fetch-postgres.py --offline --content-controls
+python3 scripts/test-rss-fetch-postgres.py --offline --content --regression
+TZ=UTC PYTHONPATH=processing:processing/tests \
+  PYSPARK_PYTHON="$DDIP_TEST_PYTHON" SPARK_LOCAL_IP=127.0.0.1 \
+  "$DDIP_TEST_PYTHON" -m unittest test_managed_content test_managed_gold \
+  test_content_dependencies test_content_publication
+python3 -m unittest discover -s .github/ci/tests
+outputs/d02-ci/actionlint .github/workflows/ci.yml .github/workflows/postgres-partition.yml
+npm run lint:markdown
+git diff --check
+```
+
+The scoped Content regression executes the new Content suites, one real two-source D4
+standalone-equivalence case, one real Reliability successful-finalization case, core persistence,
+worker/control admission, submission/history and all backend unit tests. It deliberately does
+not repeat every heavyweight D1–D4 fault matrix. `--content-controls` exercises SQL fences
+and atomicity with synthetic metadata only; it does not claim native qualification. The native
+adapter tests stub the preceding D4 receipt recheck while retaining real Gold/reference/Content
+readers; the two real D5a paths exercise the complete receipt chain without that stub.
+
+Initial stabilized local evidence (macOS arm64, Java 21, approved local roots): 28 integration
+cases in 207.55 seconds wall time; Content native suite 2 cases / 177.6 seconds, including
+108.190 seconds two-source path/standalone/replay and 69.296 seconds lost final acknowledgment
+with actual PostgreSQL restart; deterministic finalization suite 26 cases / 19.60 seconds.
+The same command also ran 43 supervisor/runtime/guard/capability unit tests. Native adapter
+qualification passed 13 tests in 11.460 seconds. CI policy/gate/inventory passed 37 tests in
+2.270 seconds. Subsequent final regression evidence is recorded below; overlapping cases
+are not additional distinct coverage.
+
+One observed native publication from the compatible runtime rerun:
+
+- Content fingerprint: `3aff778ec22e2769c4d6b8e641349c3e69725ee57e461c8cd136799bfb57ad49`.
+- Completion SHA-256: `5aec4dd64f15153b94fecdaac2638c75602690838644d9db3e976e240e5abdb5`.
+- Two original sources: four accepted and two rejected Silver observations; Gold retains two
+  articles/two daily rows; Content retains two enriched articles/two discovery rows.
+- Two qualified reference rows: one matched article/source, one missing article/source and
+  one unused reference source. Native standalone results match all named analytical reports.
+- Result artifact `9e2ef3d6-329c-44ec-88ea-c385d1c9fdf2`; all 11 SQL stages verified;
+  attempt/run `SUCCEEDED`; unrelated attempt `47df4862-5b98-482d-aa4b-6804745968f4` then
+  occupied the released slot. Historical verification left its ownership unchanged.
+
+These are synthetic local correctness measurements, not scalability benchmarks. Hosted Ubuntu
+remains the final acceptance gate. Existing four PostgreSQL partitions and the 90-minute limit
+are preserved. `RssContentIT` and `ContentFinalizationIT` belong to the independently provisioned
+Gold partition, which supplies Java ingestion artifacts, SeaweedFS and pinned native runtimes.
+The manifest/discovery guard covers all 22 PostgreSQL integration classes and rejects omitted
+or duplicated classes. Native processing
+changes select processing, PostgreSQL and both analytics suites; the shared CI manifest changes
+select all five backend checks, including ingestion. Required check/fan-in semantics are unchanged.
+
+The successful merged-main Gold partition subsequently completed in **2,729 seconds**
+(45m29s, including setup) on hosted Ubuntu; this is D4 baseline evidence, not a D5a hosted
+measurement. The historical hosted D4 suite measured 2,355 seconds for 29 tests before PR #72's fixture/CI
+correction. D5a adds two real native paths and inexpensive SQL cases, rather than a Spark
+startup for every failure boundary. Hosted D5a partition duration still needs observation; no
+budget increase or new partition is inferred from local times. If the observed combined Gold
+partition approaches 90 minutes, propose a separately reviewed Content/Gold partition split.
+
+### D5b prerequisites
+
+Owner review of ADR 0017; successful hosted Ubuntu checks; explicit Content recovery design
+and retained-process/evidence review; run/attempt reconciliation and operator procedures;
+reviewed production orchestration/dispatch activation; retention/backup operational validation.
+D5a provides the normal successful internal path only. No large-scale performance or complete
+operational Content readiness is claimed.
+
+### Final D5a validation record
+
+The one final scoped backend regression passed **327 unit tests and 260 integration cases**
+without failures or skips, in **468.15 seconds** wall time (Maven 7m41s). Individual integration
+suite measurements from that run:
+
+| Suite / selection | Cases | Seconds |
+| --- | ---: | ---: |
+| RssGoldIT / two-source native standalone equivalence | 1 | 92.155 |
+| RunHistoryIT | 46 | 36.540 |
+| WorkerCoordinationIT | 56 | 30.372 |
+| ControlAdmissionIT | 52 | 26.085 |
+| RunSubmissionIT | 44 | 20.751 |
+| ContentFinalizationIT (before the final three review cases) | 30 | 23.394 |
+| RssContentIT / complete path and lost final acknowledgment/restart | 2 | 183.700 |
+| PersistenceIT | 28 | 12.774 |
+| ReliabilityExecutionIT / JSONL success and immutable replay | 1 | 18.536 |
+
+The scoped native regression (`test_managed_content`, `test_managed_gold`,
+`test_content_dependencies`, `test_content_publication`) passed **55 tests in 106.353 seconds**.
+It includes the previously reported 13 adapter cases, which are not additional distinct tests.
+
+Final review added immediate post-authorization runtime/guard/authority rechecks and a real
+Content management-history assertion. The isolated two-source end-to-end rerun passed in
+**121.40 seconds wall time** (111.199 seconds suite time). Its native fingerprint was
+`9bb67cd28c43701523b8fb0b425c4fe583aa4501f531d571bd2cbcc3a22a3516`, completion SHA-256
+`698627641c7733994cd4307200c8f51e04be7cd7450eb2d263c181de7f8df9ab`, result artifact
+`2cc82f8a-3c07-4db5-847b-fbc31f531669`, with unrelated subsequent attempt
+`a1cdf164-cc3a-4492-8261-3f9da87797f7`. All 11 stages were verified. The existing management
+reader returned the exact verified result and safe string counts; no private paths/evidence
+were projected. Native replay and standalone analytical equivalence preserved publication
+bytes, hashes, modification times and inodes.
+
+The last control-plane run passed **33 cases in 34.16 seconds wall time**. Its final three cases
+cover ambiguous publisher/verifier authorization and a missing mandatory checkpoint. Its audit
+rollback injection specifically rejects `RUN_SUCCEEDED` after the transaction's coordinator
+release operation, proving the release and preceding mutations roll back together.
+
+Final coverage is **685 distinct cases**: 327 backend units + 263 distinct PostgreSQL cases
+(the regression's 260 plus three final review cases) + 58 native/protocol cases + 37 CI-policy
+cases. The native count is the 55-case regression plus three additional command-envelope
+tests; the final eight-case protocol/Gold selection passed in 0.003 seconds, with five Gold
+cases overlapping the earlier regression.
+Focused/review reruns overlap these cases and are not added again. CI-policy tests passed in
+1.767 seconds on its final run; workflow actionlint, Markdown/relative-link lint and `git diff --check` passed.
+Tests used macOS arm64, pinned Python/Spark/DuckDB, JDK 21, disposable PostgreSQL/SeaweedFS,
+UTC and synthetic local data. The final compatibility review preserves the original `managed_gold.py` bytes, because existing
+D4 profiles pin that hash. The Content adapter retains the established bounded private envelope
+locally rather than invalidating retained D4 runtime proofs. The compatible end-to-end rerun
+passed in **120.36 seconds wall time**, and exact byte equality of `managed_gold.py` against
+the merged baseline was checked (SHA-256
+`43d3c4f7d01d7ca4f9d56c97e69d2f692c089b67dd8713e30dbed1da763d8a78`). Private failure evidence retains only reviewed native code
+tables, with arbitrary exception text excluded and uncertain cleanup kept distinct. These
+measurements do not establish hosted Ubuntu runtime or
+multi-node scalability. Native regressions were completed before the backend regression;
+repeat test executions are not distinct coverage.
+
+Development-only failures were corrected before these final passing runs: an ambiguous join
+in the new historical confirmation query; reuse of a deliberately stopped worker repository
+inside the duplicate-invocation test; a nonexistent PAUSE test control (replaced by supported
+pending RETRY); noncanonical macOS temporary paths; missing pinned Python/UTC fixture
+settings; and a CI policy test assuming the Gold partition contained only one class. These
+fixes did not change native data semantics or weaken fencing. IntelliJ had no runnable test
+configuration for debugger reproduction; focused PostgreSQL/native execution provided the
+validation evidence. The initial failed isolated runs took 94.86 and 102.97 seconds; the first
+expanded development matrix took 202.58 seconds. No complete platform regression was
+repeated while debugging.
+
+Baseline: D4 is merged at `f449f3c`, and PR-head hosted run `40984804515` succeeded at
+`2a229b22f43c09107d0d8832e43bdb881b964cf5`. The merge-main run `40991081514` also
+completed successfully, confirming the merged D4 hosted-CI prerequisite. D5a itself still
+requires the owner's hosted Ubuntu CI run and review. No Git/GitHub writes or branch
+changes were performed.
+
+### Exact D5a file inventory
+
+No database migration, native dataset schema, accepted ADR status, analytics selection,
+production dispatch, frontend or infrastructure change is included.
+
+- `.github/ci/postgres-partitions.json`
+- `.github/ci/tests/test_policy.py`
+- `.github/ci/tests/test_postgres_partitions.py`
+- `README.md`
+- `docs/adr/0017-managed-content-successful-finalization.md`
+- `docs/architecture/durable-execution.md`
+- `docs/operations/managed-rss-fetch.md`
+- `processing/managed_content.py`
+- `processing/tests/managed_content_fixture.py`
+- `processing/tests/test_managed_content.py`
+- `scripts/test-rss-fetch-postgres.py`
+- `services/content-api/src/main/java/platform/contentapi/execution/PreflightFiles.java`
+- `services/content-api/src/main/java/platform/contentapi/execution/RssContentExecution.java`
+- `services/content-api/src/main/java/platform/contentapi/execution/RssContentInputs.java`
+- `services/content-api/src/main/java/platform/contentapi/execution/RssContentRuntime.java`
+- `services/content-api/src/main/java/platform/contentapi/execution/RssGoldExecution.java`
+- `services/content-api/src/main/java/platform/contentapi/execution/WorkerRepository.java`
+- `services/content-api/src/test/java/platform/contentapi/execution/RssContentTestSupport.java`
+- `services/content-api/src/test/java/platform/contentapi/management/ContentFinalizationIT.java`
+- `services/content-api/src/test/java/platform/contentapi/management/RssContentIT.java`
+- `services/content-api/src/test/java/platform/contentapi/management/RssGoldFixtures.java`
+- `services/content-api/src/test/java/platform/contentapi/management/RssGoldIT.java`
