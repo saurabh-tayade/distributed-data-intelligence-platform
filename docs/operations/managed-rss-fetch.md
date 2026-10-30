@@ -1032,6 +1032,17 @@ CI, the complete PostgreSQL recovery/import profile, independent JDBC/HTTP integ
 90-minute hosted job headroom still require verification. Local evidence does not claim these
 checks ran. Prior D3 hosted timings in the CI guide are historical and separate from D4 measurements.
 
+### PR #72 hosted follow-up
+
+The D4 hosted run separately exposed a test-only Python layout assumption and the sequential
+PostgreSQL job's 90-minute budget. The launch-failure fixture now uses the existing supervised
+before-start authorization callback, without copying or modifying Python installations. It retains
+known-clean failure, occupied ownership, no child identity, no Gold registration and no duplicate
+authorization assertions. Production execution, fencing, runtime pins, native datasets and dispatch
+remain unchanged. Test-only phase timings identify repeated native processing costs without replacing
+end-to-end qualification. See [the correction, partition inventory and measured evidence](pr72-postgres-partitions.md).
+Earlier D4 measurements above remain historical; hosted Ubuntu acceptance of the revised CI is pending.
+
 ### D5 prerequisites
 
 Managed Content remains **Partially implemented**. D5 must qualify the captured publisher-reference

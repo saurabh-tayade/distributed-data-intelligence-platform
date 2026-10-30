@@ -1,0 +1,30 @@
+{
+  "core": [
+    "platform.contentapi.execution.ImportOwnershipIT",
+    "platform.contentapi.execution.PersistenceIT",
+    "platform.contentapi.importing.ImportWorkflowIT",
+    "platform.contentapi.importing.SilverImportIT",
+    "platform.contentapi.management.ControlAdmissionIT",
+    "platform.contentapi.management.RunHistoryIT",
+    "platform.contentapi.management.RunSubmissionIT",
+    "platform.contentapi.management.SourceManagementIT",
+    "platform.contentapi.management.WorkerCoordinationIT"
+  ],
+  "reliability": [
+    "platform.contentapi.execution.OperatorRecoveryIT",
+    "platform.contentapi.execution.RecoveryFinalizationIT",
+    "platform.contentapi.execution.RecoveryHandoffIT",
+    "platform.contentapi.execution.RecoveryVerificationIT",
+    "platform.contentapi.execution.ReliabilityExecutionIT",
+    "platform.contentapi.execution.ReliabilityPreflightIT",
+    "platform.contentapi.execution.ReliabilityWorkerIT"
+  ],
+  "ingestion": [
+    "platform.contentapi.management.RssBronzeIT",
+    "platform.contentapi.management.RssFetchIT",
+    "platform.contentapi.management.RssSilverIT"
+  ],
+  "gold": [
+    "platform.contentapi.management.RssGoldIT"
+  ]
+}

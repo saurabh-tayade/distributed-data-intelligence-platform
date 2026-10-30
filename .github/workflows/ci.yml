@@ -69,6 +69,8 @@ jobs:
         run: npm run lint:markdown
       - name: Check repository hygiene
         run: npm run check:hygiene
+      - name: Check complete PostgreSQL integration inventory
+        run: python3 .github/ci/postgres_partitions.py
       - name: Test CI classification and required gate
         run: python3 -I -B -m unittest discover -s .github/ci/tests -v
 
@@ -162,77 +164,68 @@ jobs:
           PYTHONPATH=processing:processing/tests python services/api/tests/generate_fixtures.py --output services/api/target/fixtures
           mvn -B -ntp -f services/api/pom.xml verify
 
-  content_postgres:
-    name: Java 21 PostgreSQL execution and recovery
+  content_postgres_core:
+    name: PostgreSQL core integration
     needs: changes
     if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.content_postgres != 'false') }}
+    uses: ./.github/workflows/postgres-partition.yml
+    with:
+      partition: core
+
+  content_postgres_reliability:
+    name: PostgreSQL reliability integration
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.content_postgres != 'false') }}
+    uses: ./.github/workflows/postgres-partition.yml
+    with:
+      partition: reliability
+
+  content_postgres_ingestion:
+    name: PostgreSQL ingestion integration
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.content_postgres != 'false') }}
+    uses: ./.github/workflows/postgres-partition.yml
+    with:
+      partition: ingestion
+
+  content_postgres_gold:
+    name: PostgreSQL gold integration
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.content_postgres != 'false') }}
+    uses: ./.github/workflows/postgres-partition.yml
+    with:
+      partition: gold
+
+  content_postgres:
+    name: Java 21 PostgreSQL execution and recovery
     runs-on: ubuntu-24.04
-    # PR #71 hit the 60m job limit with native Silver/import checks still running.
-    timeout-minutes: 90
-    services:
-      postgres:
-        image: postgres:17.11-bookworm@sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826
-        env:
-          POSTGRES_DB: ddip_test
-          POSTGRES_USER: ddip_test
-          POSTGRES_PASSWORD: ci_test_only
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U ddip_test -d ddip_test"
-          --health-interval 5s --health-timeout 3s --health-retries 12
-    env:
-      SPARK_LOCAL_IP: 127.0.0.1
-      TZ: UTC
-      PYTHONPATH: processing
+    timeout-minutes: 5
+    needs: [changes, content_postgres_core, content_postgres_reliability, content_postgres_ingestion, content_postgres_gold]
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.content_postgres != 'false') }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: '3.12.15'
-          cache: pip
-          cache-dependency-path: |
-            processing/requirements.txt
-            processing/requirements-bronze.txt
-            processing/requirements-analytics.txt
-      - name: Install pinned processing dependencies
-        run: python -m pip install -r processing/requirements-bronze.txt -r processing/requirements-analytics.txt
-      - name: Build prebuilt Java RSS and Bronze adapters for managed acceptance
-        run: |
-          export JAVA_HOME="$JAVA_HOME_21_X64"
-          export PATH="$JAVA_HOME/bin:$PATH"
-          mvn -B -ntp -f ingestion/pom.xml package -DskipTests
-      - name: Start isolated Bronze acceptance storage
-        run: |
-          docker run --detach --name "ddip-ci-bronze-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
-            --hostname seaweedfs --publish 127.0.0.1:8333:8333 \
-            --env AWS_ACCESS_KEY_ID=ci_test_only --env AWS_SECRET_ACCESS_KEY=ci_test_only \
-            --env S3_BUCKET=ddip-d2 \
-            chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d \
-            mini -dir=/data -ip=seaweedfs -s3.port=8333 -s3.port.iceberg=0 -s3.port.lance=0 \
-            -webdav=false -admin.ui=false -s3.autoCreateBucket=false -s3.allowDeleteBucketNotEmpty=false
-      - name: Verify PostgreSQL migrations, persistence and isolated runtime roles
+      - name: Require every selected PostgreSQL partition
         env:
-          DDIP_TEST_DB_URL: jdbc:postgresql://127.0.0.1:5432/ddip_test
-          DDIP_TEST_DB_USER: ddip_test
-          DDIP_TEST_DB_PASSWORD: ci_test_only
-          BRONZE_S3_ENDPOINT: http://127.0.0.1:8333
-          BRONZE_S3_REGION: us-east-1
-          BRONZE_S3_BUCKET: ddip-d2
-          BRONZE_S3_ACCESS_KEY: ci_test_only
-          BRONZE_S3_SECRET_KEY: ci_test_only
+          NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
-          export JAVA_HOME="$JAVA_HOME_21_X64"
-          export PATH="$JAVA_HOME/bin:$PATH"
-          export DDIP_TEST_PYTHON="$(command -v python)"
-          mvn -B -ntp -f services/content-api/pom.xml verify -Ppostgres
-      - name: Remove isolated Bronze acceptance storage
-        if: ${{ always() }}
-        run: docker rm --force --volumes "ddip-ci-bronze-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" || true
+          python3 -I -B - <<'PY'
+          import json
+          import os
+
+          def check_postgres(needs):
+              partitions = ('content_postgres_core', 'content_postgres_reliability', 'content_postgres_ingestion', 'content_postgres_gold')
+              if not isinstance(needs, dict) or set(needs) != {'changes', *partitions}:
+                  return False
+              changes = needs['changes']
+              if not isinstance(changes, dict) or changes.get('result') != 'success':
+                  return False
+              outputs = changes.get('outputs')
+              if not isinstance(outputs, dict) or outputs.get('classified') != 'true' or outputs.get('mode') not in ('full', 'selective') or outputs.get('content_postgres') != 'true':
+                  return False
+              return all(isinstance(needs[p], dict) and needs[p].get('result') == 'success' for p in partitions)
+
+          if __name__ == '__main__':
+              raise SystemExit(0 if check_postgres(json.loads(os.environ['NEEDS_JSON'])) else 1)
+          PY
 
   analytics_http:
     name: Java 21 Spring Boot analytics HTTP and native integration
