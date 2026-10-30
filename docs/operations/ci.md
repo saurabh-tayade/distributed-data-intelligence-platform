@@ -4,10 +4,12 @@ The [CI workflow](../../.github/workflows/ci.yml) classifies pull requests to ma
 backend suites selected by a conservative dependency map. Every push to main runs full regression.
 There are no workflow-level path filters: required contexts are created for every supported event.
 Documentation/hygiene and frontend validation still run on every event. Classification preserves native
-contracts, existing suite commands, action/dependency pins and native execution limits. The
+contracts, required suite coverage, action/dependency pins and native execution limits. The
 [PR #71 correction](#pr-71--d3-hosted-failure-and-postgresql-budget) increases only the PostgreSQL
 job timeout from 60 to 90 minutes. D1/D2's added
 PostgreSQL tests, prebuilt adapters and isolated storage are described below.
+[PR #72](pr72-postgres-partitions.md) replaces sequential PostgreSQL execution with four independent
+partitions and an unchanged logical PostgreSQL check. Each execution partition retains the 90-minute ceiling.
 
 ## Acceptance criteria and workflow graph
 
@@ -26,7 +28,14 @@ flowchart LR
   changes --> ingestion[ingestion: selected or fallback]
   changes --> python[processing_python: selected or fallback]
   changes --> jdbc[analytics_jdbc: selected or fallback]
-  changes --> postgres[content_postgres: selected or fallback]
+  changes --> pgcore[PostgreSQL core/imports]
+  changes --> pgrel[PostgreSQL Reliability/recovery]
+  changes --> pgingest[PostgreSQL D1-D3]
+  changes --> pggold[PostgreSQL D4 Gold]
+  pgcore --> postgres[content_postgres: fan-in]
+  pgrel --> postgres
+  pgingest --> postgres
+  pggold --> postgres
   changes --> http[analytics_http: selected or fallback]
   changes --> gate[processing: always evaluates results]
   ingestion --> gate
@@ -42,23 +51,40 @@ flowchart LR
 | ingestion | Existing Java ingestion and batch-launch script checks | 10 minutes |
 | processing_python | All Python processing, Spark and DuckDB tests | 30 minutes |
 | analytics_jdbc | Fresh synthetic Gold fixtures, Python references and Java JDBC compatibility | 15 minutes |
-| content_postgres | Content API unit/component tests and complete PostgreSQL execution/recovery profile | 60 minutes |
+| content_postgres_core | All Content API units; persistence/import/source/admission integration | 90 minutes |
+| content_postgres_reliability | Reliability processing and recovery integration | 90 minutes |
+| content_postgres_ingestion | Managed Content D1/D2/D3 integration | 90 minutes |
+| content_postgres_gold | Managed Content D4 integration | 90 minutes |
+| content_postgres | Original PostgreSQL check; requires every selected partition to succeed | 5 minutes |
 | analytics_http | Fresh synthetic Gold fixtures, content API unit/component tests and GoldApiIT HTTP/native compatibility | 15 minutes |
 | processing | Existing required backend context; classification and five-suite aggregate | 5 minutes |
 | documentation | Existing Markdown/link/hygiene checks plus focused CI policy tests | 5 minutes |
 | frontend | Existing typecheck, lint, component tests and production build | 10 minutes |
 
-D1/D2 add RssFetchIT and RssBronzeIT to the existing PostgreSQL Failsafe profile without removing any
-earlier selector. The content_postgres job packages the ingestion JAR/dependencies before its existing
-verification command, then starts the same digest-pinned SeaweedFS 4.48 mini used by local D2 acceptance.
-Its pre-created test bucket, explicit synthetic credentials and loopback port 8333 are isolated to that
-job. The tests wait for an actual SDK bucket read; an always-running cleanup removes the owned container
-and anonymous volumes. PostgreSQL services, native fixtures, verification commands and native child timeouts remain
-unchanged. Each job owns its workspace. See [managed RSS/Bronze validation](managed-rss-fetch.md) for
-the local harness and actual restart coverage. Hosted execution of the new storage setup is pending.
+The four PostgreSQL callers use the same logical `content_postgres` classification output.
+They depend only on classification and invoke the [reusable partition workflow](../../.github/workflows/postgres-partition.yml)
+on independently provisioned Ubuntu 24.04 runners, each with its own pinned PostgreSQL service,
+workspace, fixture roots and full pinned Python/Spark/DuckDB/JDK environment. Only the two managed
+Content partitions build the ingestion adapter and start/clean up pinned SeaweedFS. Core/import
+fixtures supply their own synthetic Bronze HTTP server and need no SeaweedFS service. Unit tests
+run once in core; other PostgreSQL partitions skip only Surefire units, never Failsafe integration.
+The analytics HTTP job retains its existing unit/integration command.
 
-The five backend suites depend only on changes and remain parallel with one another. Fixtures are
-never shared between job workspaces. The aggregate has no checkout, installation or network dependency.
+The original `content_postgres` name is now a small fail-closed fan-in job. A selected missing,
+failed, cancelled, skipped or timed-out partition cannot produce PostgreSQL success. If PostgreSQL
+is intentionally unselected, all four callers and that fan-in are skipped, preserving the existing
+five-suite aggregate's exact safe-skip rule. Classification and the top-level aggregate retain
+all five logical outputs, trust/fallback behavior and original required-check names. Only fan-ins
+wait for partition completion; no execution partition waits for another execution partition.
+
+The [explicit inventory](../../.github/ci/postgres-partitions.json) covers every PostgreSQL integration
+class exactly once. Default Maven PostgreSQL discovery includes all standard integration names
+and excludes only `GoldApiIT`, which remains in the HTTP profile. The always-running documentation
+job and every selected partition validate complete source membership. Missing/new/duplicate classes
+fail CI until deliberately assigned. Actual Maven XML reports must cover the exact selected classes
+with positive test counts and no failures, errors or skips. This guards selection/discovery as
+well as test success. [PR #72 evidence](pr72-postgres-partitions.md) records all class assignments,
+hosted timing inputs, local measurements, commands and remaining hosted acceptance requirements.
 
 ## Change categories and dependency rules
 

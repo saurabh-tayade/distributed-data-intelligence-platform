@@ -2,7 +2,7 @@
 
 Status: **Accepted — October 20, 2026**, with the Stage A.1 refinements, under [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md). The owner accepted additive [ADR 0011](../adr/0011-artifact-import-maintenance-ownership.md) on October 21. Architecture acceptance alone passes no E5 test group. Current implementation and authorization are recorded below; earlier checkpoint status paragraphs and counts remain historical. Accepted ADRs and native data contracts are unchanged.
 
-Current checkpoint: [D1/D2/D3 managed RSS journal, Bronze receipts and Silver](../operations/managed-rss-fetch.md#d3-managed-silver-lifecycle) implement internal fenced fetch/storage/Silver stages and independent receipt/output verification. Managed Content remains **Partially implemented**; D3 adds internal managed Silver, while Gold and production Content dispatch remain deferred. The fixed Reliability worker remains active with one pinned profile per startup. [C3c.4 controlled operational recovery](#c3c4-controlled-operational-recovery) connects C3a–C3c.3 admission, occupied handoff, guarded bootstrap, independent verification and transactional finalization through a trusted local non-web operator command. Fresh explicit process/evidence review is required before handoff and finalization. Its packaged acceptance and complete backend regression evidence are recorded below. Execution Recovery remains **Partially implemented**; Content execution, cancellation, guarded retry, automatic recovery and Operations UI remain deferred. Earlier checkpoint status paragraphs and counts are historical.
+Current checkpoint: [D1/D2/D3/D4 managed RSS, Silver and Gold](../operations/managed-rss-fetch.md#d4-managed-gold-lifecycle) implement internal fenced fetch/storage/Silver/Gold stages and independent receipt/output verification. Managed Content remains **Partially implemented**; D4 adds internal managed Gold; Content enrichment and production Content dispatch remain deferred. The fixed Reliability worker remains active with one pinned profile per startup. [C3c.4 controlled operational recovery](#c3c4-controlled-operational-recovery) connects C3a–C3c.3 admission, occupied handoff, guarded bootstrap, independent verification and transactional finalization through a trusted local non-web operator command. Fresh explicit process/evidence review is required before handoff and finalization. Its packaged acceptance and complete backend regression evidence are recorded below. Execution Recovery remains **Partially implemented**; production Content execution, cancellation, guarded retry, automatic recovery and Operations UI remain deferred. Earlier checkpoint status paragraphs and counts are historical.
 
 ## Boundary and invariants
 
@@ -3191,3 +3191,49 @@ against registered evidence; it neither adopts ownership nor registers another r
 An incomplete, missing, corrupt or changed namespace cannot be overwritten, repaired, resumed
 or deleted. Occupied ownership remains until a future supported Content recovery procedure.
 Reliability operator reconciliation is explicitly incompatible with these Content stages.
+
+## D4 managed Gold checkpoint
+
+Managed Content Processing remains **Partially implemented**. Internal D4 extends the merged
+D3 checkpoint using the existing `PREPARE_GOLD` and `PUBLISH_GOLD` stage names. Production
+Content dispatch remains disabled. D4 stops with a verified Gold artifact and an occupied
+`RUNNING` Content run; no enrichment, final run disposition, coordinator release or analytics
+activation occurs. See [the D4 operator contract](../operations/managed-rss-fetch.md#d4-managed-gold-lifecycle)
+and [implementation record ADR 0016](../adr/0016-managed-gold-frozen-dependencies.md).
+
+Preparation requires the complete frozen fresh-source set, one committed independently verified
+D3 artifact per ordinal, plus exactly submitted retained D3 artifact IDs. It rejects missing,
+duplicate, incompatible or additional selected items. Original D1/D2/D3 anchors and receipts
+are reopened; actual Bronze/Silver provenance and full qualified inventories are revalidated.
+Imported-only history is explicitly unsupported in D4 and fails closed rather than disappearing
+from the union. All selected markers share the approved Silver root/runtime; no source discovery,
+latest lookup, refetch or unrecorded artifact expansion is allowed.
+
+The preparation intent and one-use authorization precede its read-only Spark child. Full native
+`silver_inputs.load_inputs` fixes the combined canonical manifest, fingerprint and accounting.
+Its verified private evidence and exact `stage_artifacts` input links commit before publication.
+Publication reopens this committed evidence and compares the entire native selection, then calls
+existing `gold_publication.publish` under its own fenced intent/child identity/heartbeat lifecycle.
+Only the original native manifest determines `v1/processor_revision=1/input_set=<fingerprint>`.
+Management IDs, runtime paths and operational settings do not enter the product fingerprint.
+
+A separate Spark child performs read-only full native Gold verification against those inputs;
+the DuckDB opener independently checks schemas and article/daily accounting. Complete output
+membership, original completion/manifest evidence, file hashes and filesystem identities are
+captured and rechecked along with Bronze/Silver immediately before the short PostgreSQL commit.
+The commit registers/reuses the exact Gold artifact, links its Silver dependencies and publication
+stage, marks that stage verified and appends audit evidence atomically. No transaction spans Spark.
+Existing stage/artifact/dependency tables suffice; native schemas and existing migration files
+are unchanged. Metadata consumers accept the two existing qualified Silver registry identities
+without changing rows or treating metadata as native qualification.
+
+Both stages revalidate current owner/epoch/instance/versions, installation guard, controls,
+frozen selection and reviewed runtime at authorization/heartbeat/checkpoint boundaries. The existing
+Spark-capable supervisor enforces deadlines, bounded streams/descendant observation and cleanup;
+the wrapper explicitly reaps its gateway. Known clean preparation/start failures may mark a stage
+`FAILED`; uncertain launch, termination or publication is `UNKNOWN` or remains durably unresolved
+when authority/DB acknowledgment is lost. All retain occupied recovery ownership. No automatic
+Gold retry, repair, overwrite, namespace deletion, owner adoption or Content reconciliation exists.
+A full read-only inspection can confirm a committed publication after a lost verification
+acknowledgment without refreshing ownership or registering another artifact. `VERIFY_RESULT`
+sidecar directories hold independent evidence; no final Content `VERIFY_RESULT` stage runs in D4.

@@ -19,7 +19,7 @@ final class PreflightFiles {
         this(guard,run,attempt,checkpoint,"CHECK_INPUTS");
     }
     PreflightFiles(InstallationHostGuard guard,UUID run,UUID attempt,UUID checkpoint,String stage) {
-        need(Set.of("CHECK_INPUTS","PUBLISH_RELIABILITY","VERIFY_RESULT","STORE_BRONZE","INSPECT_BRONZE","SILVER","VERIFY_SILVER","INSPECT_SILVER","RECHECK_SILVER").contains(stage),INPUT_INVALID);
+        need(Set.of("CHECK_INPUTS","PUBLISH_RELIABILITY","VERIFY_RESULT","STORE_BRONZE","INSPECT_BRONZE","SILVER","VERIFY_SILVER","INSPECT_SILVER","RECHECK_SILVER","PREPARE_GOLD","PUBLISH_GOLD").contains(stage),INPUT_INVALID);
         address="runs/"+run+"/attempts/"+attempt+"/"+stage.toLowerCase(Locale.ROOT).replace('_','-')+"/"+checkpoint;
         try {
             Path p=guard.binding().root();

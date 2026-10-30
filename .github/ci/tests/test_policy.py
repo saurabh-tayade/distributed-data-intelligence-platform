@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+POSTGRES_WORKFLOW = (ROOT / ".github/workflows/postgres-partition.yml").read_text(encoding="utf-8")
 POLICY_PATH = ROOT / ".github/ci/classify.py"
 SPEC = importlib.util.spec_from_file_location("ci_policy", POLICY_PATH)
 POLICY = importlib.util.module_from_spec(SPEC)
@@ -349,24 +350,25 @@ class GateTests(unittest.TestCase):
 
 class WorkflowTests(unittest.TestCase):
     def test_real_bronze_storage_is_isolated_and_cleaned_up(self):
-        body = block("content_postgres")
+        body = POSTGRES_WORKFLOW
         self.assertIn("chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d", body)
         self.assertIn("--publish 127.0.0.1:8333:8333", body)
         self.assertIn("BRONZE_S3_ENDPOINT: http://127.0.0.1:8333", body)
         self.assertIn("--env S3_BUCKET=ddip-d2", body)
         self.assertIn("-s3.autoCreateBucket=false", body)
-        self.assertIn('docker rm --force --volumes "ddip-ci-bronze-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"', body)
-        self.assertIn("if: ${{ always() }}", body)
+        self.assertIn('docker rm --force --volumes "ddip-ci-bronze-${POSTGRES_PARTITION}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"', body)
+        self.assertIn("always() && (inputs.partition == 'ingestion' || inputs.partition == 'gold')", body)
         pom = (ROOT / "services/content-api/pom.xml").read_text(encoding="utf-8")
-        for suite in ("RssFetchIT", "RssBronzeIT", "RssSilverIT", "PersistenceIT", "WorkerCoordinationIT", "ControlAdmissionIT"):
-            self.assertIn(f"**/{suite}.java", pom)
+        self.assertIn("**/*IT.java", pom)
+        self.assertIn("**/GoldApiIT.java", pom)
 
     def test_graph_filters_and_required_contexts(self):
-        for job in JOBS:
+        for job in (*[j for j in JOBS if j != "content_postgres"], "content_postgres_core", "content_postgres_reliability", "content_postgres_ingestion", "content_postgres_gold"):
             body = block(job)
+            key = "content_postgres" if job.startswith("content_postgres_") else job
             self.assertIn("    needs: changes", body)
             self.assertIn("if: ${{ always() && (needs.changes.result != 'success' || "
-                          f"needs.changes.outputs.{job} != 'false') }}}}", body)
+                          f"needs.changes.outputs.{key} != 'false') }}}}", body)
         for job, name in (("documentation", "Documentation and repository hygiene"),
                           ("ingestion", "Java 21 ingestion and Bronze storage"),
                           ("processing", "Python 3.12, local Spark processing and DuckDB analytics"),
@@ -393,14 +395,13 @@ class WorkflowTests(unittest.TestCase):
         for key in ("classified", "mode", *JOBS):
             self.assertIn(f"{key}: ${{{{ steps.classify.outputs.{key} }}}}", body)
         self.assertIn("python3 -I -B -m unittest discover -s .github/ci/tests -v", block("documentation"))
-        self.assertEqual(WORKFLOW.count("    services:"), 1)
-        self.assertIn("    services:", block("content_postgres"))
-        self.assertIn("mvn -B -ntp -f services/content-api/pom.xml verify -Ppostgres", block("content_postgres"))
+        self.assertEqual(POSTGRES_WORKFLOW.count("    services:"), 1)
+        self.assertIn("mvn -B -ntp -f services/content-api/pom.xml verify -Ppostgres", POSTGRES_WORKFLOW)
         self.assertIn('mvn -B -ntp -f services/content-api/pom.xml verify -Pintegration -Danalytics.python="$(command -v python)"', block("analytics_http"))
         self.assertIn("python -m unittest discover -s processing/tests -v", block("processing_python"))
         self.assertIn("mvn -B -ntp -f services/api/pom.xml verify", block("analytics_jdbc"))
         for job in JOBS[1:]:
-            self.assertIn("python-version: '3.12.15'", block(job))
+            self.assertIn("python-version: '3.12.15'", POSTGRES_WORKFLOW if job == "content_postgres" else block(job))
 
 
 if __name__ == "__main__":

@@ -66,6 +66,18 @@ class PublicationTest(unittest.TestCase):
     def replay(self, **kwargs):
         return publication.run(self.spark, self.silver, self.gold, **kwargs)
 
+    def test_explicit_readonly_verification_never_creates_or_repairs(self):
+        inputs=load_inputs(self.spark,self.silver)
+        before=file_bytes(self.gold)
+        self.assertEqual(publication.verify_publication(inputs,self.gold)['output_counts'],self.original['output_counts'])
+        self.assertEqual(file_bytes(self.gold),before)
+        missing=Path(self.tmp.name)/'absent'
+        with self.assertRaises(Exception):publication.verify_publication(inputs,missing)
+        self.assertFalse(missing.exists())
+        (self.directory/'complete.json').unlink();partial=file_bytes(self.gold)
+        with self.assertRaises(Exception):publication.verify_publication(inputs,self.gold)
+        self.assertEqual(file_bytes(self.gold),partial)
+
     def update_marker(self, change):
         path = self.directory / 'complete.json'
         marker = json.loads(path.read_text())

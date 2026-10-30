@@ -283,6 +283,17 @@ def publish(inputs, output_root='outputs/gold'):
         raise PublicationFailure(phase, relative) from None
 
 
+def verify_publication(inputs, output_root='outputs/gold'):
+    """Read-only full native verification against exact validated Silver inputs.
+
+    Unlike publish(), this never creates a namespace, even when output is absent.
+    Existing standalone publication/CLI and fingerprints are unchanged.
+    """
+    from gold_reader import verify_metadata
+    metadata = verify_metadata(output_root, inputs.input_set_fingerprint)
+    return _verify(inputs, metadata.directory, build_gold(inputs), canonical_bytes(inputs.manifest), True)
+
+
 def run(spark, silver_root='outputs/bronze-to-silver', output_root='outputs/gold', *, sources=(), markers=()):
     """Load the M2.2 boundary, build Gold, publish or verify replay."""
     return publish(load_inputs(spark, silver_root, sources=sources, markers=markers), output_root)

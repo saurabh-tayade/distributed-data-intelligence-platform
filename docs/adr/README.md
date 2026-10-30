@@ -51,4 +51,9 @@ earlier operational-activation limitations only to the extent implemented and va
 [ADR 0015](0015-managed-silver-receipt-adapter.md) records D3's exact D2 receipt adapter,
 fenced Silver invocation and reuse of native Silver qualification and artifact registration.
 It is an implementation record with owner acceptance pending. Production Content dispatch,
-Gold/enrichment and operational Content recovery remain disabled or deferred.
+Content enrichment and operational Content recovery remain disabled or deferred; D4 extends
+its historical Gold deferral with the bounded checkpoint below.
+
+[ADR 0016](0016-managed-gold-frozen-dependencies.md) records D4's complete frozen Silver set,
+reuse of native Gold publication/read-only verification, and durable intermediate Gold registration.
+It is an implementation record with owner acceptance pending. ADR 0015's approval status is unchanged.

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Managed RSS/Bronze acceptance with disposable PostgreSQL and optional real SeaweedFS.
+"""Managed Content D1-D4 acceptance with disposable PostgreSQL and local SeaweedFS.
 
 Requires Docker, Maven and JAVA_HOME (JDK 21). Uses synthetic HTTP and owned local storage only;
-no live publisher, AWS or existing database is used. --silver runs actual pinned Spark.
+no live publisher, AWS or existing database is used. --silver/--gold run actual pinned Spark.
 """
 import argparse
 import os
@@ -24,10 +24,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--offline", action="store_true", help="use populated Maven cache")
     parser.add_argument("--regression", action="store_true", help="also run all content-api units and existing persistence/worker/control integration suites")
-    parser.add_argument("--case", help="run one RssFetchIT (or --bronze RssBronzeIT) method during development")
+    parser.add_argument("--case", help="run one method from the selected D1/D2/D3/D4 suite during development")
     parser.add_argument("--bronze", action="store_true", help="D2 acceptance with actual disposable SeaweedFS")
     parser.add_argument("--silver", action="store_true", help="D3 acceptance with actual disposable SeaweedFS and pinned Spark")
+    parser.add_argument("--gold", action="store_true", help="D4 native Gold acceptance with disposable PostgreSQL/SeaweedFS and pinned Spark/DuckDB")
     args = parser.parse_args()
+    if args.gold: args.silver = True
     if args.silver:
         args.bronze = True
         assert os.environ.get("DDIP_TEST_PYTHON"), "--silver requires the absolute pinned Python executable"
@@ -94,11 +96,12 @@ def main():
         with tempfile.TemporaryDirectory(prefix="ddip-rss-d1-") as temporary:
             signal = Path(temporary) / "rss-restart"
             bronze_signal = Path(temporary) / "bronze-restart"
+            gold_signal = Path(temporary) / "gold-restart"
 
             def controller():
                 try:
                     while not stop.wait(0.1):
-                        for phase, request in (("rss", signal), ("bronze", bronze_signal)):
+                        for phase, request in (("rss", signal), ("bronze", bronze_signal), ("gold",gold_signal)):
                             if phase not in restarted and request.exists():
                                 docker("restart", name)
                                 ready()
@@ -116,14 +119,15 @@ def main():
             subprocess.run(maven + ["-f", "ingestion/pom.xml", "-DskipTests", "package"], cwd=root, env=env, check=True)
             command = maven + ["-f", "services/content-api/pom.xml", "-Ppostgres"]
             if args.regression:
-                command += ["-Dit.test=RssFetchIT,PersistenceIT,WorkerCoordinationIT,ControlAdmissionIT" + (",RssBronzeIT" if args.bronze else "") + (",RssSilverIT" if args.silver else "")]
+                command += ["-Dit.test=RssFetchIT,PersistenceIT,WorkerCoordinationIT,ControlAdmissionIT" + (",RssBronzeIT" if args.bronze else "") + (",RssSilverIT" if args.silver else "") + (",RssGoldIT,RunSubmissionIT,RunHistoryIT" if args.gold else "")]
             else:
                 command += ["-Dtest=RuntimeRoleTest,WorkerCapabilityTest,InstallationHostGuardTest,VerifierProcessTest",
-                            "-Dit.test=" + ("RssSilverIT" if args.silver else "RssBronzeIT" if args.bronze else "RssFetchIT") + ("#" + args.case if args.case else "")]
-            command += [f"-Dddip.test.rss-restart-signal={signal}", f"-Dddip.test.bronze-restart-signal={bronze_signal}", "verify"]
+                            "-Dit.test=" + ("RssGoldIT" if args.gold else "RssSilverIT" if args.silver else "RssBronzeIT" if args.bronze else "RssFetchIT") + ("#" + args.case if args.case else "")]
+            command += [f"-Dddip.test.rss-restart-signal={signal}", f"-Dddip.test.bronze-restart-signal={bronze_signal}", f"-Dddip.test.gold-restart-signal={gold_signal}", "verify"]
             result = subprocess.run(command, cwd=root, env=env)
             assert result.returncode == 0, "Managed RSS/Bronze acceptance failed"
             expected_restart = ({"rss", "bronze"} if args.regression and args.bronze else set() if args.silver else {"bronze" if args.bronze else "rss"}) if args.case in (None, "checkpointSurvivesActualDatabaseRestart") else set()
+            if args.gold and args.case in (None,"verifiedGoldSurvivesDatabaseRestart"):expected_restart.add("gold")
             assert not errors and set(restarted) == expected_restart, f"Restart controller incomplete: {restarted}, {errors}"
     finally:
         stop.set()

@@ -1,0 +1,102 @@
+package platform.contentapi.execution;
+
+import java.nio.file.*;
+import java.time.Duration;
+import java.util.*;
+import org.springframework.jdbc.core.JdbcTemplate;
+import platform.contentapi.management.*;
+import tools.jackson.databind.JsonNode;
+import static platform.contentapi.execution.PreflightFailure.Code.*;
+import static platform.contentapi.execution.PreflightFailure.need;
+
+/** Fixed internal D4 checkpoint. No Content dispatch, final disposition, activation or recovery. */
+final class RssGoldExecution {
+    enum Boundary { INTENT, BEFORE_AUTHORIZATION, AUTHORIZED, CHILD_STARTED, HEARTBEAT, AFTER_CHILD, VERIFIED, BEFORE_CHECKPOINT, ACKNOWLEDGED }
+    interface Fault {void at(String phase,Boundary boundary,WorkerRepository.Owner owner);}
+    record Prepared(WorkerRepository.Owner owner,UUID checkpoint,String inputSha,byte[] bytes){Prepared{bytes=bytes.clone();}@Override public byte[] bytes(){return bytes.clone();}}
+    record Published(WorkerRepository.Owner owner,UUID artifact,byte[] evidence){Published{evidence=evidence.clone();}@Override public byte[] evidence(){return evidence.clone();}}
+    private record Context(UUID run,UUID attempt,JsonNode frozen,JsonNode inputs,RssGoldRuntime runtime,String inputSha,WorkerRepository.Owner owner){}
+    private final JdbcTemplate jdbc;private final ManagementTransactions tx;private final WorkerRepository workers;private final Fault fault;
+    RssGoldExecution(JdbcTemplate j,ManagementTransactions t,WorkerRepository w){this(j,t,w,(p,b,o)->{});}
+    RssGoldExecution(JdbcTemplate j,ManagementTransactions t,WorkerRepository w,Fault f){jdbc=j;tx=t;workers=w;fault=f;}
+    private Context context(InstallationHostGuard guard,UUID run,String runtimeId,WorkerRepository.Owner owner){
+        JsonNode frozen;UUID attempt;
+        if(owner!=null){frozen=workers.frozenContent(guard,owner);attempt=owner.attemptId();}
+        else {var rows=tx.required(()->jdbc.queryForList("SELECT captured_selection,selection_sha256,current_attempt_id FROM ddip_management.runs WHERE run_id=?",run));need(rows.size()==1,INPUT_UNAVAILABLE);var row=rows.getFirst();frozen=FrozenRunSelection.canonical((byte[])row.get("captured_selection"),(String)row.get("selection_sha256"),PreflightFiles.LARGE);attempt=(UUID)row.get("current_attempt_id");}
+        need(frozen.get("pipeline").stringValue().equals("CONTENT_RSS_V1") && attempt!=null,RUNTIME_MISMATCH);
+        var runtime=RssGoldRuntime.load(jdbc,tx,guard,run,frozen,runtimeId);
+        JsonNode ids=tx.required(()->RssGoldInputs.ids(jdbc,run,attempt,frozen));var inputs=SourceJson.object().putArray("items");var reader=new RssSilverExecution(jdbc,tx,workers);
+        for(var id:ids){var proof=reader.committed(guard,UUID.fromString(id.get("originRunId").stringValue()),id.get("sourceId").stringValue(),runtime.config.get("silverRuntimeId").stringValue());need(proof.get("artifactId").equals(id.get("artifactId")),INPUT_CHANGED);inputs.add(proof);if(owner!=null)owner=workers.heartbeat(guard,owner);}
+        var context=new Context(run,attempt,frozen,inputs,runtime,SourceJson.sha(SourceJson.canonical(inputs)),owner);check(guard,context);return context;
+    }
+    private void check(InstallationHostGuard guard,Context c){guard.checkHeld(guard.binding().installationId());c.runtime.check();for(var input:c.inputs){Path secrets=Path.of(input.get("bronze").get("credentialsFile").stringValue());need(SourceJson.sha(PreflightFiles.read(secrets,8192,true)).equals(input.get("credentialsSha256").stringValue()),INPUT_CHANGED);}tx.required(()->{RssGoldInputs.check(jdbc,c.run,c.attempt,c.frozen,c.inputs);return null;});}
+    private static final class Current {WorkerRepository.GoldStage stage;}
+    Prepared prepare(InstallationHostGuard guard,WorkerRepository.Owner owner,String runtimeId){
+        var c=context(guard,owner.runId(),runtimeId,owner);owner=c.owner;var current=new Current();UUID checkpoint=UUID.randomUUID();byte[] command=command(c,checkpoint,owner.worker().epoch(),"PREPARE",null,null);
+        current.stage=workers.beginGold(guard,owner,"PREPARE_GOLD",checkpoint,SourceJson.sha(command),c.inputSha,c.inputSha,c.frozen,c.inputs);fault.at("PREPARE_GOLD",Boundary.INTENT,current.stage.owner());
+        try {
+            var files=new PreflightFiles(guard,c.run,c.attempt,checkpoint,"PREPARE_GOLD");files.write("command.json",command,PreflightFiles.LARGE);
+            var value=child(guard,c,files,command,current,true);need(value.get("status").stringValue().equals("PREPARED"),RESULT_INVALID);prepared(value.get("prepared"),c);
+            fault.at("PREPARE_GOLD",Boundary.VERIFIED,current.stage.owner());
+            byte[] evidence=files.read("evidence.json",PreflightFiles.LARGE);byte[] anchor=anchor(files);files.write("verified.json",anchor,65536);
+            fault.at("PREPARE_GOLD",Boundary.BEFORE_CHECKPOINT,current.stage.owner());check(guard,c);need(Arrays.equals(anchor,anchor(files)),INPUT_CHANGED);
+            workers.checkpointGold(guard,current.stage,SourceJson.sha(anchor),evidence,c.frozen,c.inputs);fault.at("PREPARE_GOLD",Boundary.ACKNOWLEDGED,current.stage.owner());return new Prepared(current.stage.owner(),checkpoint,c.inputSha,evidence);
+        }catch(PreflightFailure ex){workers.blockGold(guard,current.stage,ex.quiescent());throw ex;}
+    }
+    Published publish(InstallationHostGuard guard,Prepared prepared,String runtimeId){
+        var owner=prepared.owner();var c=context(guard,owner.runId(),runtimeId,owner);owner=c.owner;need(c.inputSha.equals(prepared.inputSha()),INPUT_CHANGED);
+        var before=stageFiles(guard,c,"PREPARE_GOLD",prepared.checkpoint());verifyStageAnchor(before);
+        need(SourceJson.parse(before.read("command.json",PreflightFiles.LARGE),PreflightFiles.LARGE).get("runtimeSha256").stringValue().equals(c.runtime.digest),RUNTIME_MISMATCH);
+        need(Arrays.equals(before.read("evidence.json",PreflightFiles.LARGE),prepared.bytes()),INPUT_CHANGED);
+        var rows=tx.required(()->jdbc.queryForList("SELECT result_sha256 FROM ddip_management.stage_invocations WHERE attempt_id=? AND stage='PREPARE_GOLD' AND checkpoint_id=? AND state='VERIFIED' AND input_evidence_sha256=?",c.attempt,prepared.checkpoint(),c.inputSha));need(rows.size()==1 && SourceJson.sha(before.read("verified.json",65536)).equals(rows.getFirst().get("result_sha256")),INPUT_CHANGED);
+        var links=tx.required(()->jdbc.queryForList("SELECT role,ordinal,artifact_id FROM ddip_management.stage_artifacts WHERE attempt_id=? AND stage='PREPARE_GOLD' ORDER BY role,ordinal",c.attempt));need(links.size()==c.inputs.size(),INPUT_CHANGED);for(int i=0;i<links.size();i++)need(links.get(i).get("role").equals("INPUT") && ((Number)links.get(i).get("ordinal")).intValue()==i && links.get(i).get("artifact_id").toString().equals(c.inputs.get(i).get("artifactId").stringValue()),INPUT_CHANGED);
+        var nativeInputs=SourceJson.parse(prepared.bytes(),PreflightFiles.LARGE).get("prepared");prepared(nativeInputs,c);var current=new Current();UUID checkpoint=UUID.randomUUID();byte[] command=command(c,checkpoint,owner.worker().epoch(),"PUBLISH",nativeInputs,null);
+        current.stage=workers.beginGold(guard,owner,"PUBLISH_GOLD",checkpoint,SourceJson.sha(command),c.inputSha,nativeInputs.get("inputSetFingerprint").stringValue(),c.frozen,c.inputs);fault.at("PUBLISH_GOLD",Boundary.INTENT,current.stage.owner());
+        try {
+            var files=new PreflightFiles(guard,c.run,c.attempt,checkpoint,"PUBLISH_GOLD");files.write("command.json",command,PreflightFiles.LARGE);
+            var published=child(guard,c,files,command,current,true);need(Set.of("PROCESSED","SKIPPED").contains(published.get("status").stringValue()) && published.get("prepared").equals(nativeInputs),RESULT_INVALID);
+            var verifiedFiles=new PreflightFiles(guard,c.run,c.attempt,checkpoint,"VERIFY_RESULT");byte[] verify=command(c,checkpoint,current.stage.owner().worker().epoch(),"VERIFY",nativeInputs,null);verifiedFiles.write("command.json",verify,PreflightFiles.LARGE);
+            var verified=child(guard,c,verifiedFiles,verify,current,false);need(verified.get("status").stringValue().equals("VERIFIED") && verified.get("prepared").equals(nativeInputs) && verified.get("completion").get("input_set_fingerprint").equals(nativeInputs.get("inputSetFingerprint")),RESULT_INVALID);
+            byte[] verifierAnchor=anchor(verifiedFiles);verifiedFiles.write("verified.json",verifierAnchor,65536);fault.at("PUBLISH_GOLD",Boundary.VERIFIED,current.stage.owner());
+            var artifact=SourceJson.object().put("managedGoldVersion",1).put("kind","GOLD").put("productId","content-intelligence").put("contractVersion",1).put("processorRevision",1).put("nativeFingerprint",nativeInputs.get("inputSetFingerprint").stringValue()).put("storageBindingId",c.runtime.config.get("goldBindingId").stringValue()).put("relativeAddress","v1/processor_revision=1/input_set="+nativeInputs.get("inputSetFingerprint").stringValue());
+            var dependencies=artifact.putArray("inputs");for(var input:c.inputs)dependencies.addObject().put("artifactId",input.get("artifactId").stringValue()).put("evidenceSha256",input.get("evidenceSha256").stringValue());artifact.set("verification",verified);
+            byte[] evidence=SourceJson.canonical(artifact);files.write("selection.json",evidence,PreflightFiles.LARGE);
+            var rootAnchor=(tools.jackson.databind.node.ObjectNode)SourceJson.parse(anchor(files));rootAnchor.put("verificationSha256",SourceJson.sha(verifierAnchor)).put("artifactSha256",SourceJson.sha(evidence)).put("inputSha256",c.inputSha).put("runtimeSha256",c.runtime.digest);byte[] finalAnchor=SourceJson.canonical(rootAnchor);files.write("verified.json",finalAnchor,65536);
+            fault.at("PUBLISH_GOLD",Boundary.BEFORE_CHECKPOINT,current.stage.owner());check(guard,c);workers.checkGold(guard,current.stage);
+            var recheck=new PreflightFiles(guard,c.run,c.attempt,checkpoint,"CHECK_INPUTS");byte[] recheckCommand=command(c,checkpoint,current.stage.owner().worker().epoch(),"RECHECK",nativeInputs,verified);recheck.write("command.json",recheckCommand,PreflightFiles.LARGE);
+            need(child(guard,c,recheck,recheckCommand,current,false).get("status").stringValue().equals("UNCHANGED"),INPUT_CHANGED);
+            verifyStageAnchor(files);verifyStageAnchor(verifiedFiles);verifyStageAnchor(before);need(Arrays.equals(finalAnchor,files.read("verified.json",65536)) && Arrays.equals(evidence,files.read("selection.json",PreflightFiles.LARGE)) && Arrays.equals(verifierAnchor,verifiedFiles.read("verified.json",65536)) && Arrays.equals(prepared.bytes(),before.read("evidence.json",PreflightFiles.LARGE)) && SourceJson.sha(before.read("verified.json",65536)).equals(rows.getFirst().get("result_sha256")),INPUT_CHANGED);
+            UUID id=workers.checkpointGold(guard,current.stage,SourceJson.sha(finalAnchor),evidence,c.frozen,c.inputs);fault.at("PUBLISH_GOLD",Boundary.ACKNOWLEDGED,current.stage.owner());return new Published(current.stage.owner(),id,evidence);
+        }catch(PreflightFailure ex){workers.blockGold(guard,current.stage,ex.code()==PROCESS_START_FAILED && ex.quiescent());throw ex;}
+    }
+    UUID inspect(InstallationHostGuard guard,UUID run,String runtimeId){
+        var c=context(guard,run,runtimeId,null);var rows=tx.required(()->jdbc.queryForList("SELECT s.checkpoint_id,s.result_sha256,a.* FROM ddip_management.stage_invocations s JOIN ddip_management.stage_artifacts x USING(attempt_id,stage,item_ordinal) JOIN ddip_management.artifacts a USING(artifact_id) WHERE s.attempt_id=? AND s.stage='PUBLISH_GOLD' AND s.state='VERIFIED' AND x.role='RESULT' AND x.ordinal=0",c.attempt));need(rows.size()==1,INPUT_UNAVAILABLE);var row=rows.getFirst();
+        var original=stageFiles(guard,c,"PUBLISH_GOLD",(UUID)row.get("checkpoint_id"));verifyStageAnchor(original);byte[] anchor=original.read("verified.json",65536),evidence=(byte[])row.get("evidence_bytes");var a=SourceJson.parse(anchor);
+        need(SourceJson.sha(anchor).equals(row.get("result_sha256")) && SourceJson.sha(evidence).equals(row.get("evidence_sha256")) && SourceJson.sha(evidence).equals(a.get("artifactSha256").stringValue()) && c.inputSha.equals(a.get("inputSha256").stringValue()) && c.runtime.digest.equals(a.get("runtimeSha256").stringValue()),INPUT_CHANGED);
+        var verifier=stageFiles(guard,c,"VERIFY_RESULT",(UUID)row.get("checkpoint_id"));verifyStageAnchor(verifier);need(SourceJson.sha(verifier.read("verified.json",65536)).equals(a.get("verificationSha256").stringValue()) && Arrays.equals(evidence,original.read("selection.json",PreflightFiles.LARGE)),INPUT_CHANGED);
+        var registered=SourceJson.parse(evidence,PreflightFiles.LARGE);var nativeInputs=registered.get("verification").get("prepared");prepared(nativeInputs,c);
+        need("GOLD".equals(row.get("kind")) && "content-intelligence".equals(row.get("product_id")) && ((Number)row.get("contract_version")).intValue()==1 && ((Number)row.get("processor_revision")).intValue()==1 && registered.get("nativeFingerprint").stringValue().equals(row.get("native_identity")) && registered.get("storageBindingId").stringValue().equals(row.get("storage_binding_id")) && registered.get("relativeAddress").stringValue().equals(row.get("relative_address")),INPUT_CHANGED);dependencies((UUID)row.get("artifact_id"),c.inputs);
+        UUID checkpoint=UUID.randomUUID();var files=new PreflightFiles(guard,c.run,c.attempt,checkpoint,"VERIFY_RESULT");byte[] command=command(c,checkpoint,SourceJson.parse(original.read("command.json",PreflightFiles.LARGE),PreflightFiles.LARGE).get("ownerEpoch").longValue(),"VERIFY",nativeInputs,null);files.write("command.json",command,PreflightFiles.LARGE);
+        var verified=unownedChild(c,guard,files,command);need(verified.equals(registered.get("verification")),INPUT_CHANGED);files.write("verified.json",anchor(files),65536);return (UUID)row.get("artifact_id");
+    }
+    private void dependencies(UUID artifact,JsonNode inputs){var links=tx.required(()->jdbc.queryForList("SELECT role,ordinal,dependency_artifact_id FROM ddip_management.artifact_dependencies WHERE artifact_id=? ORDER BY role,ordinal",artifact));need(links.size()==inputs.size(),INPUT_CHANGED);for(int i=0;i<links.size();i++)need("SILVER".equals(links.get(i).get("role")) && ((Number)links.get(i).get("ordinal")).intValue()==i && links.get(i).get("dependency_artifact_id").toString().equals(inputs.get(i).get("artifactId").stringValue()),INPUT_CHANGED);}
+    private JsonNode child(InstallationHostGuard guard,Context c,PreflightFiles files,byte[] command,Current current,boolean stageChild){
+        var result=new ReadOnlyVerifierProcess(!SourceJson.parse(command,PreflightFiles.LARGE).get("mode").stringValue().equals("RECHECK")).run(c.runtime.command(files.directory.resolve("command.json")),c.runtime.silver.environment(),files.directory,Duration.ofSeconds(c.runtime.config.get("seconds").intValue()),new ReadOnlyVerifierProcess.Observer(){
+            public void beforeStart(){fault.at(current.stage.stage(),Boundary.BEFORE_AUTHORIZATION,current.stage.owner());check(guard,c);workers.checkGold(guard,current.stage);need(Arrays.equals(command,files.read("command.json",PreflightFiles.LARGE)),INPUT_CHANGED);if(stageChild){current.stage=workers.authorizeGold(guard,current.stage);fault.at(current.stage.stage(),Boundary.AUTHORIZED,current.stage.owner());}}
+            public void started(InstallationHostGuard.ProcessIdentity p){recordChild(files,p);if(stageChild)current.stage=workers.recordGoldChild(guard,current.stage,p);else workers.checkGold(guard,current.stage);fault.at(current.stage.stage(),Boundary.CHILD_STARTED,current.stage.owner());}
+            public void heartbeat(){fault.at(current.stage.stage(),Boundary.HEARTBEAT,current.stage.owner());check(guard,c);current.stage=workers.heartbeatGold(guard,current.stage);}
+        });fault.at(current.stage.stage(),Boundary.AFTER_CHILD,current.stage.owner());check(guard,c);workers.checkGold(guard,current.stage);return response(files,command,result);
+    }
+    private JsonNode unownedChild(Context c,InstallationHostGuard guard,PreflightFiles files,byte[] command){var child=new ReadOnlyVerifierProcess(true).run(c.runtime.command(files.directory.resolve("command.json")),c.runtime.silver.environment(),files.directory,Duration.ofSeconds(c.runtime.config.get("seconds").intValue()),new ReadOnlyVerifierProcess.Observer(){public void beforeStart(){check(guard,c);}public void started(InstallationHostGuard.ProcessIdentity p){recordChild(files,p);}public void heartbeat(){check(guard,c);}});check(guard,c);return response(files,command,child);}
+    private static JsonNode response(PreflightFiles files,byte[] command,ReadOnlyVerifierProcess.Result child){
+        need(Arrays.equals(command,files.read("command.json",PreflightFiles.LARGE)),INPUT_CHANGED);var r=PreflightFiles.canonical(files.read("result.json",65536),65536);SourceJson.fields(r,"commandSha256","evidenceSha256","status","cleanup","code");need(r.get("commandSha256").stringValue().equals(SourceJson.sha(command)),RESULT_INVALID);
+        if(child.exitCode()!=0){String code=r.get("code").stringValue();throw new PreflightFailure(code.equals("SPARK_CLEANUP_UNCERTAIN")?TERMINATION_UNCONFIRMED:code.endsWith("_CHANGED")?INPUT_CHANGED:code.endsWith("_UNAVAILABLE")?INPUT_UNAVAILABLE:code.equals("RUNTIME_INCOMPATIBLE")?RUNTIME_MISMATCH:INPUT_INVALID,!code.equals("SPARK_CLEANUP_UNCERTAIN"));}
+        need(r.get("cleanup").stringValue().equals("CONFIRMED") && r.get("code").isNull(),TERMINATION_UNCONFIRMED);byte[] evidence=files.read("evidence.json",PreflightFiles.LARGE);need(SourceJson.sha(evidence).equals(r.get("evidenceSha256").stringValue()),RESULT_INVALID);return PreflightFiles.canonical(evidence,PreflightFiles.LARGE);
+    }
+    private static void prepared(JsonNode p,Context c){SourceJson.fields(p,"manifest","inputSetFingerprint","counts");need(SourceJson.sha(SourceJson.canonical(p.get("manifest"))).equals(p.get("inputSetFingerprint").stringValue()),RESULT_INVALID);var markers=new TreeSet<String>();for(var input:c.inputs)need(markers.add(input.get("qualification").get("selection").get("relativeAddress").stringValue()),INPUT_INVALID);var nativeInputs=p.get("manifest").get("inputs");need(nativeInputs.size()==markers.size(),RESULT_INVALID);int i=0;for(String marker:markers)need(nativeInputs.get(i++).get("marker_path").stringValue().equals(marker),RESULT_INVALID);}
+    private static byte[] command(Context c,UUID checkpoint,long epoch,String mode,JsonNode prepared,JsonNode verified){var n=SourceJson.object().put("protocolVersion",1).put("mode",mode).put("runId",c.run.toString()).put("attemptId",c.attempt.toString()).put("ownerEpoch",epoch).put("checkpointId",checkpoint.toString()).put("runtimeSha256",c.runtime.digest).put("inputSha256",c.inputSha).put("silverBindingId",c.runtime.silver.config.get("outputBindingId").stringValue());n.set("inputs",c.inputs);n.set("silver",c.runtime.silver.binding());n.set("gold",c.runtime.binding());n.set("runtime",c.runtime.silver.nativeRuntime());n.set("prepared",prepared);n.set("verified",verified);byte[] bytes=SourceJson.canonical(n);need(bytes.length<=PreflightFiles.LARGE,RESOURCE_LIMIT);return bytes;}
+    private static void recordChild(PreflightFiles files,InstallationHostGuard.ProcessIdentity p){files.write("child.json",SourceJson.canonical(SourceJson.object().put("pid",Long.toString(p.pid())).put("startedAt",p.startedAt().toString()).put("instanceId",p.instanceId().toString())),65536);}
+    private static byte[] anchor(PreflightFiles files){return SourceJson.canonical(SourceJson.object().put("commandSha256",SourceJson.sha(files.read("command.json",PreflightFiles.LARGE))).put("evidenceSha256",SourceJson.sha(files.read("evidence.json",PreflightFiles.LARGE))).put("resultSha256",SourceJson.sha(files.read("result.json",65536))).put("childSha256",SourceJson.sha(files.read("child.json",65536))).put("cleanup","CONFIRMED"));}
+    private static void verifyStageAnchor(PreflightFiles files){var a=PreflightFiles.canonical(files.read("verified.json",65536),65536);var actual=SourceJson.parse(anchor(files));for(String key:actual.propertyNames())need(actual.get(key).equals(a.get(key)),INPUT_CHANGED);}
+    private static PreflightFiles stageFiles(InstallationHostGuard guard,Context c,String phase,UUID checkpoint){return new PreflightFiles(guard,c.run,c.attempt,checkpoint,phase);}
+}

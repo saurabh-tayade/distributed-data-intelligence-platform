@@ -1,4 +1,4 @@
-# E5 D1/D2/D3 — managed RSS, Bronze receipts and Silver
+# E5 D1/D2/D3/D4 — managed RSS, Silver and Gold
 
 Status: **Partially implemented, internal checkpoint — October 29, 2026**, under
 [issue #49](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/issues/49).
@@ -7,10 +7,11 @@ This implements the accepted [RSS journal protocol](../architecture/durable-exec
 and [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md).
 D2 adds internal fenced Bronze publication, independent object reads and durable receipt confirmation.
 [D3](#d3-managed-silver-lifecycle) adds fenced native Silver processing and independent qualification.
-Managed Content remains **Partially implemented**. D3 adds internal Silver below. Production Content dispatch, managed Gold,
+Managed Content remains **Partially implemented**. [D4](#d4-managed-gold-lifecycle) adds internal Gold below. Production Content dispatch,
 Content publication, activation, cancellation, retry, scheduling and automatic recovery remain deferred.
 The D1 sections below describe the original fetch checkpoint; the [D2 lifecycle](#d2-storage-and-receipt-lifecycle)
 and validation record describe the extension without changing those journal bytes or native contracts.
+Earlier D1–D3 status paragraphs and test counts are historical; the D4 section records the current boundary.
 
 ## Lifecycle and authorization
 
@@ -734,3 +735,320 @@ recovery or native processing behavior changes. See the
 [root cause, hosted/local evidence and 90-minute PostgreSQL job budget](ci.md#pr-71--d3-hosted-failure-and-postgresql-budget).
 Managed Content remains **Partially implemented**; D4, Gold/enrichment, operational Content recovery
 and production Content dispatch remain deferred.
+
+## D4 managed Gold lifecycle
+
+Status: **Partially implemented, internal checkpoint — October 29, 2026**.
+The committed D3 branch and its PR #71 timing correction were reviewed at merged main
+`67f8df4`; ADR 0015 is still an implementation record with owner acceptance pending.
+D4 adds Gold preparation/publication, not a complete managed Content workflow. Production
+Content dispatch stays disabled, and no publisher-reference enrichment, final Content
+SUCCEEDED/FAILED disposition, coordinator release, API activation or ANALYTICS_PUBLICATION
+change is performed. Prior analytical consumers keep their explicitly configured publication.
+
+Acceptance criteria: a complete exact D3 Silver set; native canonical identity; fenced preparation
+and publication; actual article/daily Parquet equivalent to standalone Gold; independent full
+native/Spark and DuckDB verification; immutable replay; atomic evidence/dependency registration;
+fail-closed faults with occupied ownership; unchanged D1/D2/D3 contracts and dispatch boundary.
+See [ADR 0016](../adr/0016-managed-gold-frozen-dependencies.md), an implementation record awaiting
+owner acceptance. Accepted ADRs and ADR 0015's approval status remain unchanged.
+
+### Exact Silver completeness and freeze
+
+`RssGoldInputs` resolves every frozen fresh source ordinal to exactly one committed `VERIFIED`
+D3 `SILVER` result artifact. No partially successful multi-source run can prepare Gold. The set
+also includes precisely the submitted `RETAINED_SILVER` IDs; each must have original D3
+stage/anchor proof. D4's owner request limits consumption to D3-verified artifacts, so older
+import-only history is rejected explicitly, not silently omitted. This is a narrower checkpoint
+than the execution contract's eventual general imported-history capability. Incompatible old
+runtime/root bindings remain unavailable; no marker or deployment is silently upgraded.
+
+The proof reopens D1/D2/D3 original command/result anchors, verified Bronze receipts and qualified
+Silver evidence. The Gold adapter rechecks exact Bronze bytes, MIME/encoding/length evidence,
+source/ingestion/time/key identity, Silver namespace membership/hashes/identities, physical schemas,
+required values and provenance with existing native readers. All selected artifacts must share
+one approved Silver binding and compatible reviewed D3 runtime. At most 128 unique artifacts and
+1 GiB of selected captured Silver files enter preparation; duplicate IDs/markers, missing stages,
+incompatible versions/bindings and unexpected selected items fail closed.
+
+Preparation calls `silver_inputs.load_inputs` with only that explicit marker list. Native UTF-8
+marker ordering, replay collapse, canonical manifest serialization, counts and fingerprint are
+unchanged. Fresh-source order and explicit retained IDs are bound in the private managed selection;
+only the native manifest identifies Gold. No bucket listing, directory-wide discovery, latest
+lookup, refetch, registered-artifact scan or unrecorded expansion is used. Later source revisions,
+new artifacts and new unselected Silver namespaces cannot replace the frozen dependencies.
+
+### Stage and process sequence
+
+| Boundary | Evidence and effect |
+| --- | --- |
+| Resolve | Confirm live owner/guard and complete D3 set; bind original artifact IDs, receipts, qualified inventories and compatible runtime |
+| PREPARE_GOLD INTENT | Commit selection/command digests and exact attempt/epoch/instance versions before the read-only Spark child |
+| PREPARE_GOLD RUNNING | Single-use launch authorization, recorded child identity and existing bounded supervision; full Silver qualification and one native combined manifest |
+| PREPARE_GOLD VERIFIED | Retain native manifest/fingerprint/counts and private child/hash anchors; commit exact INPUT artifact links, stage result and audit together; no Gold namespace is created |
+| PUBLISH_GOLD INTENT | Reopen committed preparation/links and identical reviewed runtime; bind exact native fingerprint before output-capable launch |
+| PUBLISH_GOLD RUNNING | Existing `gold_publication.publish` on the exact revalidated inputs; existing complete namespace can only follow native full replay verification |
+| Independent verification | Separate supervised Spark process invokes read-only native Gold verification against selected Silver, then the existing DuckDB opener and bounded quality report |
+| Final recheck | GET/hash/inventory checks revalidate Bronze, Silver, Gold completion/manifest and every analytical/bookkeeping file after all verification actions |
+| PUBLISH_GOLD VERIFIED | One short fenced transaction registers/reuses the exact Gold artifact, Silver dependency edges, stage RESULT link, counts and audit |
+| D4 stop | Run/attempt remain RUNNING, current stage PUBLISH_GOLD and global slot occupied; no enrichment, final disposition or activation |
+
+The fixed Gold runtime profile binds an approved D3 runtime digest, exact Python executable,
+Gold-root binding, six Gold/verifier module hashes, DuckDB 1.4.5 and a deadline of at most
+900 seconds per child. D3's profile also pins Python 3.12.15, PySpark 4.0.2, Boto3/Botocore
+1.43.114, Java 21, native Silver module hashes and Silver/TEMP/control bindings. Root identities,
+module hashes, credential-file bytes and current authority are rechecked at the existing
+boundaries. Gold never accepts a submitted script, command string or arbitrary runtime setting.
+
+The existing Spark-capable supervisor provides explicit PID/start/instance identity, five-second
+heartbeats, independent 16 MiB stream bounds, at most 32 observed descendants, fixed cleanup windows
+and per-child deadlines. The wrapper explicitly shuts down and reaps its gateway before reporting
+success. Private scratch holds Spark temporary state; private commands/results/evidence remain
+under the installation guard. Selection work renews only an explicitly confirmed execution owner;
+ownerless replay/inspection never refreshes authority. No transaction spans processing or file I/O.
+These are trusted single-host cooperative controls, not hostile-process isolation, hard filesystem
+quotas, multi-node Spark or an exactly-once guarantee.
+
+### Native semantics and independent evidence
+
+Gold invokes the unchanged standalone native publisher with validated inputs. Article catalog,
+source/day activity, repeated observations, rejected-input exclusion, source-scoped article IDs,
+UTC ingestion chronology, selected-row ordering, warning accounting, physical Parquet schemas,
+partitioning and completion metadata remain native. The output namespace remains
+`v1/processor_revision=1/input_set=<native input-set SHA-256>`; no management run/attempt, artifact
+UUID, runtime path or operational configuration enters that fingerprint.
+
+The additive `gold_publication.verify_publication` API exposes the existing full `_verify`
+boundary without calling the writer or creating an absent namespace. It inspects physical schemas,
+compares complete Gold row multisets against native Gold built from the selected Silver, validates
+selected provenance, keys, observation/warning reconciliation, metadata and all listed file hashes.
+The independent DuckDB opener additionally checks its schema mapping and article/daily SQL
+invariants. A completion marker, child exit or artifact row alone is never enough.
+
+Gold namespace capture reuses the existing bounded `content_metadata` evidence facility for exact
+fixed flat layouts, including permitted Spark bookkeeping. It captures marker/manifest bytes,
+complete file and directory membership, lengths, SHA-256 and filesystem identities/metadata.
+Native Gold readers supply analytical validation; no transformation logic is reimplemented in
+the control plane. A final read-only recheck compares this baseline and all original Silver/Bronze
+inputs immediately before registration. Native bounds and the reviewed process deadline remain
+in force; there is no weakened verification mode.
+
+The existing schema already admits GOLD artifacts and both stage names. No migration or new
+external dependency is needed. Managed artifact evidence has an internal version-1 envelope
+with native fingerprint, original completion/selection, file capture and exact Silver artifact
+IDs/evidence digests. `artifact_dependencies` records those Silver edges; `stage_artifacts`
+links preparation inputs and the verified intermediate result to the owning run/attempt.
+
+D3's committed registry identity is its qualified inventory digest; older imported Silver uses
+the canonical address identity. Submission/frozen-selection metadata now recognizes both existing
+forms only against validated qualification evidence, without rewriting rows. D4 additionally
+requires the original committed D3 anchor and full native use-time verification.
+
+### Replay, failures and recovery limits
+
+| Observation | Classification and boundary |
+| --- | --- |
+| Missing/incomplete required D3 item or unsupported retained history | No preparation/publisher selection; never omit it or publish a partial fresh set |
+| Duplicate/incompatible selection or changed input manifest/fingerprint | Reject before Gold effects; do not replace inputs with latest files |
+| Changed/missing selected Bronze/Silver evidence | Unavailable/changed/invalid failure; no completed Gold registration |
+| Known clean preparation or process-start failure | Stage FAILED when authority can record it; run remains occupied in recovery-required state |
+| Launched writer interrupted, uncertain cleanup, corrupt/partial output or failed verification | Stage UNKNOWN or unresolved durable intent/running state; retain occupied ownership and all output |
+| Existing incomplete native namespace | Native refusal; never resume, overwrite, repair, delete or rename it to success |
+| Fully verified exact completed namespace | Native read-only replay; original bytes, hashes and modification times stay unchanged |
+| Conflicting existing registry identity/evidence/dependency edges | Reject reuse and retain native output; never substitute or rewrite the row |
+| Lost preparation/intent/launch acknowledgment | No automatic stage adoption or second publisher; preserve the committed/unresolved checkpoint |
+| Lost final verification acknowledgment | Full read-only committed-result inspection can confirm the exact artifact without another registration or owner refresh |
+| PostgreSQL outage/restart, stale owner or guard loss | Stop authority progression and clean children conservatively; never free the slot based on time or process exit alone |
+| Artifact/dependency/stage/audit transaction failure | Roll back registration/linkage together; keep the immutable output and occupied stage evidence |
+
+`RssGoldExecution.inspect` is an internal read-only confirmation of a committed publication,
+including after an unknown commit acknowledgment. It cannot adopt an execution token, reconcile
+an unregistered namespace, finalize Content or release the slot. Reliability's operator-recovery
+command still rejects Content. Operational Content recovery, cancellation/retry and automatic
+storage-only recovery are not activated by D4. Missing historical compatible runtimes or native
+dependencies make replay unavailable; no degraded or metadata-only success is allowed.
+
+### D4 reproduction and changed files
+
+Use the reviewed pinned Python/PySpark/DuckDB environment and JDK 21 described above.
+Set `JAVA_HOME`, `DDIP_TEST_PYTHON`, `PYSPARK_PYTHON`, `SPARK_LOCAL_IP=127.0.0.1` and `TZ=UTC`.
+On Ubuntu, use its installed JDK 21 home; the macOS `java_home` helper is only a local setup example.
+
+```sh
+# Isolated native D1 -> D4/equivalence case first:
+python3 scripts/test-rss-fetch-postgres.py --offline --gold \
+  --case completeMultiSourceNativeGoldAndStandaloneEquivalence
+# Focused D4 faults plus existing supervisor/guard units:
+python3 scripts/test-rss-fetch-postgres.py --offline --gold
+# One scoped backend regression after focused stabilization:
+python3 scripts/test-rss-fetch-postgres.py --offline --gold --regression
+# Scoped native regression (the measured run invokes these modules sequentially):
+PYTHONPATH=processing:processing/tests "$DDIP_TEST_PYTHON" -B -m unittest -v \
+  test_managed_gold test_managed_silver test_silver_import_qualification \
+  test_gold test_gold_publication test_gold_analytics
+python3 -m unittest discover -s .github/ci/tests -v
+npm run check
+```
+
+`--gold` implies D3/D2 and uses the same digest-pinned disposable PostgreSQL/SeaweedFS setup;
+`--offline` only requires already populated Maven dependencies. The focused matrix restarts
+PostgreSQL after committed Gold; the scoped backend regression additionally performs the existing
+D1/D2 restarts. Native test fixtures use a second independent Gold root solely to compare standalone
+results, including native input-order independence. Generated data, credentials, logs and native
+outputs are untracked; disposable services/volumes and JUnit fixtures are removed after execution.
+No new production managed command, worker capability or dispatch option is installed.
+
+The exact D4 source/documentation change inventory follows. Existing migrations, native schemas,
+workflow settings, activation configuration and accepted ADR files are unchanged.
+
+| File | Purpose |
+| --- | --- |
+| [.github/ci/tests/test_policy.py](../../.github/ci/tests/test_policy.py) | Require Gold integration coverage in profile wiring. |
+| [docs/adr/0016-managed-gold-frozen-dependencies.md](../../docs/adr/0016-managed-gold-frozen-dependencies.md) | Record selection/verification decisions and alternatives; owner acceptance pending. |
+| [docs/adr/README.md](../../docs/adr/README.md) | Index pending implementation record without changing approval status. |
+| [docs/architecture/durable-execution.md](../../docs/architecture/durable-execution.md) | Current D4 execution/evidence/recovery boundary. |
+| [docs/architecture/gold-publication.md](../../docs/architecture/gold-publication.md) | Document the additive read-only native verifier. |
+| [docs/operations/ci.md](../../docs/operations/ci.md) | D4 classification/coverage and current 90-minute PostgreSQL budget. |
+| [docs/operations/managed-rss-fetch.md](../../docs/operations/managed-rss-fetch.md) | D4 operator contract, validation and change inventory. |
+| [processing/gold_publication.py](../../processing/gold_publication.py) | Add read-only full native verifier; publisher unchanged. |
+| [processing/managed_gold.py](../../processing/managed_gold.py) | Fixed exact-selection PREPARE/PUBLISH/VERIFY/RECHECK adapter. |
+| [processing/tests/managed_gold_fixture.py](../../processing/tests/managed_gold_fixture.py) | Independent standalone native comparison fixture. |
+| [processing/tests/test_gold_publication.py](../../processing/tests/test_gold_publication.py) | Read-only verification cannot create or repair output. |
+| [processing/tests/test_managed_gold.py](../../processing/tests/test_managed_gold.py) | Exact marker selection/ordering and incompatible/duplicate inputs. |
+| [scripts/test-rss-fetch-postgres.py](../../scripts/test-rss-fetch-postgres.py) | D4 local harness, scoped regression and actual Gold DB restart. |
+| [services/content-api/pom.xml](../../services/content-api/pom.xml) | Include RssGoldIT without removing existing required integration suites. |
+| [services/content-api/src/main/java/platform/contentapi/execution/PreflightFiles.java](../../services/content-api/src/main/java/platform/contentapi/execution/PreflightFiles.java) | Permit existing Gold stage names in private evidence paths. |
+| [services/content-api/src/main/java/platform/contentapi/execution/RssGoldExecution.java](../../services/content-api/src/main/java/platform/contentapi/execution/RssGoldExecution.java) | Fenced lifecycle, supervised native adapter, final verification and read-only confirmation. |
+| [services/content-api/src/main/java/platform/contentapi/execution/RssGoldInputs.java](../../services/content-api/src/main/java/platform/contentapi/execution/RssGoldInputs.java) | Complete exact fresh/retained D3 dependencies and SQL rechecks. |
+| [services/content-api/src/main/java/platform/contentapi/execution/RssGoldRuntime.java](../../services/content-api/src/main/java/platform/contentapi/execution/RssGoldRuntime.java) | Reviewed fixed Gold/D3 runtime and storage binding. |
+| [services/content-api/src/main/java/platform/contentapi/execution/RssSilverExecution.java](../../services/content-api/src/main/java/platform/contentapi/execution/RssSilverExecution.java) | Expose committed D3 proof separately; retain full inspection verification. |
+| [services/content-api/src/main/java/platform/contentapi/execution/WorkerRepository.java](../../services/content-api/src/main/java/platform/contentapi/execution/WorkerRepository.java) | Fenced stage persistence and atomic Gold artifact/dependency/audit checkpoint. |
+| [services/content-api/src/main/java/platform/contentapi/importing/RegisteredImportEvidence.java](../../services/content-api/src/main/java/platform/contentapi/importing/RegisteredImportEvidence.java) | Metadata compatibility for both existing qualified Silver registry identities. |
+| [services/content-api/src/main/java/platform/contentapi/management/FrozenRunSelection.java](../../services/content-api/src/main/java/platform/contentapi/management/FrozenRunSelection.java) | Preserve and validate actual registered native identity. |
+| [services/content-api/src/main/java/platform/contentapi/management/RunRepository.java](../../services/content-api/src/main/java/platform/contentapi/management/RunRepository.java) | Admit consistent D3 metadata without rewriting registry rows. |
+| [services/content-api/src/test/java/platform/contentapi/execution/RssGoldTestSupport.java](../../services/content-api/src/test/java/platform/contentapi/execution/RssGoldTestSupport.java) | Test-only internal seam and deterministic stage faults. |
+| [services/content-api/src/test/java/platform/contentapi/management/RegisteredSilverIdentityTest.java](../../services/content-api/src/test/java/platform/contentapi/management/RegisteredSilverIdentityTest.java) | Metadata identity compatibility and mismatch rejection. |
+| [services/content-api/src/test/java/platform/contentapi/management/RssGoldIT.java](../../services/content-api/src/test/java/platform/contentapi/management/RssGoldIT.java) | Actual D1-D4, replay, completeness, ownership, faults, rollback and restart acceptance. |
+
+### D4 measured acceptance — October 29, 2026
+
+Local environment: macOS arm64, Oracle GraalVM JDK 21.0.7, CPython 3.12.15,
+PySpark 4.0.2, Boto3/Botocore 1.43.114 and DuckDB 1.4.5. PostgreSQL 17.11 and
+SeaweedFS 4.48 used the unchanged digest-pinned disposable Docker images. Feeds were
+synthetic; no live publisher, AWS access or cloud credentials were used. These are elapsed
+acceptance-test measurements, not throughput, production-scale or multi-node benchmarks.
+
+The first development smoke rejected the new proof reader's incorrect comparison of the
+canonical address identity with D3's registered inventory digest (one D4 error, 33.33 seconds;
+43.92-second harness). The proof now checks the original committed D3 inventory identity.
+Separate metadata admission recognizes both established qualified Silver identity forms;
+no registry rows or D1/D2 evidence were rewritten. Corrected and refined isolated native
+smokes passed in 77.79/87.88 and 84.52/97.25 seconds (D4/harness respectively). The actual
+process-start-failure case passed in 33.67/40.91 seconds. Each also ran the same 43 focused
+runtime/supervisor units. These development reruns add no distinct tests to the totals below.
+
+| Validation command/case | Passing tests | D4 suite seconds | Harness seconds |
+| --- | ---: | ---: | ---: |
+| `--gold` focused matrix | 26 D4 + 43 units | 866.2 | 875.75 |
+| `--gold --case preparedSilverCannotChangeBeforePublication` | 2 D4 + 43 units | 59.16 | 69.26 |
+| Final `--gold --case completeMultiSourceNativeGoldAndStandaloneEquivalence` | 1 D4 + 43 units | 84.68 | 92.17 |
+| `--gold --regression` | 380 integration + 327 unit/component | See suites below | 1810.40 |
+| Final review: `--gold --case conflictingRegistryIdentityIsNotReused` | 1 D4 + 43 units | 160.5 | 199.85 |
+
+The scoped backend regression ran once after focused stabilization. Its 327 unit/component
+cases include the same 43 focused units and the new qualified-Silver identity compatibility case;
+the sum of its 20 reported unit-class durations is 12.641 seconds. Failsafe reported:
+
+| Integration suite | Passing cases | Seconds |
+| --- | ---: | ---: |
+| `RssGoldIT` | 28 | 998.0 |
+| `RunHistoryIT` | 46 | 36.79 |
+| `WorkerCoordinationIT` | 56 | 30.83 |
+| `RssSilverIT` | 32 | 293.8 |
+| `ControlAdmissionIT` | 52 | 28.45 |
+| `RssFetchIT` | 51 | 44.59 |
+| `RunSubmissionIT` | 44 | 48.39 |
+| `RssBronzeIT` | 43 | 283.3 |
+| `PersistenceIT` | 28 | 28.03 |
+
+All 380 integration and 327 unit/component cases passed with zero failures, errors or skips.
+The restart controller confirmed actual Gold, RSS and Bronze database restarts. The final review
+then added one narrowly scoped registry collision check: matching evidence/dependency bytes are
+insufficient if kind/version/native identity disagree. Its isolated test uses matching Gold
+evidence and Silver dependency edges with a conflicting registry identity; it rejects reuse,
+keeps the native publication, leaves the stage unresolved and retains the occupied slot. That
+final guard and its compilation were validated by the isolated command above; unchanged broad
+paths were not rerun. No second heavyweight backend/platform regression was launched.
+
+Native modules ran sequentially after the backend, using the commands above:
+
+| Native module | Passing cases | Unittest seconds | Process wall seconds |
+| --- | ---: | ---: | ---: |
+| `test_managed_gold` | 5 | 0.002 | 0.23 |
+| `test_managed_silver` | 9 | 0.002 | 0.13 |
+| `test_silver_import_qualification` | 34 | 113.375 | 113.58 |
+| `test_gold` | 5 | 46.119 | 46.46 |
+| `test_gold_publication` | 20 | 179.892 | 180.78 |
+| `test_gold_analytics` | 17 | 61.24 | 61.47 |
+
+All 90 native cases passed without skips; their sequential process wall times total 402.65 seconds.
+CI policy/gate tests passed 22 cases in 3.098 seconds. Actionlint, Markdown/local-link checks,
+repository hygiene and `git diff --check` passed. The prospective complete working-tree change
+list, including new files, contains 26 paths and classifies as full validation: ingestion,
+processing_python, analytics_jdbc, content_postgres and analytics_http are all selected.
+Every existing required selector and aggregate gate remains; the PostgreSQL budget stays 90 minutes.
+
+**Distinct final count: 820 cases** = 707 scoped backend + 1 additional registry collision +
+90 native + 22 CI policy/gate. D4 contributes 29 distinct integration cases: the 28-case regression
+includes the earlier 26-case matrix and the two post-preparation mutation cases, followed by the
+new collision case. The repeated smoke cases, 43-unit subsets and native selection rerun are
+not added again. Unittest subtest loops/assertions and native child invocations are not counted
+as separate test cases. Lint and workflow syntax checks are checks, not additional tests.
+
+The two-source D1 -> D4 regression recorded this real independently verified native publication:
+
+```text
+input_set_fingerprint: e47465149fb22429b0108274f1adace9ca9e3e0bd64d01cc53aedd715ab67a31
+complete.json SHA-256: 456b27a470ded04fcd5f74a2621c322be997d757ce3d3254f0d67898b03580ad
+selected Silver:       2 original sources / 2 original ingestions
+input observations:    4 accepted / 2 rejected
+Gold output rows:      2 gold_articles / 2 gold_source_daily
+```
+
+The independent native verifier and DuckDB opener checked complete schemas, inventory/hashes,
+selected lineage and article/daily observation accounting. A separate standalone publication
+using reversed markers produced the same native fingerprint and complete analytical rows.
+Committed replay preserved Gold/Silver bytes, hashes, inodes and modification times; D1/D2
+journal/receipt evidence remained unchanged. Assertions also covered incomplete fresh selection,
+unsupported imported-only history, duplicate/incompatible selections, missing/changed Silver
+before and after preparation, substituted fingerprints, corrupt marker/Parquet, incomplete
+namespace retention, launch failure, interruption/uncertain termination, stale owner/guard loss,
+DB outage, acknowledgment loss, atomic registration/audit rollback, no duplicate invocation or
+registration and exclusion of unrelated work, final Content stages and activation.
+
+All publication data and PostgreSQL state in acceptance were disposable fixtures; the identities
+above are observed test evidence, not an activated analytical publication. Full hosted Ubuntu/x86
+CI, the complete PostgreSQL recovery/import profile, independent JDBC/HTTP integration jobs and
+90-minute hosted job headroom still require verification. Local evidence does not claim these
+checks ran. Prior D3 hosted timings in the CI guide are historical and separate from D4 measurements.
+
+### PR #72 hosted follow-up
+
+The D4 hosted run separately exposed a test-only Python layout assumption and the sequential
+PostgreSQL job's 90-minute budget. The launch-failure fixture now uses the existing supervised
+before-start authorization callback, without copying or modifying Python installations. It retains
+known-clean failure, occupied ownership, no child identity, no Gold registration and no duplicate
+authorization assertions. Production execution, fencing, runtime pins, native datasets and dispatch
+remain unchanged. Test-only phase timings identify repeated native processing costs without replacing
+end-to-end qualification. See [the correction, partition inventory and measured evidence](pr72-postgres-partitions.md).
+Earlier D4 measurements above remain historical; hosted Ubuntu acceptance of the revised CI is pending.
+
+### D5 prerequisites
+
+Managed Content remains **Partially implemented**. D5 must qualify the captured publisher-reference
+snapshot, freeze the exact verified intermediate Gold and reference identities, invoke native
+Content enrichment under its own intent, independently verify the final product, and define
+transactional final run disposition/ownership release. Content recovery needs its own reviewed
+quiescence/evidence/finalization procedure; the current Reliability command is insufficient.
+Production dispatch and activation require separate authorization and end-to-end acceptance.
+No large-scale performance, distributed execution, AWS or end-to-end managed Content claim is made.
