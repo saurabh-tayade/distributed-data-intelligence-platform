@@ -49,7 +49,7 @@ class ImportOwnershipIT {
         jdbc.update("INSERT INTO ddip_management.coordinator(singleton_id,installation_id,mode) VALUES (1,?,'READY')",INSTALL);
     }
     @BeforeEach void setup() throws Exception {
-        reset("7");binding=host(Files.createTempDirectory(temp,"host-"));provision(jdbc,binding);
+        reset("8");binding=host(Files.createTempDirectory(temp,"host-"));provision(jdbc,binding);
         descriptor=Files.write(temp.resolve(UUID.randomUUID()+".json"),binding.descriptor());
     }
     @AfterEach void cleanupChildren() throws Exception {
@@ -102,9 +102,9 @@ class ImportOwnershipIT {
                 v7?new Object[]{UUID.randomUUID(),kind,product,contract,processor,identity,storage,address,OBJECT,HASH,format}:
                         new Object[]{UUID.randomUUID(),kind,product,contract,processor,identity,storage,address,OBJECT,HASH});
     }
-    @Test void cleanMigrationAndRepeatedValidationRecognizeSevenVersionsAndOneNewTable() {
-        var schema=new SchemaLifecycle(flyway("7"),jdbc,coordinator);schema.verify(false);schema.verify(true);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.flyway_schema_history WHERE success AND version IS NOT NULL",Integer.class)).isEqualTo(7);
+    @Test void cleanMigrationAndRepeatedValidationRecognizeEightVersionsAndOneNewTable() {
+        var schema=new SchemaLifecycle(flyway("8"),jdbc,coordinator);schema.verify(false);schema.verify(true);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.flyway_schema_history WHERE success AND version IS NOT NULL",Integer.class)).isEqualTo(8);
         assertThat(count("artifact_import_operations")).isZero();assertThat(coordinator.read().activeImportId()).isNull();
     }
     @Test void populatedV6UpgradePreservesCoordinatorAndOldChecksumsAndEvidence() {
@@ -118,10 +118,10 @@ class ImportOwnershipIT {
         var before=jdbc.queryForList("SELECT * FROM ddip_management.coordinator");
         var hashes=jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IS NOT NULL ORDER BY installed_rank");
         var artifact=jdbc.queryForList("SELECT artifact_id,evidence_bytes,evidence_sha256,verified_at FROM ddip_management.artifacts");
-        new SchemaLifecycle(flyway("7"),jdbc,coordinator).verify(true);
+        new SchemaLifecycle(flyway("8"),jdbc,coordinator).verify(true);
         var after=jdbc.queryForList("SELECT singleton_id,installation_id,mode,epoch,active_attempt_id,owner_instance_id,heartbeat_at,row_version FROM ddip_management.coordinator");
         assertThat(after).isEqualTo(before);
-        assertThat(jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version<>'7' ORDER BY installed_rank")).isEqualTo(hashes);
+        assertThat(jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IN ('1','2','3','4','5','6') ORDER BY installed_rank")).isEqualTo(hashes);
         assertThat(jdbc.queryForList("SELECT artifact_id,evidence_bytes,evidence_sha256,verified_at FROM ddip_management.artifacts")).usingRecursiveComparison().isEqualTo(artifact);
         assertThat(count("sources")).isEqualTo(1);assertThat(coordinator.read().mode()).isEqualTo(CoordinatorRepository.Mode.STOPPING);
     }

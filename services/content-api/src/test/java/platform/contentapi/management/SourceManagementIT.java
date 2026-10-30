@@ -226,7 +226,7 @@ class SourceManagementIT {
         close();jdbc.execute("DROP SCHEMA ddip_management CASCADE");
         var old=Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").target("5").load();old.migrate();
         var tx=new ManagementTransactions(new org.springframework.transaction.support.TransactionTemplate(new org.springframework.jdbc.support.JdbcTransactionManager(jdbc.getDataSource())));
-        // Build the historical V5 fixture using its schema, not a V7 repository against old tables.
+        // Build the historical V5 fixture using its schema, not a current repository against old tables.
         jdbc.update("INSERT INTO ddip_management.coordinator(singleton_id,installation_id,mode) VALUES (1,?,'READY')",INSTALL);
         jdbc.update("UPDATE ddip_management.coordinator SET mode='STOPPING',row_version=1");
         var coordinator=new JdbcCoordinatorRepository(jdbc,tx,INSTALL);
@@ -235,7 +235,7 @@ class SourceManagementIT {
         new SchemaLifecycle(current,jdbc,coordinator).verify(true);
         assertThat(coordinator.read().rowVersion()).isEqualTo(1);assertThat(coordinator.read().mode()).isEqualTo(CoordinatorRepository.Mode.STOPPING);
         assertThat(jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE type='SQL' AND version IN ('1','2','3','4','5') ORDER BY installed_rank")).isEqualTo(before);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.flyway_schema_history WHERE type='SQL'",Integer.class)).isEqualTo(7);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.flyway_schema_history WHERE type='SQL'",Integer.class)).isEqualTo(8);
         jdbc.execute("DROP SCHEMA ddip_management CASCADE");old.migrate();
         assertThatThrownBy(() -> new SchemaLifecycle(current,jdbc,coordinator).verify(true)).hasMessage("MANAGEMENT_INCOMPATIBLE");
         assertThat(count("coordinator")).isZero();
