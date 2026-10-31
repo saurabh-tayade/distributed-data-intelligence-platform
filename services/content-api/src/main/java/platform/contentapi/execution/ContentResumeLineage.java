@@ -16,9 +16,12 @@ final class ContentResumeLineage {
     }
     static JsonNode plan(JdbcTemplate j,UUID run,UUID attempt){try{return readPlan(j,run,attempt);}catch(org.springframework.dao.DataAccessException ex){throw new ManagementFailure(ManagementFailure.Code.MANAGEMENT_UNAVAILABLE);}}
     private static JsonNode readPlan(JdbcTemplate j,UUID run,UUID attempt){
-        var rows=j.queryForList("SELECT e.details_bytes,a.reused_checkpoint_id FROM ddip_management.audit_events e JOIN ddip_management.attempts a ON a.attempt_id=e.attempt_id AND a.run_id=e.run_id WHERE e.run_id=? AND e.attempt_id=? AND e.action='CONTENT_RESUME_CLAIMED' AND a.kind='EXECUTE'",run,attempt);
-        if(rows.isEmpty())return null;need(rows.size()==1,INPUT_INVALID);var p=SourceJson.parse((byte[])rows.getFirst().get("details_bytes"),PreflightFiles.LARGE);
-        need(p.get("policy").stringValue().equals(ContentResumePlan.POLICY) && p.get("runId").stringValue().equals(run.toString()) && (p.get("checkpointId").isNull()?rows.getFirst().get("reused_checkpoint_id")==null:p.get("checkpointId").stringValue().equals(Objects.toString(rows.getFirst().get("reused_checkpoint_id"),null))),INPUT_CHANGED);
+        var rows=j.queryForList("SELECT e.details_bytes,e.control_id,a.reused_checkpoint_id FROM ddip_management.audit_events e JOIN ddip_management.attempts a ON a.attempt_id=e.attempt_id AND a.run_id=e.run_id WHERE e.run_id=? AND e.attempt_id=? AND e.action='CONTENT_RESUME_CLAIMED' AND a.kind='EXECUTE'",run,attempt);
+        if(rows.isEmpty()){
+            need(!j.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.attempts a JOIN ddip_management.runs r USING(run_id) WHERE a.run_id=? AND a.attempt_id=? AND r.pipeline='CONTENT_RSS_V1' AND a.kind='EXECUTE' AND (a.reused_checkpoint_id IS NOT NULL OR a.attempt_no>1))",Boolean.class,run,attempt),INPUT_CHANGED);
+            return null;
+        }need(rows.size()==1,INPUT_INVALID);var p=SourceJson.parse((byte[])rows.getFirst().get("details_bytes"),PreflightFiles.LARGE);
+        need(p.get("policy").stringValue().equals(ContentResumePlan.POLICY) && p.get("runId").stringValue().equals(run.toString()) && p.get("resumeControlId").stringValue().equals(Objects.toString(rows.getFirst().get("control_id"),null)) && (p.get("checkpointId").isNull()?rows.getFirst().get("reused_checkpoint_id")==null:p.get("checkpointId").stringValue().equals(Objects.toString(rows.getFirst().get("reused_checkpoint_id"),null))),INPUT_CHANGED);
         need(j.queryForObject("SELECT count(*) FROM ddip_management.attempts WHERE run_id=? AND attempt_id=? AND kind='RECONCILE' AND state='SUCCEEDED'",Integer.class,run,UUID.fromString(p.get("recoveryAttemptId").stringValue()))==1,INPUT_CHANGED);return p;
     }
     static UUID dataAttempt(JdbcTemplate j,UUID run,UUID current){var p=plan(j,run,current);return p==null || p.get("boundary").stringValue().equals("BEFORE_FETCH")?current:UUID.fromString(p.get("originalAttemptId").stringValue());}

@@ -30,6 +30,7 @@
     "platform.contentapi.management.RssContentIT",
     "platform.contentapi.management.ContentFinalizationIT",
     "platform.contentapi.execution.ContentRecoveryIT",
-    "platform.contentapi.execution.ContentResumeIT"
+    "platform.contentapi.execution.ContentResumeIT",
+    "platform.contentapi.execution.ContentInheritedRecoveryIT"
   ]
 }

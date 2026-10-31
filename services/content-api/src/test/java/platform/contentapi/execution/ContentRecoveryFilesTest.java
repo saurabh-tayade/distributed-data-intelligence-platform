@@ -27,4 +27,62 @@ class ContentRecoveryFilesTest {
         assertThatThrownBy(()->capture(List.of())).hasMessage("EVIDENCE_UNAVAILABLE");assertThat(Files.size(root.resolve("retained-4.bin"))).isEqualTo(14L*1024*1024);
     }
     @Test void outsideAttemptAddressCannotSupplyEvidence()throws Exception{file("retained.json",new byte[]{1});assertThatThrownBy(()->capture(stage("runs/other/command.json","0".repeat(64)))).hasMessage("EVIDENCE_CHANGED");}
+    Path sparse(String name,long length)throws Exception{Path p=file(name,new byte[0]);try(var f=new java.io.RandomAccessFile(p.toFile(),"rw")){f.setLength(length);}return p;}
+    @Test void exactly64MiBIsHashedAndOneMoreByteIsRejectedWithoutTruncation()throws Exception{
+        for(int i=0;i<4;i++)sparse("evidence-"+i+".bin",16L*1024*1024);
+        var accepted=capture(List.of());long bytes=0;int count=0;
+        for(var entry:accepted.inventory().get("files"))if(!entry.get("directory").booleanValue()){bytes+=Long.parseLong(entry.get("length").stringValue());assertThat(entry.get("sha256").stringValue()).hasSize(64);count++;}
+        assertThat(bytes).isEqualTo(64L*1024*1024);assertThat(count).isEqualTo(4);
+        Path extra=file("first-rejected.bin",new byte[]{1});assertThatThrownBy(()->capture(List.of())).hasMessage("EVIDENCE_UNAVAILABLE");
+        assertThat(Files.size(extra)).isOne();for(int i=0;i<4;i++)assertThat(Files.size(root.resolve("evidence-"+i+".bin"))).isEqualTo(16L*1024*1024);
+    }
+    @Test void smallTreeCannotHideAnIndividuallyOversizedSidecar()throws Exception{
+        Path p=sparse("evidence.bin",16L*1024*1024+1);assertThatThrownBy(()->capture(List.of())).hasMessage("EVIDENCE_CHANGED");assertThat(Files.size(p)).isEqualTo(16L*1024*1024+1);
+    }
+    @Test void eightMaximumPayloadsFitThePayloadPortionOnly()throws Exception{
+        byte[] payload=new byte[5*1024*1024];for(int i=0;i<8;i++){
+            Path directory=root.resolve("fetch-source/source"+i+"/"+UUID.randomUUID());Files.createDirectories(directory);
+            for(Path p=directory;p.startsWith(guard.binding().root()) && !p.equals(guard.binding().root());p=p.getParent())Files.setPosixFilePermissions(p,PosixFilePermissions.fromString("rwx------"));
+            Path p=directory.resolve("payload.xml");Files.write(p,payload);Files.setPosixFilePermissions(p,PosixFilePermissions.fromString("rw-------"));
+        }
+        var accepted=capture(List.of());long total=0;int count=0;
+        for(var entry:accepted.inventory().get("files"))if(!entry.get("directory").booleanValue()){total+=Long.parseLong(entry.get("length").stringValue());count++;}
+        assertThat(total).isEqualTo(40L*1024*1024);assertThat(count).isEqualTo(8);
+    }
+    @Test void directoryAtWalkBoundaryCannotHideUnhashedProcessSidecars()throws Exception{
+        file("retained.json",new byte[]{1});Path deepest=Files.createDirectories(root.resolve("a/b/c/d"));
+        for(Path p=deepest;p.startsWith(root);p=p.getParent())Files.setPosixFilePermissions(p,PosixFilePermissions.fromString("rwx------"));
+        Path child=Files.write(deepest.resolve("child.json"),SourceJson.canonical(SourceJson.object().put("pid","12345")));Files.setPosixFilePermissions(child,PosixFilePermissions.fromString("rw-------"));
+        assertThatThrownBy(()->capture(List.of())).hasMessage("EVIDENCE_UNAVAILABLE");assertThat(Files.exists(child)).isTrue();
+    }
+    @Test void evenAnEmptyDirectoryAtWalkBoundaryIsUnsupported()throws Exception{
+        file("retained.json",new byte[]{1});Path deepest=Files.createDirectories(root.resolve("a/b/c/d"));for(Path p=deepest;p.startsWith(root);p=p.getParent())Files.setPosixFilePermissions(p,PosixFilePermissions.fromString("rwx------"));
+        assertThatThrownBy(()->capture(List.of())).hasMessage("EVIDENCE_UNAVAILABLE");
+    }
+    @Test void entryCeilingIncludesTheAttemptRootAndRejectsTheFirstExtraEntry()throws Exception{
+        Path marker=file("marker",new byte[0]);Files.delete(marker);
+        for(int i=0;i<4095;i++)Files.createDirectory(root.resolve(Integer.toString(i,36)),PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+        assertThat(capture(List.of()).inventory().get("files")).hasSize(4096);
+        Files.createDirectory(root.resolve("extra"),PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+        assertThatThrownBy(()->capture(List.of())).hasMessage("EVIDENCE_UNAVAILABLE");try(var children=Files.list(root)){assertThat(children.count()).isEqualTo(4096);}
+    }
+    @Test void inventorySerializationCanRejectZeroByteEvidenceAtTheEntryCeiling()throws Exception{
+        for(int i=0;i<4095;i++)file("x".repeat(124)+String.format(java.util.Locale.ROOT,"%04d",i),new byte[0]);
+        assertThatThrownBy(()->capture(List.of())).hasMessage("EVIDENCE_UNAVAILABLE");try(var children=Files.list(root)){assertThat(children.count()).isEqualTo(4095);}
+    }
+    @Test void recoveryJsonFileHasItsOwnOneMiBBoundary()throws Exception{
+        var n=SourceJson.object().put("pad","");int overhead=SourceJson.canonical(n).length;n.put("pad","x".repeat(1024*1024-overhead));byte[] bytes=SourceJson.canonical(n);
+        assertThat(bytes).hasSize(1024*1024);UUID control=UUID.randomUUID();String address=RecoveryFiles.write(guard,control,UUID.randomUUID(),bytes);assertThat(RecoveryFiles.read(guard,address)).isEqualTo(bytes);
+        n.put("pad",n.get("pad").stringValue()+"x");UUID rejected=UUID.randomUUID();assertThatThrownBy(()->RecoveryFiles.write(guard,control,rejected,SourceJson.canonical(n))).hasMessage("EVIDENCE_UNAVAILABLE");assertThat(Files.exists(guard.binding().root().resolve("recovery/"+control+"/"+rejected))).isFalse();
+    }
+    @Test void twoFortyMiBTreesAreIndividuallyCapturableWithoutAnAncestryQuota()throws Exception{
+        for(int i=0;i<4;i++)sparse("first-"+i+".bin",10L*1024*1024);
+        var first=capture(List.of());attempt=UUID.randomUUID();root=guard.binding().root().resolve("runs/"+run+"/attempts/"+attempt);
+        for(int i=0;i<4;i++)sparse("second-"+i+".bin",10L*1024*1024);
+        var second=capture(List.of());for(var tree:List.of(first,second)){long total=0;for(var entry:tree.inventory().get("files"))if(!entry.get("directory").booleanValue())total+=Long.parseLong(entry.get("length").stringValue());assertThat(total).isEqualTo(40L*1024*1024);}
+    }
+    @Test void sqlSnapshotRepresentsLargeByteArraysByDigestAndLength(){
+        byte[] selection=new byte[16*1024*1024];var snapshot=RecoveryHandoff.json(Map.of("captured_selection",selection));
+        assertThat(SourceJson.canonical(snapshot).length).isLessThan(256);assertThat(snapshot.get("captured_selection").get("sha256").stringValue()).isEqualTo(SourceJson.sha(selection));assertThat(snapshot.get("captured_selection").get("length").stringValue()).isEqualTo("16777216");
+    }
 }

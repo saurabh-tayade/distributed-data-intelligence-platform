@@ -2,7 +2,7 @@
 
 Status: **Accepted — October 20, 2026**, with the Stage A.1 refinements, under [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md). The owner accepted additive [ADR 0011](../adr/0011-artifact-import-maintenance-ownership.md) on October 21. Architecture acceptance alone passes no E5 test group. Current implementation and authorization are recorded below; earlier checkpoint status paragraphs and counts remain historical. Accepted ADRs and native data contracts are unchanged.
 
-Previous checkpoint: [D5a managed Content successful completion](../operations/managed-rss-fetch.md#d5a-managed-content-successful-completion) established exact-reference publication, independent verification and fenced finalization. [D5b-1](#d5b-1-explicit-managed-content-reconciliation) added explicit Content reconciliation. The current [D5b-2a checkpoint](#d5b-2a-explicit-resume-of-recovered-content) adds explicit guarded RESUME for pre-fetch without retained Silver, committed Gold and verified Content inputs. Other paused boundaries remain unsupported. [ADR 0019](../adr/0019-explicit-content-resume.md) is pending owner acceptance; earlier ADR statuses are unchanged. Managed Content remains **Partially implemented**, with production dispatch and activation deferred. The fixed Reliability worker and [C3c.4 controlled operational recovery](#c3c4-controlled-operational-recovery) retain their existing paths. Execution Recovery remains **Partially implemented**: inherited-prefix interruption recovery, production Content orchestration, cancellation execution, guarded retry, automatic recovery/resume and Operations UI remain deferred. Earlier checkpoint status paragraphs and test counts are historical.
+Previous checkpoints established D1–D5a publication/finalization, D5b-1 reconciliation and [D5b-2a explicit RESUME](#d5b-2a-explicit-resume-of-recovered-content). The current [D5b-2b inherited recovery increment](../operations/d5b2b-inherited-recovery-validation.md) reconciles interrupted continuations through their recorded original prefixes. Managed Content and Execution Recovery remain **Partially implemented**. Ordinary Content worker dispatch is blocked by the absence of a proved aggregate recovery-evidence envelope; cancellation execution, guarded retry, automatic recovery/resume and Operations UI remain deferred. [ADR 0020](../adr/0020-inherited-content-reconciliation.md) is pending owner acceptance; earlier ADR statuses and historical checkpoint/test records are unchanged. The fixed Reliability worker and C3c recovery retain their existing paths.
 
 ## Boundary and invariants
 
@@ -3349,3 +3349,22 @@ V9 extends only controls_type_check with RESUME. Historical V1–V8 SQL and hist
 upgrade tests remain intact. Current-schema fixtures advance to nine migrations. The
 64 MiB/4096-entry retained-evidence cap still limits recovery and resume. [ADR 0019](../adr/0019-explicit-content-resume.md)
 is an additive implementation record pending owner acceptance.
+
+## D5b-2b inherited-attempt reconciliation
+
+The [current recovery matrix and validation record](../operations/d5b2b-inherited-recovery-validation.md)
+extend the historical D5b-2a interrupted-resume entry above. Explicit C3c reconciliation
+can combine actual resumed stages with their exact recorded original Gold/Content-input
+prefix, without copying historical stage rows. Original recovery packets, applied RESUME,
+claimed plans, child identities, retained seals and independent native verification remain
+mandatory. Complete final Content qualifies for the existing fenced SUCCEEDED transaction;
+an intact earlier boundary with no intended Content namespace qualifies for PAUSED.
+
+Missing/changed inherited evidence, possible writers and unknown outcomes retain occupied
+ownership. Another RESUME after this inherited recovery is explicitly unsupported; an empty
+resumed stage list cannot be reinterpreted as original pre-fetch. Ordinary Content dispatch
+remains disabled because the complete private-evidence envelope has not been proved to fit recovery.
+The [Gate B0 audit](../operations/content-recovery-envelope.md) corrects the erroneous 32-feed claim:
+the implemented Content maximum is eight feeds/40 MiB of payloads, before sidecars.
+[ADR 0020](../adr/0020-inherited-content-reconciliation.md)
+records this implementation with owner acceptance pending. No publication selection changes.

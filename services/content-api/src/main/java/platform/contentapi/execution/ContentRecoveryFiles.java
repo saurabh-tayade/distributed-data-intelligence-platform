@@ -19,7 +19,10 @@ final class ContentRecoveryFiles {
             try(var walk=Files.walk(root,4)){
                 var paths=walk.limit(4097).sorted().toList();need(paths.size()<=4096,EVIDENCE_UNAVAILABLE);
                 long total=0;
-                for(Path p:paths){var a=Files.readAttributes(p,BasicFileAttributes.class,LinkOption.NOFOLLOW_LINKS);PreflightFiles.privateEntry(p,a.isDirectory());var id=InstallationHostGuard.identity(p);
+                for(Path p:paths){var a=Files.readAttributes(p,BasicFileAttributes.class,LinkOption.NOFOLLOW_LINKS);PreflightFiles.privateEntry(p,a.isDirectory());
+                    // walk's depth limit must never turn unobserved descendant sidecars into a complete seal.
+                    need(!a.isDirectory() || p.getNameCount()-root.getNameCount()<4,EVIDENCE_UNAVAILABLE);
+                    var id=InstallationHostGuard.identity(p);
                     var f=files.addObject().put("address",guard.binding().root().relativize(p).toString()).put("device",Long.toString(id.device())).put("inode",Long.toString(id.inode())).put("modifiedAt",a.lastModifiedTime().toString()).put("directory",a.isDirectory());
                     if(a.isDirectory())continue;
                     total+=a.size();need(total<=64L*1024*1024,EVIDENCE_UNAVAILABLE);

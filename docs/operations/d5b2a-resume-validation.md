@@ -1,5 +1,9 @@
 # D5b-2a explicit Content resume
 
+Historical checkpoint record. [D5b-2b inherited recovery](d5b2b-inherited-recovery-validation.md)
+now extends the interrupted-resume recovery boundary described below. Ordinary Content
+dispatch remains disabled; the evidence-size activation blocker remains unresolved.
+
 Implementation and validation record. Production Content dispatch and analytical
 activation remain disabled. [ADR 0019](../adr/0019-explicit-content-resume.md) is pending
 owner acceptance; historical ADR statuses and V1–V8 migration bytes are unchanged.

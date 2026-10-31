@@ -32,8 +32,9 @@ def main():
     parser.add_argument("--content-controls", action="store_true", help="D5a deterministic PostgreSQL fencing/atomicity tests without native processing")
     parser.add_argument("--content-recovery", action="store_true", help="D5b-1 real interrupted Content recovery and PostgreSQL restart")
     parser.add_argument("--content-resume", action="store_true", help="D5b-2a explicit resume and retained checkpoint reuse")
+    parser.add_argument("--content-inherited-recovery", action="store_true", help="D5b-2b interrupted resumed execution with inherited evidence")
     args = parser.parse_args()
-    if args.content_recovery or args.content_resume: args.content = True
+    if args.content_recovery or args.content_resume or args.content_inherited_recovery: args.content = True
     if args.content_controls:
         args.content = True
         if args.regression: parser.error("--content-controls cannot be combined with --regression")
@@ -129,7 +130,9 @@ def main():
                 maven.append("-o")
             subprocess.run(maven + ["-f", "ingestion/pom.xml", "-DskipTests", "package"], cwd=root, env=env, check=True)
             command = maven + ["-f", "services/content-api/pom.xml", "-Ppostgres"]
-            if args.content_resume:
+            if args.content_inherited_recovery:
+                command += ["-DskipUnitTests=true", "-Dit.test=ContentInheritedRecoveryIT" + ("#" + args.case if args.case else "")]
+            elif args.content_resume:
                 command += ["-DskipUnitTests=true", "-Dit.test=ContentResumeIT" + ("#" + args.case if args.case else "")]
             elif args.content_recovery:
                 command += ["-DskipUnitTests=true", "-Dit.test=ContentRecoveryIT"]
@@ -148,7 +151,7 @@ def main():
             if args.content: expected_restart = set()
             if args.content and not args.content_controls and args.case in (None,"lostFinalAcknowledgmentIsConfirmedReadOnly"): expected_restart.add("gold")
             if args.content_recovery: expected_restart = {"content-recovery"}
-            if args.content_resume: expected_restart = set() # Test restarts its exact disposable container directly.
+            if args.content_resume or args.content_inherited_recovery: expected_restart = set() # Tests restart their exact disposable container directly.
             assert not errors and set(restarted) == expected_restart, f"Restart controller incomplete: {restarted}, {errors}"
     finally:
         stop.set()
