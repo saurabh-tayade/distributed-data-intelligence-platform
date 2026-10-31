@@ -235,7 +235,7 @@ class SourceManagementIT {
         new SchemaLifecycle(current,jdbc,coordinator).verify(true);
         assertThat(coordinator.read().rowVersion()).isEqualTo(1);assertThat(coordinator.read().mode()).isEqualTo(CoordinatorRepository.Mode.STOPPING);
         assertThat(jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE type='SQL' AND version IN ('1','2','3','4','5') ORDER BY installed_rank")).isEqualTo(before);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.flyway_schema_history WHERE type='SQL'",Integer.class)).isEqualTo(8);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.flyway_schema_history WHERE type='SQL'",Integer.class)).isEqualTo(9);
         jdbc.execute("DROP SCHEMA ddip_management CASCADE");old.migrate();
         assertThatThrownBy(() -> new SchemaLifecycle(current,jdbc,coordinator).verify(true)).hasMessage("MANAGEMENT_INCOMPATIBLE");
         assertThat(count("coordinator")).isZero();

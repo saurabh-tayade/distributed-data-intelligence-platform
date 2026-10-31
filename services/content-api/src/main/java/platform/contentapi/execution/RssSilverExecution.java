@@ -19,12 +19,13 @@ final class RssSilverExecution {
     RssSilverExecution(JdbcTemplate jdbc,ManagementTransactions tx,WorkerRepository workers){this(jdbc,tx,workers,(p,s)->{});}
     RssSilverExecution(JdbcTemplate jdbc,ManagementTransactions tx,WorkerRepository workers,Fault fault){this.jdbc=jdbc;this.tx=tx;this.workers=workers;this.fault=fault;}
     private record Context(RssBronzeContext bronze,RssSilverRuntime runtime,JsonNode artifact){void check(){bronze.check();runtime.check();}}
-    private Context context(InstallationHostGuard guard,UUID run,String source,String runtimeId){
+    private Context context(InstallationHostGuard guard,UUID run,String source,String runtimeId){return context(guard,run,source,runtimeId,true);}
+    private Context context(InstallationHostGuard guard,UUID run,String source,String runtimeId,boolean inspectBronze){
         var rows=tx.required(()->jdbc.queryForList("SELECT configuration_bytes,configuration_sha256 FROM ddip_management.execution_profiles WHERE profile_id=?",runtimeId));need(rows.size()==1,RUNTIME_MISMATCH);
         var config=FrozenRunSelection.canonical((byte[])rows.getFirst().get("configuration_bytes"),(String)rows.getFirst().get("configuration_sha256"),65536);
         String bronzeId=config.get("bronzeRuntimeId").stringValue();
         var bronze=RssBronzeContext.load(jdbc,tx,guard,run,source,bronzeId);need(bronze.state.equals("BRONZE_VERIFIED") && bronze.receipt!=null,INPUT_UNAVAILABLE);
-        need(new RssBronzeExecution(jdbc,tx,workers).inspect(guard,run,source,bronzeId).receiptConfirmed(),INPUT_INVALID);
+        if(inspectBronze)need(new RssBronzeExecution(jdbc,tx,workers).inspect(guard,run,source,bronzeId).receiptConfirmed(),INPUT_INVALID);
         var runtime=RssSilverRuntime.load(jdbc,tx,guard,bronze,runtimeId);var r=SourceJson.parse(bronze.receipt);var expected=r.get("expected");
         String key=expected.get("metadataKey").stringValue();String address="v1/"+SourceJson.sha(r.get("bucket").stringValue().getBytes(java.nio.charset.StandardCharsets.UTF_8))+"/"+key.substring("bronze/rss/".length(),key.length()-"metadata.json".length())+"complete.json";
         var a=SourceJson.object().put("kind","SILVER").put("productId","content-intelligence").put("storageBindingId",runtime.config.get("outputBindingId").stringValue()).put("relativeAddress",address).put("contractVersion",1).put("processorRevision",1);
@@ -39,7 +40,7 @@ final class RssSilverExecution {
         try {
             var files=new PreflightFiles(guard,owner.runId(),owner.attemptId(),checkpoint,"SILVER");files.write("command.json",command,65536);
             var writer=new ReadOnlyVerifierProcess(true).run(c.runtime.command(files.directory.resolve("command.json")),c.runtime.environment(),files.directory,Duration.ofSeconds(c.runtime.config.get("seconds").intValue()),new ReadOnlyVerifierProcess.Observer(){
-                public void beforeStart(){fault.at(Boundary.BEFORE_AUTHORIZATION,current.stage);c.check();need(Arrays.equals(command,files.read("command.json",65536)),INPUT_CHANGED);current.stage=workers.authorizeSilver(guard,current.stage);fault.at(Boundary.AUTHORIZED,current.stage);}
+                public void beforeStart(){if(ContentResumeLineage.plan(jdbc,owner.runId(),owner.attemptId())!=null){ContentResumeLineage.requireUnregistered(jdbc,"SILVER",c.runtime.config.get("outputBindingId").stringValue(),c.artifact.get("relativeAddress").stringValue());ContentResumeLineage.requireAbsent(Path.of(c.runtime.binding().get("root").stringValue()),Path.of(c.artifact.get("relativeAddress").stringValue()).getParent().toString());}fault.at(Boundary.BEFORE_AUTHORIZATION,current.stage);c.check();need(Arrays.equals(command,files.read("command.json",65536)),INPUT_CHANGED);current.stage=workers.authorizeSilver(guard,current.stage);fault.at(Boundary.AUTHORIZED,current.stage);}
                 public void started(InstallationHostGuard.ProcessIdentity child){recordChild(files,child);current.stage=workers.recordSilverChild(guard,current.stage,child);fault.at(Boundary.CHILD_STARTED,current.stage);}
                 public void heartbeat(){fault.at(Boundary.HEARTBEAT,current.stage);c.check();current.stage=workers.heartbeatSilver(guard,current.stage);}
             });
@@ -69,6 +70,8 @@ final class RssSilverExecution {
     }
     /** Original D3 anchor/receipt proof only. Downstream MUST independently qualify the selected files. */
     JsonNode committed(InstallationHostGuard guard,UUID run,String source,String runtimeId){return committed(guard,context(guard,run,source,runtimeId));}
+    /** Metadata proof only; caller must independently qualify native Bronze/Silver before use. No old sidecars. */
+    JsonNode committedMetadata(InstallationHostGuard guard,UUID run,String source,String runtimeId){return committed(guard,context(guard,run,source,runtimeId,false));}
     private JsonNode committed(InstallationHostGuard guard,Context c){
         UUID run=c.bronze.run;
         var rows=tx.required(()->jdbc.queryForList("SELECT s.*,a.artifact_id,b.evidence_bytes,b.evidence_sha256,b.native_identity,b.storage_binding_id,b.relative_address,b.kind,b.product_id,b.contract_version,b.processor_revision FROM ddip_management.stage_invocations s JOIN ddip_management.stage_artifacts a USING(attempt_id,stage,item_ordinal) JOIN ddip_management.artifacts b USING(artifact_id) WHERE s.attempt_id=? AND s.stage='SILVER' AND s.item_ordinal=? AND s.state='VERIFIED' AND a.role='RESULT' AND a.ordinal=0",c.bronze.attempt,c.bronze.ordinal));

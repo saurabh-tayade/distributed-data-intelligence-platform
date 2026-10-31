@@ -8,7 +8,8 @@
     "platform.contentapi.management.RunHistoryIT",
     "platform.contentapi.management.RunSubmissionIT",
     "platform.contentapi.management.SourceManagementIT",
-    "platform.contentapi.management.WorkerCoordinationIT"
+    "platform.contentapi.management.WorkerCoordinationIT",
+    "platform.contentapi.management.ContentResumeControlIT"
   ],
   "reliability": [
     "platform.contentapi.execution.OperatorRecoveryIT",
@@ -28,6 +29,7 @@
     "platform.contentapi.management.RssGoldIT",
     "platform.contentapi.management.RssContentIT",
     "platform.contentapi.management.ContentFinalizationIT",
-    "platform.contentapi.execution.ContentRecoveryIT"
+    "platform.contentapi.execution.ContentRecoveryIT",
+    "platform.contentapi.execution.ContentResumeIT"
   ]
 }

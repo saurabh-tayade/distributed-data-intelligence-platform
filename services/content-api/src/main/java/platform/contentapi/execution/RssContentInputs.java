@@ -12,6 +12,7 @@ import static platform.contentapi.execution.PreflightFailure.need;
 final class RssContentInputs {
     static JsonNode reference(JsonNode frozen){JsonNode found=null;for(var n:frozen.get("inputs"))if(n.get("role").stringValue().equals("PUBLISHER_REFERENCE")){need(found==null && n.get("ordinal").intValue()==0,INPUT_INVALID);found=n;}need(found!=null,INPUT_UNAVAILABLE);return found;}
     static void check(JdbcTemplate j,UUID run,UUID attempt,JsonNode frozen,JsonNode gold,JsonNode reference){
+        attempt=ContentResumeLineage.dataAttempt(j,run,attempt);
         need(reference.equals(reference(frozen)),INPUT_CHANGED);
         var qualified=RegisteredImportEvidence.validate(SourceJson.canonical(reference.get("qualification")),reference.get("evidenceSha256").stringValue());need(qualified.selection().kind().equals("PUBLISHER_REFERENCE") && qualified.selection().contract()==1 && qualified.selection().processor()==1,INPUT_INVALID);
         var refs=j.queryForList("SELECT a.*,i.evidence_bytes AS captured_bytes FROM ddip_management.run_inputs i JOIN ddip_management.artifacts a USING(artifact_id) WHERE i.run_id=? AND i.role='PUBLISHER_REFERENCE' AND i.ordinal=0",run);need(refs.size()==1,INPUT_UNAVAILABLE);var r=refs.getFirst();

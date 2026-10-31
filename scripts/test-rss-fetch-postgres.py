@@ -31,8 +31,9 @@ def main():
     parser.add_argument("--content", action="store_true", help="D5a real Content publication and successful finalization")
     parser.add_argument("--content-controls", action="store_true", help="D5a deterministic PostgreSQL fencing/atomicity tests without native processing")
     parser.add_argument("--content-recovery", action="store_true", help="D5b-1 real interrupted Content recovery and PostgreSQL restart")
+    parser.add_argument("--content-resume", action="store_true", help="D5b-2a explicit resume and retained checkpoint reuse")
     args = parser.parse_args()
-    if args.content_recovery: args.content = True
+    if args.content_recovery or args.content_resume: args.content = True
     if args.content_controls:
         args.content = True
         if args.regression: parser.error("--content-controls cannot be combined with --regression")
@@ -85,6 +86,7 @@ def main():
                "--env", "POSTGRES_PASSWORD=" + password, IMAGE)
         created = True
         ready()
+        env["DDIP_TEST_POSTGRES_CONTAINER_ID"] = subprocess.run(["docker", "inspect", "--format", "{{.Id}}", name], check=True, text=True, capture_output=True).stdout.strip()
         env.update(DDIP_TEST_DB_URL=f"jdbc:postgresql://127.0.0.1:{port}/ddip_test",
                    DDIP_TEST_DB_USER="ddip_test", DDIP_TEST_DB_PASSWORD=password, TZ="UTC")
         if args.bronze:
@@ -127,7 +129,9 @@ def main():
                 maven.append("-o")
             subprocess.run(maven + ["-f", "ingestion/pom.xml", "-DskipTests", "package"], cwd=root, env=env, check=True)
             command = maven + ["-f", "services/content-api/pom.xml", "-Ppostgres"]
-            if args.content_recovery:
+            if args.content_resume:
+                command += ["-DskipUnitTests=true", "-Dit.test=ContentResumeIT" + ("#" + args.case if args.case else "")]
+            elif args.content_recovery:
                 command += ["-DskipUnitTests=true", "-Dit.test=ContentRecoveryIT"]
             elif args.regression and args.content:
                 command += ["-Dit.test=RssContentIT,ContentFinalizationIT,PersistenceIT,WorkerCoordinationIT,ControlAdmissionIT,RunSubmissionIT,RunHistoryIT,RssGoldIT#completeMultiSourceNativeGoldAndStandaloneEquivalence,ReliabilityExecutionIT#realJsonlSuccessAndImmutableReplayReuseOneRegisteredNativeResult"]
@@ -144,6 +148,7 @@ def main():
             if args.content: expected_restart = set()
             if args.content and not args.content_controls and args.case in (None,"lostFinalAcknowledgmentIsConfirmedReadOnly"): expected_restart.add("gold")
             if args.content_recovery: expected_restart = {"content-recovery"}
+            if args.content_resume: expected_restart = set() # Test restarts its exact disposable container directly.
             assert not errors and set(restarted) == expected_restart, f"Restart controller incomplete: {restarted}, {errors}"
     finally:
         stop.set()

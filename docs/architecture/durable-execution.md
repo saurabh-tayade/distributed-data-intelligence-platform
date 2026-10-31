@@ -2,7 +2,7 @@
 
 Status: **Accepted — October 20, 2026**, with the Stage A.1 refinements, under [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md). The owner accepted additive [ADR 0011](../adr/0011-artifact-import-maintenance-ownership.md) on October 21. Architecture acceptance alone passes no E5 test group. Current implementation and authorization are recorded below; earlier checkpoint status paragraphs and counts remain historical. Accepted ADRs and native data contracts are unchanged.
 
-Previous checkpoint: [D5a managed Content successful completion](../operations/managed-rss-fetch.md#d5a-managed-content-successful-completion) extends internal D1–D4 with exact-reference Content publication, independent verification and fenced successful finalization. The current [D5b-1 checkpoint](#d5b-1-explicit-managed-content-reconciliation) adds explicit Content operator reconciliation. Managed Content remains **Partially implemented**; production Content dispatch and RESUME remain deferred. The fixed Reliability worker remains active with one pinned profile per startup. [C3c.4 controlled operational recovery](#c3c4-controlled-operational-recovery) connects C3a–C3c.3 admission, occupied handoff, guarded bootstrap, independent verification and transactional finalization through a trusted local non-web operator command. Fresh explicit process/evidence review is required before handoff and finalization. Its packaged acceptance and complete backend regression evidence are recorded below. Execution Recovery remains **Partially implemented**; production Content execution, cancellation, guarded retry, automatic recovery and Operations UI remain deferred. Earlier checkpoint status paragraphs and counts are historical.
+Previous checkpoint: [D5a managed Content successful completion](../operations/managed-rss-fetch.md#d5a-managed-content-successful-completion) established exact-reference publication, independent verification and fenced finalization. [D5b-1](#d5b-1-explicit-managed-content-reconciliation) added explicit Content reconciliation. The current [D5b-2a checkpoint](#d5b-2a-explicit-resume-of-recovered-content) adds explicit guarded RESUME for pre-fetch without retained Silver, committed Gold and verified Content inputs. Other paused boundaries remain unsupported. [ADR 0019](../adr/0019-explicit-content-resume.md) is pending owner acceptance; earlier ADR statuses are unchanged. Managed Content remains **Partially implemented**, with production dispatch and activation deferred. The fixed Reliability worker and [C3c.4 controlled operational recovery](#c3c4-controlled-operational-recovery) retain their existing paths. Execution Recovery remains **Partially implemented**: inherited-prefix interruption recovery, production Content orchestration, cancellation execution, guarded retry, automatic recovery/resume and Operations UI remain deferred. Earlier checkpoint status paragraphs and test counts are historical.
 
 ## Boundary and invariants
 
@@ -3307,7 +3307,7 @@ for measured results and D5b prerequisites. No analytics/API activation or
 
 ## D5b-1 explicit managed Content reconciliation
 
-The current implementation extends C3c's guarded, occupied ownership handoff to
+D5b-1 extends C3c's guarded, occupied ownership handoff to
 CONTENT_RSS_V1 through a pipeline-specific runtime boundary. Reliability retains its
 original verification/finalization path. See the [Content recovery decision table and
 operator procedure](../operations/managed-rss-fetch.md#d5b-1-explicit-content-recovery) and
@@ -3326,3 +3326,26 @@ operator procedure](../operations/managed-rss-fetch.md#d5b-1-explicit-content-re
 Migration V8 adds PAUSED solely for this explicitly requested Content recovery outcome.
 This is an additive implementation departure from ADR 0010's prior pause/resume exclusion,
 with owner acceptance of ADR 0018 pending. Accepted ADR text/status is not rewritten.
+
+## D5b-2a explicit resume of recovered Content
+
+The [operator procedure and boundary matrix](../operations/d5b2a-resume-validation.md)
+now define guarded explicit RESUME for supported PAUSED Content runs. This supersedes
+the D5b-1 table's historical "unsupported" RESUME entry and earlier control exclusions.
+
+| Capability | Current boundary |
+| --- | --- |
+| RESUME admission | Strict existing conditional/idempotent control envelope; REQUESTED only |
+| Apply RESUME | Guarded independent qualification, PAUSED → QUEUED atomically with control/audit |
+| Explicit execution | New EXECUTE attempt/epoch/instance; original run and captured selection retained |
+| Supported prefixes | Pre-fetch with no prior intent and no retained Silver; complete committed Gold; verified Content CHECK_INPUTS |
+| Journal / Bronze / Silver continuation | Fixed RESUME_CHECKPOINT_UNSUPPORTED; no fetch/PUT/Spark replay |
+| Success | Existing D5a independent verification and fenced registration/finalization/release |
+| Ambiguous/missing proof or existing Content namespace | Fail closed; no next-stage launch or repair |
+| Interrupted resumed attempt | Occupied recovery retained; inherited-prefix reconciliation unsupported |
+| Production Content dispatch / automatic resume / activation | Disabled |
+
+V9 extends only controls_type_check with RESUME. Historical V1–V8 SQL and historical
+upgrade tests remain intact. Current-schema fixtures advance to nine migrations. The
+64 MiB/4096-entry retained-evidence cap still limits recovery and resume. [ADR 0019](../adr/0019-explicit-content-resume.md)
+is an additive implementation record pending owner acceptance.

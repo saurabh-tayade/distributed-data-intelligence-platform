@@ -22,5 +22,9 @@ class ContentRecoveryFilesTest {
     @Test void recordedCommandHashMustMatch()throws Exception{Path p=file("command.json",new byte[]{1});String address=guard.binding().root().relativize(p).toString();assertThatThrownBy(()->capture(stage(address,"0".repeat(64)))).hasMessage("EVIDENCE_CHANGED");}
     @Test void missingRecordedCommandIsUnavailable()throws Exception{file("retained.json",new byte[]{1});String address=guard.binding().root().relativize(root.resolve("missing.json")).toString();assertThatThrownBy(()->capture(stage(address,"0".repeat(64)))).hasMessage("EVIDENCE_UNAVAILABLE");}
     @Test void symlinkIsRejectedWithoutFollowing()throws Exception{Path p=file("target",new byte[]{1});Files.createSymbolicLink(root.resolve("alias"),p);assertThatThrownBy(()->capture(List.of())).hasMessage("EVIDENCE_CHANGED");}
+    @Test void privateAttemptAbove64MiBIsUnavailableWithoutTruncation()throws Exception{
+        for(int i=0;i<5;i++){Path p=file("retained-"+i+".bin",new byte[0]);try(var f=new java.io.RandomAccessFile(p.toFile(),"rw")){f.setLength(14L*1024*1024);}}
+        assertThatThrownBy(()->capture(List.of())).hasMessage("EVIDENCE_UNAVAILABLE");assertThat(Files.size(root.resolve("retained-4.bin"))).isEqualTo(14L*1024*1024);
+    }
     @Test void outsideAttemptAddressCannotSupplyEvidence()throws Exception{file("retained.json",new byte[]{1});assertThatThrownBy(()->capture(stage("runs/other/command.json","0".repeat(64)))).hasMessage("EVIDENCE_CHANGED");}
 }

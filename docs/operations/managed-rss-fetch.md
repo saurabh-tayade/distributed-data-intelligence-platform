@@ -1,4 +1,4 @@
-# E5 D1–D5b-1 — managed Content and explicit recovery
+# E5 D1–D5b-2a — managed Content, recovery and explicit resume
 
 Status: **Partially implemented, internal checkpoint — October 30, 2026**, under
 [issue #49](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/issues/49).
@@ -13,7 +13,7 @@ Managed Content remains **Partially implemented**. [D4](#d4-managed-gold-lifecyc
 Production Content dispatch, activation, general cancellation/retry execution, scheduling and automatic recovery remain deferred.
 The D1 sections below describe the original fetch checkpoint; the [D2 lifecycle](#d2-storage-and-receipt-lifecycle)
 and validation record describe the extension without changing those journal bytes or native contracts.
-Earlier checkpoint status paragraphs and test counts are historical; the D5b-1 section records the current recovery boundary.
+Earlier checkpoint status paragraphs and test counts are historical; the D5b-2a section records the current recovery and resume boundary.
 
 ## Lifecycle and authorization
 
@@ -1385,3 +1385,25 @@ another explicit control; there is no automatic takeover or unattended retry.
 The [D5b-1 validation report](d5b1-recovery-validation.md) records the exact file inventory,
 seven native boundary results, distinct counts/durations, failure evidence, CI assignments
 and remaining hosted/resume/activation gaps.
+
+## D5b-2a explicit recovered-run resume
+
+The [resume procedure, preconditions, rejection codes and boundary matrix](d5b2a-resume-validation.md)
+supersede the earlier statement that every PAUSED Content run lacks an operational
+RESUME action. Only pre-fetch without intent, complete committed Gold and verified
+Content inputs are supported. D1 journal, Bronze, Silver and partial source-selection
+checkpoints remain explicitly unsupported for continuation.
+
+Submit RESUME using the existing controls endpoint, local authorization headers, exact
+ETag and idempotency key. Admission records REQUESTED only. Use the existing
+`operator-recovery` role with `ddip.recovery.action=resume` to qualify and requeue; invoke
+`ddip.recovery.action=execute-resume` separately to claim and continue. Both require the
+original installation CONTROL binding and compatible captured runtime profiles. No
+reconciliation action or HTTP control transaction starts processing.
+
+A new EXECUTE attempt retains the original run ID and immutable original/recovery
+history. It refers to completed native evidence and uses D5a verification/finalization.
+No completed Silver/Gold/Content publisher is rerun. An intended Content namespace
+that already exists is rejected. A writer ambiguity, unavailable dependency, changed
+proof or retained attempt above 64 MiB prevents continuation. Production Content dispatch,
+automatic recovery, unattended retry and analytical activation remain disabled.
