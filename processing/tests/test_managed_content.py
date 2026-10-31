@@ -151,4 +151,45 @@ class ProtocolTest(unittest.TestCase):
                 self.assertEqual(result['cleanup'],'UNCONFIRMED' if error.code=='SPARK_CLEANUP_UNCERTAIN' else 'CONFIRMED')
 
 
+
+class ContentResumeVerifierTest(unittest.TestCase):
+    """Deterministic dispatch policy; real dependency qualification is covered by ContentResumeIT."""
+    def setUp(self):
+        import tempfile
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.root=Path(self.temp.name)
+        st=self.root.stat();binding=dict(root=str(self.root),rootDevice=str(st.st_dev),rootInode=str(st.st_ino))
+        self.prepared=dict(fingerprint='a'*64)
+        reference=dict(qualification=dict(selection={},verification=dict(capture={},native={})))
+        self.c=dict(boundary='GOLD',reference=reference,referenceBinding=binding,content=binding,contentCommand=dict(goldProof=dict(command={},artifact=dict(verification=dict(prepared={}))),prepared=None))
+        for target,kwargs in [('artifact_import_verifier.capture',dict(return_value={})),('artifact_import_verifier.qualify',dict(return_value={})),('managed_gold.execute',dict(return_value=dict(prepared={}))),('managed_content.execute',dict(side_effect=self.prepare))]:
+            stub=patch(target,**kwargs);stub.start();self.addCleanup(stub.stop)
+    def prepare(self,c):
+        self.assertEqual(c['mode'],'PREPARE');return dict(prepared=self.prepared)
+    def resume(self):
+        import content_resume_verifier as r
+        return r.execute(self.c)
+    def test_resume_gold_and_inputs_are_read_only(self):
+        self.assertEqual(self.resume()['prepared'],self.prepared);self.c['boundary']='CONTENT_INPUTS';self.c['contentCommand']['prepared']=self.prepared
+        self.assertEqual(self.resume()['prepared'],self.prepared);self.assertEqual(list(self.root.rglob('*')),[])
+    def test_resume_pre_fetch_only_reopens_reference(self):
+        self.c.update(boundary='BEFORE_FETCH',contentCommand=None)
+        with patch('managed_content.execute',side_effect=AssertionError('native stage forbidden')):self.assertEqual(self.resume()['boundary'],'BEFORE_FETCH')
+    def test_resume_incomplete_or_complete_namespace_is_never_republished(self):
+        target=self.root/'v1'/'processor_revision=1'/('publication='+self.prepared['fingerprint']);target.mkdir(parents=True)
+        with self.assertRaises(p.Failure) as result:self.resume()
+        self.assertEqual(result.exception.code,'RESUME_NAMESPACE_UNSAFE')
+        (target/'completion.json').write_bytes(b'completed sentinel')
+        with self.assertRaises(p.Failure) as result:self.resume()
+        self.assertEqual(result.exception.code,'RESUME_NAMESPACE_UNSAFE')
+    def test_resume_changed_preparation_is_rejected(self):
+        self.c['boundary']='CONTENT_INPUTS';self.c['contentCommand']['prepared']=dict(fingerprint='0'*64)
+        with self.assertRaises(p.Failure) as result:self.resume()
+        self.assertEqual(result.exception.code,'INPUT_CHANGED')
+    def test_resume_observed_mutation_and_io_are_distinct(self):
+        import content_resume_verifier as r
+        self.assertEqual(r.safe_code(p.Failure('PUBLICATION_CHANGED')),'RESUME_EVIDENCE_INVALID')
+        self.assertEqual(r.safe_code(p.Failure('BRONZE_CHANGED')),'RESUME_EVIDENCE_INVALID')
+        self.assertEqual(r.safe_code(OSError('PRIVATE')),'RESUME_EVIDENCE_UNAVAILABLE')
+        self.assertEqual(r.safe_code(p.Failure('RESOURCE_LIMIT')),'RESUME_EVIDENCE_UNAVAILABLE')
+
 if __name__=='__main__':unittest.main()

@@ -34,7 +34,16 @@ public class OperatorRecoveryConfiguration {
         public void run(ApplicationArguments arguments) {
             try {
                 UUID control=uuid(env.getProperty("ddip.recovery.control-id",""));
-                String action=env.getProperty("ddip.recovery.action","");need(Set.of("inspect","recover").contains(action),INVALID_REQUEST);
+                String action=env.getProperty("ddip.recovery.action","");need(Set.of("inspect","recover","resume","execute-resume").contains(action),INVALID_REQUEST);
+                if(action.equals("resume") || action.equals("execute-resume")){
+                    String profile=token("ddip.worker.execution-profile-id"),binding=token("ddip.worker.control-binding-id"),runtime=token("ddip.worker.runtime-profile-id");
+                    try(var guard=InstallationHostGuard.acquire(new ImportBindings(jdbc,tx,installation).control(binding,profile))){
+                        var service=new ContentResume(jdbc,tx,installation);
+                        if(action.equals("resume")){JsonNode plan;try{plan=service.requeue(guard,control,runtime);}catch(ManagementFailure ex){plan=service.applied(control);if(plan==null)throw ex;}emit(SourceJson.object().put("status","QUEUED").put("controlId",control.toString()).put("runId",plan.get("runId").stringValue()));}
+                        else{UUID result=service.execute(guard,control,runtime);emit(SourceJson.object().put("status","COMPLETED").put("controlId",control.toString()).put("artifactId",result.toString()));}
+                        exitCode=0;return;
+                    }
+                }
                 var inspector=new RecoveryOperatorInspection(jdbc,tx,installation);var summary=inspector.inspect(control);
                 if(action.equals("inspect")){emit(summary.put("status","INSPECTED"));exitCode=0;return;}
                 String profile=token("ddip.worker.execution-profile-id"),binding=token("ddip.worker.control-binding-id"),runtime=token("ddip.worker.runtime-profile-id");
@@ -91,7 +100,11 @@ public class OperatorRecoveryConfiguration {
                     catch(ManagementFailure ex){receipt=finalizer.resolve(guard,control,qualification.checkpoint(),q.sha256());}
                     complete(receipt);
                 }
-            }catch(RecoveryFailure | ManagementFailure | ImportOwnershipFailure | WorkerFailure | PreflightFailure ex){exitCode=2;emit(SourceJson.object().put("status","RECOVERY_REQUIRED").put("code",ex.getMessage()));}
+            }catch(platform.contentapi.management.SourceFailure ex){
+                boolean resume=Set.of("resume","execute-resume").contains(env.getProperty("ddip.recovery.action",""));
+                exitCode=2;emit(SourceJson.object().put("status",resume?"RESUME_REJECTED":"RECOVERY_REQUIRED").put("code",resume?ex.code.name():"OPERATOR_FAILURE"));
+            }
+            catch(RecoveryFailure | ManagementFailure | ImportOwnershipFailure | WorkerFailure | PreflightFailure ex){exitCode=2;emit(SourceJson.object().put("status","RECOVERY_REQUIRED").put("code",ex.getMessage()));}
             catch(Exception ex){exitCode=2;emit(SourceJson.object().put("status","RECOVERY_REQUIRED").put("code","OPERATOR_FAILURE"));}
         }
         private RecoveryFinalization.Receipt historical(InstallationHostGuard guard,UUID control,RecoveryFinalization service) {

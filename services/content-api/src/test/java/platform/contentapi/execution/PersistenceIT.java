@@ -141,10 +141,18 @@ class PersistenceIT {
         migrate(); profile(); UUID id=run("state");
         assertThatThrownBy(() -> jdbc.update("UPDATE ddip_management.runs SET state=?,row_version=row_version+1 WHERE run_id=?",state,id)).isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
     }
-    @ParameterizedTest @ValueSource(strings={"PAUSE","RESUME"})
+    @ParameterizedTest @ValueSource(strings={"PAUSE","DELETE"})
     void unsupportedControlsAreRejected(String type) {
         migrate(); profile(); UUID id=run("control");
         assertThatThrownBy(() -> jdbc.update("INSERT INTO ddip_management.controls(control_id,run_id,type,idempotency_key,normalized_request,request_sha256,expected_version,state,requester) VALUES (?,?,?,'key',?,?,0,'REQUESTED','local-operator')",UUID.randomUUID(),id,type,OBJECT,HASH)).isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+    }
+    @Test void resumeControlLabelRequiresNoReconcileTargetOrQuiescence(){
+        migrate();profile();UUID run=run("resume-label"),control=UUID.randomUUID();jdbc.update("INSERT INTO ddip_management.controls(control_id,run_id,type,idempotency_key,normalized_request,request_sha256,expected_version,state,requester) VALUES (?,?,'RESUME','resume',?,?,0,'REQUESTED','local-operator')",control,run,OBJECT,HASH);
+        assertThat(jdbc.queryForObject("SELECT type FROM ddip_management.controls WHERE control_id=?",String.class,control)).isEqualTo("RESUME");assertThatThrownBy(()->jdbc.update("INSERT INTO ddip_management.controls(control_id,run_id,type,idempotency_key,normalized_request,request_sha256,expected_version,state,requester,quiescence_confirmed) VALUES (?,?,'RESUME','bad-resume',?,?,0,'REQUESTED','local-operator',true)",UUID.randomUUID(),run,OBJECT,HASH)).isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+    }
+    @Test void registeredPublicationCannotBeRecreatedWhenItsNamespaceIsAbsent(@org.junit.jupiter.api.io.TempDir Path temp)throws Exception{
+        migrate();Path root=temp.toRealPath();var identity=InstallationHostGuard.identity(root);byte[] descriptor=platform.contentapi.management.SourceJson.canonical(platform.contentapi.management.SourceJson.object().put("importStorageVersion",1).put("root",root.toString()).put("rootDevice",Long.toString(identity.device())).put("rootInode",Long.toString(identity.inode())));String binding="resume-content",address="v1/processor_revision=1/publication="+"a".repeat(64);jdbc.update("INSERT INTO ddip_management.storage_bindings(binding_id,product,role,configuration_bytes,configuration_sha256,installation_id) VALUES (?,'content-intelligence','CONTENT',?,?,?)",binding,descriptor,platform.contentapi.management.SourceJson.sha(descriptor),INSTALLATION);ContentResumeLineage.requireAbsent(root,address);ContentResumeLineage.requireUnregistered(jdbc,"CONTENT",binding,address);
+        jdbc.update("INSERT INTO ddip_management.artifacts(artifact_id,kind,product_id,contract_version,processor_revision,native_identity,storage_binding_id,relative_address,evidence_bytes,evidence_sha256,verified_at) VALUES (?,'CONTENT','content-intelligence',1,1,?,?,?,?,?,clock_timestamp())",UUID.randomUUID(),"a".repeat(64),binding,address,OBJECT,HASH);assertThat(java.nio.file.Files.exists(root.resolve(address))).isFalse();assertThatThrownBy(()->ContentResumeLineage.requireUnregistered(jdbc,"CONTENT",binding,address)).hasMessage("INPUT_INVALID");assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.artifacts",Integer.class)).isEqualTo(1);
     }
     @Test void activeOwnershipIsCompositeAndStaleTokensDoNotMatch() {
         migrate(); profile(); UUID run=run("owner"); UUID instance=UUID.randomUUID(); UUID attempt=UUID.randomUUID();

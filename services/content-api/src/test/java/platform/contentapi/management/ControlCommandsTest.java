@@ -20,6 +20,7 @@ class ControlCommandsTest {
         assertThat(parse(BODY,"\"6\"").normalized()).isNotEqualTo(c.normalized());
         var b=c.normalized();b[0]=0;assertThat(c.normalized()[0]).isEqualTo((byte)'{');assertThat(c.toString()).doesNotContain(RUN,ATTEMPT,"key");
     }
+    @Test void resumeUsesSameStrictConditionalEnvelope(){var c=parse("{\"action\":\"RESUME\",\"attemptId\":null,\"quiescenceConfirmed\":null}","\"5\"");assertThat(c.action()).isEqualTo("RESUME");assertThat(c.attemptId()).isNull();assertThat(c.expectedVersion()).isEqualTo(5);assertThat(new String(c.normalized(),StandardCharsets.UTF_8)).contains("\"expectedVersion\":\"5\"");}
     @ParameterizedTest @ValueSource(strings={"CANCEL","RETRY","PAUSE","RESUME","reconcile",""}) void unsupported(String action){assertThatThrownBy(()->parse(BODY.replace("RECONCILE",action),"\"0\"")).hasMessage("INVALID_ARGUMENT");}
     @ParameterizedTest @ValueSource(strings={"false","null","1","\"true\"","{}","[]"}) void confirmationIsExactTrue(String value){assertThatThrownBy(()->parse(BODY.replace("true",value),"\"0\"")).hasMessage("INVALID_ARGUMENT");}
     @ParameterizedTest @ValueSource(strings={"","1","null","\"\"","W/\"1\"","\"01\"","\"-1\"","\"9223372036854775808\"","\"1\",\"2\""}) void badEtag(String value){assertThatThrownBy(()->parse(BODY,value)).hasMessage("INVALID_ARGUMENT");}

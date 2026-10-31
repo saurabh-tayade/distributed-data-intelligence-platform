@@ -26,6 +26,7 @@ public final class ControlRepository {
     }
     private record Prepared(Snapshot snapshot,JsonNode replay) { }
     public JsonNode request(ControlCommands.Command command) {
+        if(command.action().equals("RESUME"))return new ResumeControlRepository(jdbc,tx,installation).request(command);
         conflict(!TransactionSynchronizationManager.isActualTransactionActive());
         // Read exact replay first, before current ETag, owner eligibility or process observation.
         Prepared prepared=tx.required(()->{var c=coordinator();var replay=replay(command);return replay!=null?new Prepared(null,replay):new Prepared(snapshot(command,c),null);});
@@ -72,9 +73,9 @@ public final class ControlRepository {
         return new Snapshot(c,r,a,w,stages);
     }
     public JsonNode get(String run,String control){UUID id=UUID.fromString(SourceCommands.uuid(run)),cid=UUID.fromString(SourceCommands.uuid(control));return tx.required(()->summary(id,cid));}
-    private ObjectNode summary(UUID run,UUID control) {
+    ObjectNode summary(UUID run,UUID control) {
         var rows=jdbc.query("SELECT "+SUMMARY+" FROM ddip_management.controls c JOIN ddip_management.runs r USING(run_id) WHERE c.run_id=? AND c.control_id=?",(rs,n)->{
-            RunInspectionValues.check(Set.of("CANCEL","RETRY","RECONCILE").contains(rs.getString("type")) && Set.of("REQUESTED","APPLIED","TOO_LATE","REJECTED").contains(rs.getString("state")));
+            RunInspectionValues.check(Set.of("CANCEL","RETRY","RECONCILE","RESUME").contains(rs.getString("type")) && Set.of("REQUESTED","APPLIED","TOO_LATE","REJECTED").contains(rs.getString("state")));
             return SourceJson.object().put("controlId",rs.getObject("control_id",UUID.class).toString()).put("runId",rs.getObject("run_id",UUID.class).toString()).put("type",rs.getString("type")).put("state",rs.getString("state")).put("reason",RunInspectionValues.code(rs.getString("reason"))).put("requestedAt",UTC.format(rs.getObject("requested_at",OffsetDateTime.class).toInstant())).put("appliedAt",rs.getObject("applied_at",OffsetDateTime.class)==null?null:UTC.format(rs.getObject("applied_at",OffsetDateTime.class).toInstant())).put("rowVersion",Long.toString(rs.getLong("row_version"))).put("runVersion",Long.toString(rs.getLong("run_version")));
         },run,control);if(rows.isEmpty())throw new SourceFailure(NOT_FOUND);return rows.getFirst();
     }
