@@ -38,6 +38,47 @@ class ManagedContentTest(unittest.TestCase):
         stub=patch.object(d5,'recheck_gold',return_value=dict(status='UNCHANGED'));self.d4=stub.start();self.addCleanup(stub.stop)
     def prepare(self):self.c['prepared']=d5.execute(self.c)['prepared'];self.c['mode']='VERIFY'
     def snapshot(self):return {str(p.relative_to(self.root)):(p.stat().st_mtime_ns,p.read_bytes()) for p in self.root.rglob('*') if p.is_file()}
+    def recover(self):
+        import content_recovery_verifier as recovery
+        return recovery.execute(dict(kind='CONTENT',original=self.c))
+    def test_recovery_completed_publication_without_original_verify_result(self):
+        self.prepare();before=self.snapshot();self.c['mode']='PUBLISH'
+        with patch('content_publication.publish',side_effect=AssertionError('writer called')):
+            result=self.recover()
+        self.assertEqual(result['status'],'VERIFIED');self.assertEqual(result['prepared']['fingerprint'],self.identity);self.assertEqual(self.snapshot(),before)
+    def test_recovery_prepare_is_read_only(self):
+        before=self.snapshot();result=self.recover();self.assertEqual(result['status'],'PREPARED');self.assertEqual(self.snapshot(),before)
+    def test_recovery_absent_namespace_is_positive_observation(self):
+        import shutil
+        self.prepare();shutil.rmtree(self.dest);before=self.snapshot();self.assertEqual(self.recover(),dict(recoveryOutcome='PUBLICATION_ABSENT'));self.assertEqual(self.snapshot(),before)
+    def test_recovery_incomplete_namespace_is_retained(self):
+        self.prepare();(self.dest/'complete.json').unlink();before=self.snapshot();self.assertEqual(self.recover(),dict(recoveryOutcome='INCOMPLETE_OUTPUT'));self.assertEqual(self.snapshot(),before)
+    def test_recovery_missing_reference_blocks_even_absent_output(self):
+        import shutil
+        self.prepare();shutil.rmtree(self.dest);(self.reference/'reference_id=fixture-publishers/revision=r1/complete.json').unlink()
+        with self.assertRaises(Exception):self.recover()
+    def test_recovery_changed_gold_blocks(self):
+        self.prepare();next(self.gold.rglob('*.parquet')).write_bytes(b'corrupt')
+        with self.assertRaises(Exception):self.recover()
+    def test_recovery_corrupt_completion_blocks(self):
+        self.prepare();(self.dest/'complete.json').write_bytes(b'{}');before=self.snapshot()
+        with self.assertRaises(Exception):self.recover()
+        self.assertEqual(self.snapshot(),before)
+    def test_recovery_substituted_native_identity_blocks(self):
+        self.prepare();self.c['prepared']['fingerprint']='0'*64
+        with self.assertRaises(Exception):self.recover()
+    def test_recovery_ordinary_stat_io_is_not_absence(self):
+        import content_recovery_verifier as recovery
+        self.prepare()
+        with patch.object(recovery.p,'info',side_effect=PermissionError('private')):
+            with self.assertRaises(PermissionError):self.recover()
+    def test_recovery_safe_failure_codes_distinguish_change_and_io(self):
+        import content_recovery_verifier as recovery
+        self.assertEqual(recovery.safe_code(p.Failure('INPUT_CHANGED')),'INPUT_CHANGED')
+        self.assertEqual(recovery.safe_code(OSError('private')),'EVIDENCE_UNAVAILABLE')
+    def test_recovery_unsupported_kind_never_dispatches(self):
+        import content_recovery_verifier as recovery
+        with self.assertRaises(Exception):recovery.execute(dict(kind='PUBLISH',original=self.c))
     def test_exact_identity_full_native_verifier_and_named_queries(self):
         self.prepare();before=self.snapshot();value=d5.execute(self.c);self.assertEqual(value['prepared']['fingerprint'],self.identity);self.assertEqual(value['verifier'],'content_analytics.open_publication');self.assertEqual([q['name'] for q in value['smoke']],['catalog','reference_coverage','source_discovery_daily']);self.assertEqual(self.snapshot(),before)
         self.c.update(mode='RECHECK',verified=value);self.assertEqual(d5.execute(self.c),value);self.assertEqual(self.snapshot(),before)

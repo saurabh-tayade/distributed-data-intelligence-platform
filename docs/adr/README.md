@@ -57,3 +57,9 @@ its historical Gold deferral with the bounded checkpoint below.
 [ADR 0016](0016-managed-gold-frozen-dependencies.md) records D4's complete frozen Silver set,
 reuse of native Gold publication/read-only verification, and durable intermediate Gold registration.
 It is an implementation record with owner acceptance pending. ADR 0015's approval status is unchanged.
+
+[ADR 0017](0017-managed-content-successful-finalization.md) records D5a's native Content
+verification and fenced successful finalization. [ADR 0018](0018-managed-content-recovery-boundaries.md)
+records D5b-1's explicit read-only Content reconciliation and narrow PAUSED disposition.
+Both remain implementation records with owner acceptance pending. Content dispatch and RESUME
+remain disabled or unsupported.

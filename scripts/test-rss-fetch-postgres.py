@@ -30,7 +30,9 @@ def main():
     parser.add_argument("--gold", action="store_true", help="D4 native Gold acceptance with disposable PostgreSQL/SeaweedFS and pinned Spark/DuckDB")
     parser.add_argument("--content", action="store_true", help="D5a real Content publication and successful finalization")
     parser.add_argument("--content-controls", action="store_true", help="D5a deterministic PostgreSQL fencing/atomicity tests without native processing")
+    parser.add_argument("--content-recovery", action="store_true", help="D5b-1 real interrupted Content recovery and PostgreSQL restart")
     args = parser.parse_args()
+    if args.content_recovery: args.content = True
     if args.content_controls:
         args.content = True
         if args.regression: parser.error("--content-controls cannot be combined with --regression")
@@ -103,11 +105,12 @@ def main():
             signal = Path(temporary) / "rss-restart"
             bronze_signal = Path(temporary) / "bronze-restart"
             gold_signal = Path(temporary) / "gold-restart"
+            recovery_signal = Path(temporary) / "content-recovery-restart"
 
             def controller():
                 try:
                     while not stop.wait(0.1):
-                        for phase, request in (("rss", signal), ("bronze", bronze_signal), ("gold",gold_signal)):
+                        for phase, request in (("rss", signal), ("bronze", bronze_signal), ("gold",gold_signal), ("content-recovery",recovery_signal)):
                             if phase not in restarted and request.exists():
                                 docker("restart", name)
                                 ready()
@@ -124,20 +127,23 @@ def main():
                 maven.append("-o")
             subprocess.run(maven + ["-f", "ingestion/pom.xml", "-DskipTests", "package"], cwd=root, env=env, check=True)
             command = maven + ["-f", "services/content-api/pom.xml", "-Ppostgres"]
-            if args.regression and args.content:
+            if args.content_recovery:
+                command += ["-DskipUnitTests=true", "-Dit.test=ContentRecoveryIT"]
+            elif args.regression and args.content:
                 command += ["-Dit.test=RssContentIT,ContentFinalizationIT,PersistenceIT,WorkerCoordinationIT,ControlAdmissionIT,RunSubmissionIT,RunHistoryIT,RssGoldIT#completeMultiSourceNativeGoldAndStandaloneEquivalence,ReliabilityExecutionIT#realJsonlSuccessAndImmutableReplayReuseOneRegisteredNativeResult"]
             elif args.regression:
                 command += ["-Dit.test=RssFetchIT,PersistenceIT,WorkerCoordinationIT,ControlAdmissionIT" + (",RssBronzeIT" if args.bronze else "") + (",RssSilverIT" if args.silver else "") + (",RssContentIT,RunSubmissionIT,RunHistoryIT" if args.content else ",RssGoldIT,RunSubmissionIT,RunHistoryIT" if args.gold else "")]
             else:
                 command += ["-Dtest=RuntimeRoleTest,WorkerCapabilityTest,InstallationHostGuardTest,VerifierProcessTest",
                             "-Dit.test=" + ("ContentFinalizationIT" if args.content_controls else ("RssContentIT" if args.case else "RssContentIT,ContentFinalizationIT") if args.content else "RssGoldIT" if args.gold else "RssSilverIT" if args.silver else "RssBronzeIT" if args.bronze else "RssFetchIT") + ("#" + args.case if args.case else "")]
-            command += [f"-Dddip.test.rss-restart-signal={signal}", f"-Dddip.test.bronze-restart-signal={bronze_signal}", f"-Dddip.test.gold-restart-signal={gold_signal}"] + (["clean", "verify"] if args.regression else ["verify"])
+            command += [f"-Dddip.test.content-recovery-restart-signal={recovery_signal}", f"-Dddip.test.rss-restart-signal={signal}", f"-Dddip.test.bronze-restart-signal={bronze_signal}", f"-Dddip.test.gold-restart-signal={gold_signal}"] + (["clean", "verify"] if args.regression else ["verify"])
             result = subprocess.run(command, cwd=root, env=env)
             assert result.returncode == 0, "Managed RSS/Bronze acceptance failed"
             expected_restart = ({"rss", "bronze"} if args.regression and args.bronze else set() if args.silver else {"bronze" if args.bronze else "rss"}) if args.case in (None, "checkpointSurvivesActualDatabaseRestart") else set()
             if args.gold and not args.content and args.case in (None,"verifiedGoldSurvivesDatabaseRestart"):expected_restart.add("gold")
             if args.content: expected_restart = set()
             if args.content and not args.content_controls and args.case in (None,"lostFinalAcknowledgmentIsConfirmedReadOnly"): expected_restart.add("gold")
+            if args.content_recovery: expected_restart = {"content-recovery"}
             assert not errors and set(restarted) == expected_restart, f"Restart controller incomplete: {restarted}, {errors}"
     finally:
         stop.set()

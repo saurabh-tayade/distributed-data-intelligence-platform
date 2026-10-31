@@ -35,4 +35,24 @@ class SelectionTest(unittest.TestCase):
         item['qualification']['selection']=d3.selection(r,'silver');self.c['inputs']=[item,self.item]
         self.assertEqual(d4.selected_markers(self.c),sorted([i['qualification']['selection']['relativeAddress'] for i in self.c['inputs']]))
 
+class RecoveryDispatchTest(unittest.TestCase):
+    def request(self):return dict(kind='GOLD',original=dict(mode='PUBLISH',prepared=dict(inputSetFingerprint='a'*64),verified=None))
+    def test_completed_gold_uses_one_read_only_spark_action(self):
+        from unittest.mock import patch
+        import content_recovery_verifier as recovery
+        with patch.object(recovery,'namespace',return_value=None),patch.object(d4,'execute',return_value=dict(status='VERIFIED')) as verify:
+            self.assertEqual(recovery.execute(self.request()),dict(status='VERIFIED'))
+        self.assertEqual(verify.call_count,1);self.assertEqual(verify.call_args.args[0]['mode'],'VERIFY')
+    def test_absent_gold_requires_original_dependency_preparation(self):
+        from unittest.mock import patch
+        import content_recovery_verifier as recovery
+        with patch.object(recovery,'namespace',return_value='PUBLICATION_ABSENT'),patch.object(d4,'execute',return_value=dict(prepared=dict(inputSetFingerprint='a'*64))) as prepare:
+            self.assertEqual(recovery.execute(self.request()),dict(recoveryOutcome='PUBLICATION_ABSENT'))
+        self.assertEqual(prepare.call_count,1);self.assertEqual(prepare.call_args.args[0]['mode'],'PREPARE')
+    def test_changed_prepared_selection_blocks_absent_gold_disposition(self):
+        from unittest.mock import patch
+        import content_recovery_verifier as recovery
+        with patch.object(recovery,'namespace',return_value='PUBLICATION_ABSENT'),patch.object(d4,'execute',return_value=dict(prepared=dict(inputSetFingerprint='b'*64))):
+            with self.assertRaises(p.Failure):recovery.execute(self.request())
+
 if __name__=='__main__':unittest.main()

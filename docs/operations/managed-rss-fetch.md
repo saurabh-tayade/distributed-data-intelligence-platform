@@ -1,17 +1,19 @@
-# E5 D1/D2/D3/D4 — managed RSS, Silver and Gold
+# E5 D1–D5b-1 — managed Content and explicit recovery
 
-Status: **Partially implemented, internal checkpoint — October 29, 2026**, under
+Status: **Partially implemented, internal checkpoint — October 30, 2026**, under
 [issue #49](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/issues/49).
 This implements the accepted [RSS journal protocol](../architecture/durable-execution.md#rss-journal-and-recovery-protocol),
 [ADR 0001](../adr/0001-rss-raw-ingestion-contract.md), [ADR 0002](../adr/0002-bronze-object-storage.md)
 and [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md).
 D2 adds internal fenced Bronze publication, independent object reads and durable receipt confirmation.
 [D3](#d3-managed-silver-lifecycle) adds fenced native Silver processing and independent qualification.
-Managed Content remains **Partially implemented**. [D4](#d4-managed-gold-lifecycle) adds internal Gold below. Production Content dispatch,
-Content publication, activation, cancellation, retry, scheduling and automatic recovery remain deferred.
+Managed Content remains **Partially implemented**. [D4](#d4-managed-gold-lifecycle) adds internal Gold;
+[D5a](#d5a-managed-content-successful-completion) adds internal Content publication;
+[D5b-1](#d5b-1-explicit-content-recovery) adds explicit read-only operator reconciliation.
+Production Content dispatch, activation, general cancellation/retry execution, scheduling and automatic recovery remain deferred.
 The D1 sections below describe the original fetch checkpoint; the [D2 lifecycle](#d2-storage-and-receipt-lifecycle)
 and validation record describe the extension without changing those journal bytes or native contracts.
-Earlier D1–D3 status paragraphs and test counts are historical; the D4 section records the current boundary.
+Earlier checkpoint status paragraphs and test counts are historical; the D5b-1 section records the current recovery boundary.
 
 ## Lifecycle and authorization
 
@@ -476,7 +478,7 @@ is supplied. Hosted CI and full native Spark processing are separate from the sc
 
 ## D3 managed Silver lifecycle
 
-Status: **Partially implemented, internal checkpoint — October 29, 2026**.
+Status: **Partially implemented, internal checkpoint — October 30, 2026**.
 D3 adds Silver processing to D1/D2. Production Content dispatch remains disabled. The
 historical D2 stop point above describes that checkpoint, not D3's current internal seam.
 The run remains `RUNNING` at `SILVER` with its global ownership slot occupied after verified
@@ -738,7 +740,7 @@ and production Content dispatch remain deferred.
 
 ## D4 managed Gold lifecycle
 
-Status: **Partially implemented, internal checkpoint — October 29, 2026**.
+Status: **Partially implemented, internal checkpoint — October 30, 2026**.
 The committed D3 branch and its PR #71 timing correction were reviewed at merged main
 `67f8df4`; ADR 0015 is still an implementation record with owner acceptance pending.
 D4 adds Gold preparation/publication, not a complete managed Content workflow. Production
@@ -1318,3 +1320,68 @@ production dispatch, frontend or infrastructure change is included.
 - `services/content-api/src/test/java/platform/contentapi/management/RssContentIT.java`
 - `services/content-api/src/test/java/platform/contentapi/management/RssGoldFixtures.java`
 - `services/content-api/src/test/java/platform/contentapi/management/RssGoldIT.java`
+
+## D5b-1 explicit Content recovery
+
+Production Content dispatch remains
+disabled. This section supersedes the historical D1–D5a statements that Content cannot use
+the recovery operator. [ADR 0018](../adr/0018-managed-content-recovery-boundaries.md) remains
+pending owner acceptance; previous ADR statuses are unchanged.
+
+The existing non-web `operator-recovery` role accepts only an already authorized RECONCILE
+control for the exact interrupted run/attempt. Keep the original run profile, deployment,
+CONTROL binding and retained D1–D5a runtime profiles. Supply the D5a Content runtime profile
+as `ddip.worker.runtime-profile-id`. Use the existing operator `inspect` and `recover`
+actions and HANDOFF/FINALIZATION challenge-response procedure documented in the
+[durable execution contract](../architecture/durable-execution.md#c3c4-controlled-operational-recovery).
+No new control request fields, keys or endpoint are introduced.
+
+Before confirming either challenge, stop original handlers and unmanaged writers, inspect
+the exact recorded process start identities and all checkpoint launch gaps, and review
+possible descendants. Review every returned descendant hint with its original start instant.
+An expired heartbeat, missing parent, stale PID or an operator boolean alone does not establish
+quiescence. Known live or unobservable identities veto recovery. Preserve the CONTROL root,
+journals, object keys and intended output namespaces while resolving uncertainty.
+
+| Original boundary | Exact evidence / read-only verifier | Permitted disposition |
+| --- | --- | --- |
+| Before FETCH_SOURCE intent | Captured original selection, no unauthorized effects and proven quiescence | PAUSED; no retrieval or invented ingestion identity |
+| FETCH_SOURCE | Committed D1 journal, original payload/metadata digests, UUID/instant, source revision and delivery acknowledgment | Missing durable original evidence: FAILED / FETCH_EVIDENCE_LOST; never refetch |
+| STORE_BRONZE | Original journal and GET-only exact-key Bronze inspector; exact original receipt bytes | Exact receipt can be recovered in the disposition transaction; absent/payload-only or conflicting object state is recorded without PUT |
+| SILVER | All selected D2 receipts; intended D3 namespace; native full Silver qualifier and inventory/provenance | Complete whole-source selection can PAUSE; partial source selection remains unresolved |
+| PREPARE_GOLD | Complete frozen D3 set, exact markers and native prepared manifest | PAUSED after read-only preparation qualifies; no publisher launch |
+| PUBLISH_GOLD | Same original selection; intended Gold identity; native read-only Gold verifier | Complete Gold can PAUSE; positively absent/incomplete namespace can close FAILED |
+| CHECK_INPUTS | Original committed Gold proof and captured qualified publisher reference; D5a dependency reader | PAUSED after exact native preparation; no Content writer |
+| PUBLISH_CONTENT / absent VERIFY_RESULT | Original prepared Content identity, mandatory D1–D4 checkpoints, exact Gold/reference bindings; independent Content analytics reader | Fully qualified final output: SUCCEEDED / RECOVERED_PUBLICATION |
+| Any boundary with unavailable I/O, contradictory observations, changed private authority, unsupported evidence or possible writer | No replacement inputs, output repair or inferred success | Retain occupied RECOVERY_REQUIRED / RECOVERY_ONLY |
+
+Recovery appends its own attempt and supervised verification invocations. Final registration,
+Gold/reference dependency edges, result linkage, attempt/run/control outcome and coordinator
+release share one fenced transaction. A lost terminal acknowledgment is inspected through the
+same control's committed disposition; repeating an applied control cannot launch processing.
+Verified final success takes precedence over a requested cancel, which becomes TOO_LATE.
+Other pending cancellations can yield CANCELLED only after conclusive quiescence/evidence.
+
+Safe diagnostics include BRONZE_ABSENT and BRONZE_PAYLOAD_ONLY (ADR 0002 storage-only retry eligibility, without any retry execution), PROCESS_UNRESOLVED (writer/identity ambiguity), EVIDENCE_UNAVAILABLE
+(I/O or unsupported qualification), EVIDENCE_CHANGED (observed evidence inconsistency),
+FETCH_EVIDENCE_LOST, BRONZE_CONFLICT, PUBLICATION_ABSENT, INCOMPLETE_OUTPUT,
+RECOVERED_CHECKPOINT and RECOVERED_PUBLICATION. Native verifier responses remain private.
+An ordinary permission/read/query failure must not be represented as proven byte mutation.
+
+For verification, use `scripts/test-rss-fetch-postgres.py --offline --content-recovery` with
+JDK 21 and the pinned `DDIP_TEST_PYTHON`. It owns disposable PostgreSQL/SeaweedFS containers,
+creates synthetic D1–D5a evidence in a separate original worker JVM, checks process vetoes,
+restarts PostgreSQL, reconciles without original VERIFY_RESULT, injects terminal rollback,
+compares native bytes/mtimes/inodes, and admits an unrelated fresh run after safe release.
+The `gold` CI partition owns ContentRecoveryIT exactly once; other partition/gate semantics
+and the 90-minute limit remain unchanged.
+
+PAUSED does not mean operationally resumable. D5b-2 must separately define and authorize
+RESUME, strict retry execution, production worker orchestration/activation, compatible
+historical runtimes and operational readiness. Recovery never selects or activates a result
+for analytics. Unsupported or ambiguous cases require retained-evidence investigation and
+another explicit control; there is no automatic takeover or unattended retry.
+
+The [D5b-1 validation report](d5b1-recovery-validation.md) records the exact file inventory,
+seven native boundary results, distinct counts/durations, failure evidence, CI assignments
+and remaining hosted/resume/activation gaps.

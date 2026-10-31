@@ -27,6 +27,7 @@
   "gold": [
     "platform.contentapi.management.RssGoldIT",
     "platform.contentapi.management.RssContentIT",
-    "platform.contentapi.management.ContentFinalizationIT"
+    "platform.contentapi.management.ContentFinalizationIT",
+    "platform.contentapi.execution.ContentRecoveryIT"
   ]
 }

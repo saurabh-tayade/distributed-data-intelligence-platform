@@ -21,7 +21,7 @@ final class RecoveryOperatorInspection {
             need("RECONCILE".equals(r.get("type")),INVALID_REQUEST);
             var n=SourceJson.object().put("controlId",control.toString()).put("runId",r.get("run_id").toString()).put("attemptId",r.get("target_attempt_id").toString());
             n.put("controlState",fixed(r,"control_state",Set.of("REQUESTED","APPLIED","REJECTED","TOO_LATE")))
-                .put("runState",fixed(r,"run_state",Set.of("QUEUED","RUNNING","CANCEL_REQUESTED","RECOVERY_REQUIRED","SUCCEEDED","FAILED","CANCELLED")))
+                .put("runState",fixed(r,"run_state",Set.of("PAUSED","QUEUED","RUNNING","CANCEL_REQUESTED","RECOVERY_REQUIRED","SUCCEEDED","FAILED","CANCELLED")))
                 .put("attemptState",fixed(r,"attempt_state",Set.of("CLAIMED","RUNNING","SUCCEEDED","FAILED","INTERRUPTED","CANCELLED")))
                 .put("attemptKind",fixed(r,"kind",Set.of("EXECUTE","RECONCILE")))
                 .put("workerStatus",fixed(r,"worker_status",Set.of("READY","RECOVERY_ONLY","STOPPING","STOPPED")))

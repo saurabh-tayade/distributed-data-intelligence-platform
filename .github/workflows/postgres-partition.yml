@@ -66,6 +66,7 @@ jobs:
             -webdav=false -admin.ui=false -s3.autoCreateBucket=false -s3.allowDeleteBucketNotEmpty=false
       - name: Verify the complete partition and its actual integration reports
         env:
+          DDIP_TEST_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
           DDIP_TEST_DB_URL: jdbc:postgresql://127.0.0.1:5432/ddip_test
           DDIP_TEST_DB_USER: ddip_test
           DDIP_TEST_DB_PASSWORD: ci_test_only
