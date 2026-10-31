@@ -42,6 +42,10 @@ public final class ContentResume {
     }
     private void audit(UUID run,UUID control,String action,String before,String after,long v,long next,byte[] bytes){j.update("INSERT INTO ddip_management.audit_events(actor_scope,run_id,control_id,action,before_state,after_state,before_version,after_version,safe_code,details_bytes) VALUES ('local-operator',?,?,?,?,?,?,?,'RESUME_QUEUED',?)",run,control,action,before,after,v,next,bytes);}
     public UUID execute(InstallationHostGuard g,UUID control,String runtimeId){
+        return execute(g,control,runtimeId,(stage,boundary,owner)->{});
+    }
+    /** Package-only interruption seam, matching the native adapter's existing fault boundary. */
+    UUID execute(InstallationHostGuard g,UUID control,String runtimeId,RssContentExecution.Fault fault){
         g.checkHeld(installation);var plan=applied(control);require(plan!=null && plan.get("runtimeId").stringValue().equals(runtimeId) && plan.get("hostBindingSha256").stringValue().equals(g.binding().digest()),RESUME_EVIDENCE_INVALID);UUID run=UUID.fromString(plan.get("runId").stringValue());
         // Repeated execution is facts-only after success. It never claims another attempt.
         if(tx.required(()->j.queryForObject("SELECT state='SUCCEEDED' FROM ddip_management.runs WHERE run_id=?",Boolean.class,run)))return new RssContentExecution(j,tx,new WorkerRepository(j,tx,installation)).inspect(g,run,runtimeId);
@@ -53,13 +57,14 @@ public final class ContentResume {
         try{
             var runtime=RssContentRuntime.load(j,tx,g,run,frozen,runtimeId);require(runtime.digest.equals(plan.get("runtimeSha256").stringValue()),RESUME_EVIDENCE_INVALID);
             require(verified.privateSha().equals(SourceJson.sha(SourceJson.canonical(evidence.privateProof(g,plan,runtime)))),RESUME_EVIDENCE_INVALID);
+            fault.at("RESUME",RssContentExecution.Boundary.INTENT,owner);
             if(plan.get("boundary").stringValue().equals("BEFORE_FETCH")){
                 String bronzeId=runtime.gold.silver.config.get("bronzeRuntimeId").stringValue();var bc=tx.required(()->j.queryForObject("SELECT configuration_bytes FROM ddip_management.execution_profiles WHERE profile_id=?",byte[].class,bronzeId));String fetchId=SourceJson.parse(bc).get("fetchRuntimeId").stringValue();
                 for(int i=0;i<frozen.get("sources").size();i++){owner=new RssFetchExecution(j,tx,workers).fetch(g,owner,i,fetchId).stage().owner();owner=new RssBronzeExecution(j,tx,workers).store(g,owner,frozen.get("sources").get(i).get("sourceId").stringValue(),bronzeId).stage().owner();}
                 for(var source:frozen.get("sources"))owner=new RssSilverExecution(j,tx,workers).execute(g,owner,source.get("sourceId").stringValue(),runtime.gold.config.get("silverRuntimeId").stringValue()).owner();
                 var prepared=new RssGoldExecution(j,tx,workers).prepare(g,owner,runtime.config.get("goldRuntimeId").stringValue());owner=new RssGoldExecution(j,tx,workers).publish(g,prepared,runtime.config.get("goldRuntimeId").stringValue()).owner();
             }else owner=workers.markRunning(g,owner);
-            return new RssContentExecution(j,tx,workers).execute(g,owner,runtimeId).artifact();
+            return new RssContentExecution(j,tx,workers,fault).execute(g,owner,runtimeId).artifact();
         }catch(ManagementFailure ex){
             if(tx.required(()->j.queryForObject("SELECT state='SUCCEEDED' FROM ddip_management.runs WHERE run_id=?",Boolean.class,run)))return new RssContentExecution(j,tx,workers).inspect(g,run,runtimeId);throw ex;
         }

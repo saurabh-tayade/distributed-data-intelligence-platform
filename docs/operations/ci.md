@@ -86,6 +86,14 @@ with positive test counts and no failures, errors or skips. This guards selectio
 well as test success. [PR #72 evidence](pr72-postgres-partitions.md) records all class assignments,
 hosted timing inputs, local measurements, commands and remaining hosted acceptance requirements.
 
+The [D5b-2b inherited recovery increment](d5b2b-inherited-recovery-validation.md) adds
+`ContentInheritedRecoveryIT` to Gold. The inventory is now core=10, reliability=7,
+ingestion=3 and gold=6 classes (26 total). Its native cases retain separate original/resumed
+worker processes, real storage and PostgreSQL restart coverage. The 90-minute ceiling,
+change-aware classification and both aggregate gates are unchanged. Measure the expanded
+Gold partition on hosted Ubuntu before acceptance; local incremental timings do not establish
+a hosted budget guarantee. Do not drop these cases or increase the timeout to hide an overrun.
+
 ## Change categories and dependency rules
 
 [Policy source](../../.github/ci/classify.py) is intentionally broader than individual test files.

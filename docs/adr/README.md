@@ -63,3 +63,9 @@ verification and fenced successful finalization. [ADR 0018](0018-managed-content
 records D5b-1's explicit read-only Content reconciliation and narrow PAUSED disposition.
 Both remain implementation records with owner acceptance pending. Content dispatch and RESUME
 remain disabled or unsupported.
+
+[ADR 0019](0019-explicit-content-resume.md) records explicit guarded continuation at the
+three supported original checkpoints. [ADR 0020](0020-inherited-content-reconciliation.md)
+extends recovery to interrupted continuations and records the evidence envelope blocking
+ordinary Content dispatch. Both are implementation records pending owner acceptance.
+Earlier entries describe their historical checkpoint status.

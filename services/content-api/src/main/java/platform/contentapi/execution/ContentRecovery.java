@@ -44,7 +44,7 @@ final class ContentRecovery {
         for(int i=0;i<frozen.get("sources").size();i++){
             String source=frozen.get("sources").get(i).get("sourceId").stringValue();
             if(!intended.contains(i)){need(tx.required(()->j.queryForObject("SELECT count(*) FROM ddip_management.rss_deliveries WHERE run_id=? AND source_id=?",Integer.class,run,source))==0,EVIDENCE_CHANGED);continue;}
-            if(!new RssFetchExecution(j,tx,new WorkerRepository(j,tx,g.binding().installationId())).committedJournalIntact(g,run,source))return outcome("FAILED","FETCH_EVIDENCE_LOST");
+            if(!new RssFetchExecution(j,tx,new WorkerRepository(j,tx,g.binding().installationId())).committedJournalIntact(g,run,source)){need(!pack.has("ancestry"),EVIDENCE_CHANGED);return outcome("FAILED","FETCH_EVIDENCE_LOST");}
         }
         ObjectNode storageFailure=null;
         int sourceOrdinal=0;for(var source:frozen.get("sources")){
@@ -54,6 +54,7 @@ final class ContentRecovery {
             var bronze=nativeRead(g,b,review,cursor,children,SourceJson.parse(command),context.runtime.bronzeCommand(Path.of("COMMAND")),context.runtime.environment(),false,"BRONZE");
             String state=bronze.get("state").stringValue();
             need(!Set.of("UNKNOWN","UNAVAILABLE").contains(state),EVIDENCE_UNAVAILABLE);
+            if(pack.has("ancestry") && !pack.get("ancestry").get("plan").get("boundary").stringValue().equals("BEFORE_FETCH"))need(state.equals("EXACT"),EVIDENCE_CHANGED);
             if(!state.equals("EXACT")){need(Set.of("ABSENT","PAYLOAD_ONLY","METADATA_ONLY","CONFLICT").contains(state),EVIDENCE_UNAVAILABLE);boolean conflict=state.equals("CONFLICT") || state.equals("METADATA_ONLY");if(!conflict && stores.stream().noneMatch(stage->Integer.parseInt(stage.get("item_ordinal").stringValue())==ordinal)){observed.put("checkpoint","FETCH_SOURCE");continue;}if(storageFailure==null || conflict)storageFailure=outcome("FAILED",conflict?"BRONZE_CONFLICT":"BRONZE_"+state);continue;}
             need(Arrays.equals(SourceJson.canonical(RssBronzeExecution.expectedReceipt(context,bronze.get("receipt").get("payloadContentType").stringValue())),SourceJson.canonical(bronze.get("receipt"))),EVIDENCE_CHANGED);
             receipts.add(bronze.get("receipt"));
@@ -61,6 +62,12 @@ final class ContentRecovery {
         if(storageFailure!=null){storageFailure.set("receipts",receipts);return storageFailure;}
         // Original execution checkpoints stay immutable; only independently verified complete sets qualify.
         var silver=stages(pack,"SILVER");var gold=stages(pack,"PUBLISH_GOLD");var content=stages(pack,"PUBLISH_CONTENT");var preflight=stages(pack,"CHECK_INPUTS");
+        if(pack.has("ancestry") && content.isEmpty() && !pack.get("ancestry").get("plan").get("boundary").stringValue().equals("BEFORE_FETCH")){
+            // No intended publisher exists in this attempt. An occupied namespace cannot be called an earlier safe boundary.
+            String fingerprint=pack.get("ancestry").get("verification").get("prepared").get("fingerprint").stringValue();
+            need(!tx.required(()->ContentResumeLineage.registered(j,"CONTENT",runtime.config.get("contentBindingId").stringValue(),"v1/processor_revision=1/publication="+fingerprint)),EVIDENCE_CHANGED);
+            try{ContentResumeLineage.requireAbsent(Path.of(runtime.content.get("root").stringValue()),"v1/processor_revision=1/publication="+fingerprint);}catch(PreflightFailure ex){throw new RecoveryFailure(EVIDENCE_UNAVAILABLE);}
+        }
         if(content.size()==1){
             requirePrior(pack,frozen.get("sources").size(),true);
             var c=originalCommand(g,pack,content.get(0));need(c.get("prepared").get("fingerprint").equals(content.get(0).get("intended_identity")),EVIDENCE_CHANGED);
@@ -83,10 +90,10 @@ final class ContentRecovery {
         if(gold.size()==1 || !stages(pack,"PREPARE_GOLD").isEmpty()){
             need(silver.size()==frozen.get("sources").size() && silver.stream().allMatch(s->s.get("state").stringValue().equals("VERIFIED")),EVIDENCE_UNAVAILABLE);
             var s=gold.isEmpty()?stages(pack,"PREPARE_GOLD").getFirst():gold.getFirst();var c=originalCommand(g,pack,s);
-            tx.required(()->{RssGoldInputs.check(j,run,original,frozen,c.get("inputs"));return null;});
+            tx.required(()->{RssGoldInputs.check(j,run,ContentResumeLineage.dataAttempt(j,run,original),frozen,c.get("inputs"));return null;});
             var check=(ObjectNode)c.deepCopy();check.put("mode",gold.isEmpty()?"PREPARE":"VERIFY");
             var result=nativeRead(g,b,review,cursor,children,check,runtime.gold.command(Path.of("COMMAND")),runtime.gold.silver.environment(),true,"GOLD");
-            if(result.has("recoveryOutcome")){var failed=outcome("FAILED",result.get("recoveryOutcome").stringValue());failed.set("proof",result);return failed;}committedBaseline(original,s,result,"verification");observed.set("checkpoint",result);return observed;
+            if(result.has("recoveryOutcome")){need(!s.has("recordedAttemptId"),EVIDENCE_CHANGED);var failed=outcome("FAILED",result.get("recoveryOutcome").stringValue());failed.set("proof",result);return failed;}committedBaseline(recordedAttempt(pack,s),s,result,"verification");observed.set("checkpoint",result);return observed;
         }
         if(!silver.isEmpty()){
             need(silver.size()==frozen.get("sources").size(),EVIDENCE_UNAVAILABLE);var qualified=observed.putArray("silver");
@@ -105,8 +112,10 @@ final class ContentRecovery {
     private static JsonNode originalCommand(InstallationHostGuard g,JsonNode pack,JsonNode s){
         need(!s.get("command_address").isNull(),EVIDENCE_UNAVAILABLE);String address=s.get("command_address").stringValue();
         byte[] raw=RecoveryFiles.readPrivate(g,address,PreflightFiles.LARGE);need(SourceJson.sha(raw).equals(s.get("command_sha256").stringValue()),EVIDENCE_CHANGED);var c=PreflightFiles.canonical(raw,PreflightFiles.LARGE);
-        need(c.get("runId").equals(pack.get("runId")) && c.get("attemptId").equals(pack.get("attemptId")) && c.get("checkpointId").equals(s.get("checkpoint_id")) && (c.get("ownerEpoch").isString()?c.get("ownerEpoch").stringValue():c.get("ownerEpoch").toString()).equals(pack.get("epoch").stringValue()),EVIDENCE_CHANGED);return c;
+        need(address.startsWith("runs/"+pack.get("runId").stringValue()+"/attempts/"+recordedAttempt(pack,s)+"/"),EVIDENCE_CHANGED);
+        need(c.get("runId").equals(pack.get("runId")) && c.get("attemptId").stringValue().equals(recordedAttempt(pack,s).toString()) && c.get("checkpointId").equals(s.get("checkpoint_id")) && (c.get("ownerEpoch").isString()?c.get("ownerEpoch").stringValue():c.get("ownerEpoch").toString()).equals(s.has("recordedEpoch")?s.get("recordedEpoch").stringValue():pack.get("epoch").stringValue()),EVIDENCE_CHANGED);return c;
     }
+    private static UUID recordedAttempt(JsonNode pack,JsonNode stage){return UUID.fromString((stage.has("recordedAttemptId")?stage.get("recordedAttemptId"):pack.get("attemptId")).stringValue());}
     private JsonNode nativeRead(InstallationHostGuard g,RecoveryHandoff.Bootstrap b,RecoveryQuiescence.Review review,Cursor cursor,List<InstallationHostGuard.ProcessIdentity> children,JsonNode original,List<String> invocation,Map<String,String> env,boolean spark,String kind){
         int item=cursor.ordinal++;UUID checkpoint=UUID.randomUUID();var files=new PreflightFiles(g,cursor.owner.runId(),cursor.owner.controlId(),checkpoint,"VERIFY_RESULT");
         JsonNode command=original;var call=new ArrayList<>(invocation);

@@ -132,8 +132,15 @@ final class RecoveryHandoff {
         var ids=n.putArray("unresolvedCheckpoints");target.unresolvedCheckpoints().stream().map(UUID::toString).sorted().forEach(ids::add);
         var hints=n.putArray("descendantPidHints");files.descendantPids().stream().sorted().map(Object::toString).forEach(hints::add);
         var ancestors=n.putArray("lineageCheckpoints");lineage.snapshots().stream().skip(1).flatMap(v->v.unresolved().stream()).map(UUID::toString).distinct().sorted().forEach(ancestors::add);
-        var anchors=n.putArray("lineageEvidenceSha256");lineage.packets().forEach(p->anchors.add(SourceJson.sha(SourceJson.canonical(p.descriptor))));
         var descendants=n.putArray("previouslyReviewedDescendants");lineage.packets().stream().flatMap(p->p.review.descendants().stream()).distinct().forEach(p->descendants.addObject().put("pid",Long.toString(p.pid())).put("startedAt",p.startedAt().toString()));
+        if(runtime.content!=null){
+            var inherited=contentAncestry(guard,lineage.origin(),runtime,null);
+            if(inherited!=null){
+                var summary=n.putObject("inheritedCheckpoint");for(String key:List.of("runId","originalAttemptId","recoveryAttemptId","resumeControlId","boundary","checkpointId"))summary.set(key,inherited.get("plan").get(key));summary.put("planSha256",SourceJson.sha(SourceJson.canonical(inherited.get("plan"))));
+                for(var p:inherited.get("recordedProcesses"))ps.add(p);for(var p:inherited.get("previouslyReviewedDescendants"))if(descendants.valueStream().noneMatch(p::equals))descendants.add(p);
+            }
+        }
+        var anchors=n.putArray("lineageEvidenceSha256");lineage.packets().forEach(p->anchors.add(SourceJson.sha(SourceJson.canonical(p.descriptor))));
         return n;
     }
     Qualified qualify(InstallationHostGuard guard,Target target,RecoveryQuiescence.Review review,String runtimeProfile) {
@@ -147,6 +154,7 @@ final class RecoveryHandoff {
             runtime.check(); // Hash/root/module inspection only. Never readiness(): it would launch Python.
         }catch(ManagementFailure ex){throw ex;}catch(RuntimeException ex){throw new RecoveryFailure(RUNTIME_MISMATCH);}
         var captured=RecoveryFiles.capture(guard,s.runId(),s.oldId(),number(s.coordinator,"epoch"),(String)s.run.get("selection_sha256"),runtime.json(),s.stages);checkHints(s,review,captured);
+        if(runtime.content!=null)reviewLineage(guard,target,runtime,review);
         Instant at=clock.instant();RecoveryQuiescence.fresh(review.inspectedAt(),at);
         UUID qualificationId=UUID.randomUUID();
         var descriptor=SourceJson.object().put("qualificationVersion",1).put("policy","E5_EXECUTION_QUIESCENCE_V1").put("installationId",installation.toString()).put("controlId",s.controlId().toString()).put("runId",s.runId().toString()).put("oldAttemptId",s.oldId().toString()).put("oldInstanceId",s.oldWorker.get("instance_id").toString()).put("oldEpoch",s.coordinator.get("epoch").toString()).put("recoveryInstanceId",target.recovery.instanceId().toString()).put("hostBindingSha256",guard.binding().digest()).put("snapshotSha256",s.digest()).put("selectionSha256",(String)s.run.get("selection_sha256")).put("runtimeSha256",SourceJson.sha(SourceJson.canonical(runtime.json()))).put("qualifiedAt",at.toString());
@@ -268,8 +276,17 @@ final class RecoveryHandoff {
         pack.set("stages",json(s.stages));
         var rows=tx.required(()->jdbc.queryForMap("SELECT captured_selection,selection_sha256 FROM ddip_management.runs WHERE run_id=?",s.runId()));
         pack.set("frozen",FrozenRunSelection.canonical((byte[])rows.get("captured_selection"),(String)rows.get("selection_sha256"),PreflightFiles.LARGE));
+        var inherited=contentAncestry(guard,s,b.runtime,null);
+        if(inherited!=null){
+            pack.set("ancestry",inherited);var stages=pack.withArray("stages");var plan=inherited.get("plan");
+            for(var prior:inherited.get("stages"))if(ContentRecoveryAncestry.inherited(plan,prior.get("stage").stringValue())){
+                need(stages.valueStream().noneMatch(current->current.get("stage").equals(prior.get("stage")) && current.get("item_ordinal").equals(prior.get("item_ordinal"))),EVIDENCE_CHANGED);
+                var stage=(tools.jackson.databind.node.ObjectNode)prior.deepCopy();stage.put("recordedAttemptId",plan.get("originalAttemptId").stringValue()).put("recordedEpoch",inherited.get("epoch").stringValue());stages.add(stage);
+            }
+        }
         return pack;
     }
+    private JsonNode contentAncestry(InstallationHostGuard guard,Snapshot s,RecoveryRuntime runtime,RecoveryQuiescence.Review review){return new ContentRecoveryAncestry(jdbc,tx,processes,clock).inspect(guard,s.runId(),s.oldId(),runtime.content,review);}
     JsonNode verificationPack(InstallationHostGuard guard,Bootstrap evidence,Owner owner) {
         var s=lineage(guard,evidence.target,evidence.runtime).origin();
         var found=s.stages.stream().filter(v->"CHECK_INPUTS".equals(v.get("stage")) && number(v,"item_ordinal")==0 && "VERIFIED".equals(v.get("state"))).toList();
@@ -326,6 +343,7 @@ final class RecoveryHandoff {
             var bound=new RecoveryQuiescence.Review(s.digest(),review.inspectedAt(),review.handlersStopped(),review.unmanagedWritersStopped(),review.orphanReviewComplete(),s.unresolved(),review.descendants());
             checkProcesses(s,bound,s.digest());
             checkHints(s,bound,RecoveryFiles.capture(guard,s.runId(),s.oldId(),number(s.coordinator,"epoch"),(String)s.run.get("selection_sha256"),runtime.json(),s.stages));
+            if(runtime.content!=null && "EXECUTE".equals(s.attempt.get("kind")))contentAncestry(guard,s,runtime,review);
         }
     }
     private Snapshot read(UUID control,UUID recovery) {
@@ -418,7 +436,7 @@ final class RecoveryHandoff {
     private static Map<String,Object> one(List<Map<String,Object>> rows){need(rows.size()==1,OWNERSHIP_LOST);return rows.getFirst();}
     private static void exactly(int rows){need(rows==1,OWNERSHIP_LOST);}
     private static String hash(Object value){return SourceJson.sha(SourceJson.canonical(json(value)));}
-    private static JsonNode json(Object value) {
+    static JsonNode json(Object value) {
         if(value instanceof JsonNode node)return node;
         if(value instanceof Map<?,?> map){var n=SourceJson.object();for(var e:map.entrySet())n.set(e.getKey().toString(),json(e.getValue()));return n;}
         if(value instanceof Collection<?> list){var a=SourceJson.object().putArray("v");list.forEach(v->a.add(json(v)));return a;}

@@ -1,5 +1,9 @@
 # E5 D1–D5b-2a — managed Content, recovery and explicit resume
 
+Current checkpoint: [D5b-2b inherited-attempt recovery and activation blocker](d5b2b-inherited-recovery-validation.md).
+Ordinary Content worker dispatch remains disabled. The internal native pipeline and explicit
+operator resume/recovery paths do not establish resource readiness for worker activation.
+
 Status: **Partially implemented, internal checkpoint — October 30, 2026**, under
 [issue #49](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/issues/49).
 This implements the accepted [RSS journal protocol](../architecture/durable-execution.md#rss-journal-and-recovery-protocol),
