@@ -34,8 +34,12 @@ timestamps or output counts would substitute evidence. A generic workflow engine
 unnecessary execution authority. Reusing the narrow existing readers preserves native identities
 at the cost of repeated read-only qualification and a deliberately limited continuation policy.
 
-Content dispatch remains disabled. Up to 32 retained 5 MiB feed payloads exceed the existing
-64 MiB private-attempt recovery cap before sidecars. Per-file and per-stage bounds do not
-prove an aggregate execution envelope. Increasing the cap alone merely moves the unsupported
-boundary; deleting evidence or weakening verification is unacceptable. A separately reviewed
-bounded validation/admission design and real API/worker acceptance are still required.
+Gate B0 factual erratum, October 31, 2026: the previous version of this record incorrectly assigned
+Reliability's 32-source limit to Content. Content admission has always enforced 1–8 feeds,
+so its maximum journal payload portion is 40 MiB, not 160 MiB. No implementation widening
+was found. This correction leaves this record's acceptance status unchanged.
+
+Content dispatch remains disabled. Existing sidecar, inventory and repeated-qualification
+bounds do not prove a complete recoverable envelope. The [Gate B0 audit](../operations/content-recovery-envelope.md)
+records actual scopes and calculations. Raising a limit alone, deleting evidence or weakening
+verification is unacceptable. Bounded admission/retention and real API/worker acceptance remain required.

@@ -2,7 +2,7 @@
 
 Status: **Accepted — October 20, 2026**, with the Stage A.1 refinements, under [ADR 0010](../adr/0010-durable-execution-coordination-and-recovery.md). The owner accepted additive [ADR 0011](../adr/0011-artifact-import-maintenance-ownership.md) on October 21. Architecture acceptance alone passes no E5 test group. Current implementation and authorization are recorded below; earlier checkpoint status paragraphs and counts remain historical. Accepted ADRs and native data contracts are unchanged.
 
-Previous checkpoints established D1–D5a publication/finalization, D5b-1 reconciliation and [D5b-2a explicit RESUME](#d5b-2a-explicit-resume-of-recovered-content). The current [D5b-2b inherited recovery increment](../operations/d5b2b-inherited-recovery-validation.md) reconciles interrupted continuations through their recorded original prefixes. Managed Content and Execution Recovery remain **Partially implemented**. Ordinary Content worker dispatch is blocked by the admitted evidence envelope exceeding recovery limits; cancellation execution, guarded retry, automatic recovery/resume and Operations UI remain deferred. [ADR 0020](../adr/0020-inherited-content-reconciliation.md) is pending owner acceptance; earlier ADR statuses and historical checkpoint/test records are unchanged. The fixed Reliability worker and C3c recovery retain their existing paths.
+Previous checkpoints established D1–D5a publication/finalization, D5b-1 reconciliation and [D5b-2a explicit RESUME](#d5b-2a-explicit-resume-of-recovered-content). The current [D5b-2b inherited recovery increment](../operations/d5b2b-inherited-recovery-validation.md) reconciles interrupted continuations through their recorded original prefixes. Managed Content and Execution Recovery remain **Partially implemented**. Ordinary Content worker dispatch is blocked by the absence of a proved aggregate recovery-evidence envelope; cancellation execution, guarded retry, automatic recovery/resume and Operations UI remain deferred. [ADR 0020](../adr/0020-inherited-content-reconciliation.md) is pending owner acceptance; earlier ADR statuses and historical checkpoint/test records are unchanged. The fixed Reliability worker and C3c recovery retain their existing paths.
 
 ## Boundary and invariants
 
@@ -3363,6 +3363,8 @@ an intact earlier boundary with no intended Content namespace qualifies for PAUS
 Missing/changed inherited evidence, possible writers and unknown outcomes retain occupied
 ownership. Another RESUME after this inherited recovery is explicitly unsupported; an empty
 resumed stage list cannot be reinterpreted as original pre-fetch. Ordinary Content dispatch
-remains disabled because the admitted payload envelope can exceed the verified 64 MiB
-private-attempt recovery limit. [ADR 0020](../adr/0020-inherited-content-reconciliation.md)
+remains disabled because the complete private-evidence envelope has not been proved to fit recovery.
+The [Gate B0 audit](../operations/content-recovery-envelope.md) corrects the erroneous 32-feed claim:
+the implemented Content maximum is eight feeds/40 MiB of payloads, before sidecars.
+[ADR 0020](../adr/0020-inherited-content-reconciliation.md)
 records this implementation with owner acceptance pending. No publication selection changes.

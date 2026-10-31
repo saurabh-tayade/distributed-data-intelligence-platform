@@ -85,15 +85,19 @@ selection, HTTP response envelope, schema version, ETag, pagination or idempoten
 
 ## Evidence and resource audit
 
-The admitted source count can reach 32; each D1 private payload may be 5 MiB. Thus retained
-payloads alone may reach 160 MiB in one attempt. Private command/evidence/selection/anchor
-sidecars add bytes; a two-source successful fixture has 11 managed stage rows and additional
+Gate B0 erratum, October 31, 2026: the original 32-feed/160 MiB claim was wrong. Content
+admission has always enforced 1–8 feeds, each at most 5 MiB: **40 MiB of payloads**.
+Reliability uses 1–32 sources. No code widening was found. See the [actual envelope audit](content-recovery-envelope.md)
+for the remaining unproved sidecar/retention bounds; the old payload-only blocker calculation
+must not be used. Private command/evidence/selection/anchor sidecars add bytes;
+a two-source successful fixture has 11 managed stage rows and additional
 verification sidecars. Reconciliation and resume qualification have their own retained private
 trees; inherited recovery must retain and validate all of them. Limits apply per private tree,
 not as a filesystem quota or an aggregate reservation across run history.
 
 `ContentRecoveryFiles` refuses a tree above 4096 entries/64 MiB and inventory serialization
-above 1 MiB. Ordinary private files are bounded at 16 MiB; payloads at 5 MiB. No evidence is
+above 1 MiB. Recovery reads bound ordinary private files at 16 MiB and payloads at 5 MiB;
+these are reader limits, not pre-write quotas. No evidence is
 truncated, dropped, streamed past verification or deleted to fit. Runtime preflight observes at
 least 1 GiB usable space on applicable control, Silver, scratch, Gold and Content filesystems
 and checks pinned root device/inode identities, real paths and non-overlap. These are point-in-time

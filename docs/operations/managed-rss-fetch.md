@@ -1,6 +1,8 @@
 # E5 D1–D5b-2a — managed Content, recovery and explicit resume
 
 Current checkpoint: [D5b-2b inherited-attempt recovery and activation blocker](d5b2b-inherited-recovery-validation.md).
+The [Gate B0 envelope audit](content-recovery-envelope.md) corrects the Content admission limit
+to eight feeds and documents the remaining admission/retention blocker.
 Ordinary Content worker dispatch remains disabled. The internal native pipeline and explicit
 operator resume/recovery paths do not establish resource readiness for worker activation.
 

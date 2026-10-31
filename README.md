@@ -83,8 +83,9 @@ One worker startup is pinned to one approved execution profile and deployment di
 [D1 managed RSS fetch and private journaling](docs/operations/managed-rss-fetch.md) is implemented as an internal checkpoint. It preserves one authorized retrieval and its original provenance; it does not enable Content dispatch, Bronze PUT, Silver/Gold/Content processing or publication activation.
 
 [D5b-2b inherited recovery and activation limits](docs/operations/d5b2b-inherited-recovery-validation.md)
-records the current backend increment. Content dispatch remains unavailable: admitted private
-payloads can exceed the verified recovery envelope. No enable switch or local deployment readiness
+records the inherited-recovery increment. The [Gate B0 audit](docs/operations/content-recovery-envelope.md)
+corrects Content's limit to 1–8 feeds and documents the unproved aggregate private-evidence envelope.
+Content dispatch remains unavailable. No enable switch or local deployment readiness
 is claimed. Analytical publication selection is unchanged.
 
 ## Execution bounds and performance evidence
