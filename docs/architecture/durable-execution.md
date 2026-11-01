@@ -6,6 +6,15 @@ Previous checkpoints established D1–D5a publication/finalization, D5b-1 reconc
 
 ## Boundary and invariants
 
+Gate B0's [completion investigation](../operations/content-recovery-envelope-completion.md)
+distinguishes native data from private sidecars and documents an additional small-workload
+interruption gap: a durable publisher intent can precede creation of its required command.
+The current 64 MiB / 4096-entry capture, 1 MiB inventory/packet limits and per-file readers
+are not a pre-write execution envelope. No approved operational Content budget profile is
+implemented. [ADR 0021](../adr/0021-content-evidence-producer-reservations.md) proposes narrow
+versioned producer reservations and recoverable sidecar persistence; it is not accepted or
+implemented. Existing dispatch gating, native identities and earlier ADR statuses are unchanged.
+
 E5 manages one local installation, one trusted operator and one worker. PostgreSQL is the operational authority; existing files/object receipts and independent verifiers remain the data authority. The API never performs processing in an HTTP request or treats a database artifact row as verification. There is no DB/filesystem/S3 distributed transaction. No exactly-once execution, automatic failover, multiwriter isolation, hostile-filesystem protection or artifact power-loss durability is claimed.
 
 The following are accepted Stage B requirements, not blanket claims of implemented capabilities:

@@ -17,7 +17,7 @@ abstract class ContentRecoveryFixture {
     @TempDir(cleanup=org.junit.jupiter.api.io.CleanupMode.ON_SUCCESS) Path temp;
     String phase="start";
     void recover(String mode)throws Exception{
-        String expected=mode.equals("FINAL")?"SUCCEEDED":"PAUSED";
+        String expected=mode.equals("FINAL")?"SUCCEEDED":mode.equals("PARTIAL_CONTENT")?"FAILED":"PAUSED";
         long start=System.nanoTime();String cp=System.getProperty("surefire.test.class.path",System.getProperty("java.class.path"));
         var child=new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin/java").toString(),"-cp",cp,"platform.contentapi.management.ContentRecoveryTestProcess",temp.toString(),mode).redirectError(temp.resolve("worker.log").toFile()).redirectOutput(temp.resolve("worker.out").toFile()).start();
         JdbcTemplate j=null;InstallationHostGuard guard=null;String database=null;UUID run=null;
@@ -31,12 +31,14 @@ abstract class ContentRecoveryFixture {
             var operatorSummary=new RecoveryOperatorInspection(j,tx,binding.installationId()).inspect(control);assertThat(operatorSummary.get("canQualify").booleanValue()).isTrue();
             phase="register";guard=InstallationHostGuard.acquire(binding);var frozen=SourceJson.parse(j.queryForObject("SELECT captured_selection FROM ddip_management.runs WHERE run_id=?",byte[].class,run),PreflightFiles.LARGE);var profile=frozen.get("executionProfile");
             var workers=WorkerTestSupport.enabled(j,tx,binding.installationId());var session=workers.register(guard,n.get("profile").stringValue(),profile.get("configurationSha256").stringValue(),profile.get("configuration").get("runtime").get("deploymentSha256").stringValue());
-            var h=new RecoveryHandoff(j,tx,binding.installationId());var target=h.inspect(guard,session,control);phase="review-evidence";var evidence=h.reviewEvidence(guard,target,n.get("runtime").stringValue());var descendants=descendants(binding.root(),evidence,observedDescendants);
+            var h=new RecoveryHandoff(j,tx,binding.installationId());var target=h.inspect(guard,session,control);phase="review-evidence";
+            var evidence=h.reviewEvidence(guard,target,n.get("runtime").stringValue());var descendants=descendants(binding.root(),evidence,observedDescendants);
             var review=new RecoveryQuiescence.Review(target.digest(),Instant.now(),true,true,true,target.unresolvedCheckpoints(),descendants);
             // An independently unobservable original identity vetoes release despite operator attestation.
             var ambiguous=new RecoveryHandoff(j,tx,binding.installationId(),Clock.systemUTC(),p->RecoveryQuiescence.State.UNAVAILABLE,s->{});var heldGuard=guard;var initialReview=review;
             assertThatThrownBy(()->ambiguous.qualify(heldGuard,target,initialReview,n.get("runtime").stringValue())).hasMessage("PROCESS_UNRESOLVED");
             assertThat(j.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isEqualTo(original);
+            if(mode.equals("CONTENT_INTENT"))assertThat(j.queryForObject("SELECT state FROM ddip_management.stage_invocations WHERE attempt_id=? AND stage='PUBLISH_CONTENT'",String.class,original)).isEqualTo("INTENT");
             phase="qualify-handoff";var q=h.qualify(guard,target,review,n.get("runtime").stringValue());assertThat(h.transferReviewed(guard,q).owner()).isNotNull();assertThat(h.transferReviewed(guard,q).owner()).isNull();
             phase="bootstrap";var bootstrap=h.bootstrap(guard,q.address(),q.sha256(),n.get("runtime").stringValue());var recovery=new ContentRecovery(j,tx,h);
             var before=snapshot(outputRoot(frozen));
@@ -45,12 +47,31 @@ abstract class ContentRecoveryFixture {
             }
             // Refresh the explicit process review after the infrastructure interruption.
             review=new RecoveryQuiescence.Review(target.digest(),Instant.now(),true,true,true,target.unresolvedCheckpoints(),descendants);
+            if(mode.equals("CONTENT_INTENT")){
+                var held=guard;var fresh=review;var retained=snapshot(binding.root().resolve("runs/"+run+"/attempts/"+original));
+                assertThatThrownBy(()->recovery.qualify(held,bootstrap,fresh)).hasMessage("EVIDENCE_UNAVAILABLE");
+                assertThat(snapshot(binding.root().resolve("runs/"+run+"/attempts/"+original))).isEqualTo(retained);
+                assertThat(j.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isEqualTo(control);
+                assertThat(j.queryForObject("SELECT state FROM ddip_management.runs WHERE run_id=?",String.class,run)).isEqualTo("RECOVERY_REQUIRED");
+                assertThat(j.queryForObject("SELECT state FROM ddip_management.controls WHERE control_id=?",String.class,control)).isEqualTo("REQUESTED");
+                var intent=j.queryForMap("SELECT state,intended_namespace,command_address,command_sha256,child_pid FROM ddip_management.stage_invocations WHERE attempt_id=? AND stage='PUBLISH_CONTENT'",original);
+                assertThat(intent.get("state")).isEqualTo("UNKNOWN");assertThat(intent.get("command_address")).isNull();assertThat(intent.get("command_sha256")).isNull();assertThat(intent.get("child_pid")).isNull();
+                assertThat(Files.exists(binding.root().resolve(intent.get("intended_namespace")+"/command.json"))).isFalse();
+                assertThat(j.queryForObject("SELECT count(*) FROM ddip_management.artifacts WHERE kind='CONTENT'",Integer.class)).isZero();
+                assertThat(snapshot(outputRoot(frozen))).containsOnlyKeys("untouched.native");
+                System.out.println("B0_INTENT_GAP code=EVIDENCE_UNAVAILABLE occupied="+control+" retainedFiles="+retained.size()+" commandLinked=false publisherLaunched=false");return;
+            }
             if(mode.equals("PARTIAL_SILVER")){
                 var currentGuard=guard;var currentReview=review;var originalFiles=ContentRecoveryFiles.capture(guard,run,original,j.queryForList("SELECT * FROM ddip_management.stage_invocations WHERE attempt_id=?",original)).inventory();
                 assertThatThrownBy(()->recovery.qualify(currentGuard,bootstrap,currentReview)).hasMessage("EVIDENCE_UNAVAILABLE");assertThat(j.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isEqualTo(control);assertThat(j.queryForObject("SELECT state FROM ddip_management.runs WHERE run_id=?",String.class,run)).isEqualTo("RECOVERY_REQUIRED");
                 var resumeCommand=ControlCommands.parse(run.toString(),SourceJson.canonical(SourceJson.object().put("action","RESUME").putNull("attemptId").putNull("quiescenceConfirmed")),"partial-resume","\""+j.queryForObject("SELECT row_version FROM ddip_management.runs WHERE run_id=?",Long.class,run)+"\"");assertThatThrownBy(()->controls.request(resumeCommand)).hasMessage("COORDINATOR_RECOVERY_REQUIRED");assertThat(ContentRecoveryFiles.capture(guard,run,original,j.queryForList("SELECT * FROM ddip_management.stage_invocations WHERE attempt_id=?",original)).inventory()).isEqualTo(originalFiles);System.out.println("D5B2A_BLOCKED partialSilver=1 selectedSources=2 occupied="+control);return;
             }
             phase="qualify-content";var qualified=recovery.qualify(guard,bootstrap,review);assertThat(qualified.observation.get("state").stringValue()).isEqualTo(expected);
+            if(mode.equals("PARTIAL_CONTENT")){
+                assertThat(qualified.observation.get("code").stringValue()).isEqualTo("INCOMPLETE_OUTPUT");
+                assertThat(before).hasSize(2);assertThat(before).containsKey("untouched.native");assertThat(before.keySet()).anySatisfy(path->assertThat(path).endsWith("interrupted-part.bin"));
+                assertThat(j.queryForObject("SELECT child_pid FROM ddip_management.stage_invocations WHERE attempt_id=? AND stage='PUBLISH_CONTENT'",Long.class,original)).isNull();
+            }
             var finalReview=new RecoveryQuiescence.Review(target.digest(),Instant.now(),true,true,true,target.unresolvedCheckpoints(),descendants);
             ContentRecovery.Receipt result;
             if(mode.equals("FINAL")){
@@ -84,6 +105,7 @@ abstract class ContentRecoveryFixture {
             assertThat(j.queryForObject("SELECT state FROM ddip_management.controls WHERE control_id=?",String.class,cancellation)).isEqualTo("TOO_LATE");
             }else result=recovery.finish(guard,qualified,finalReview);
             assertThat(result.state()).isEqualTo(expected);assertThat(recovery.finish(guard,qualified,finalReview)).isEqualTo(result);assertThat(snapshot(outputRoot(frozen))).isEqualTo(before);
+            if(mode.equals("PARTIAL_CONTENT"))assertThat(result.retryEligible()).isFalse();
             assertThat(j.queryForObject("SELECT state FROM ddip_management.attempts WHERE attempt_id=?",String.class,original)).isEqualTo("INTERRUPTED");assertThat(j.queryForObject("SELECT count(*) FROM ddip_management.artifacts WHERE kind='CONTENT'",Integer.class)).isEqualTo(mode.equals("FINAL")?1:0);assertThat(j.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isNull();
             afterRecovery(mode,n,j,tx,binding,guard,control,original,frozen);
             // A genuinely fresh run is admitted through the normal repository after safe release.

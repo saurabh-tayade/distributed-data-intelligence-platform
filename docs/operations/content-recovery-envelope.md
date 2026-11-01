@@ -1,5 +1,11 @@
 # Gate B0: Content admission and the recovery evidence envelope
 
+The follow-up [completion investigation](content-recovery-envelope-completion.md) starts at
+the merged hardening baseline, measures a native fixture and exercises interrupted private
+writes. Gate B0 remains blocked. Its [ADR 0021 recommendation](../adr/0021-content-evidence-producer-reservations.md)
+evaluates producer reservations before the larger streaming alternative below. This report's
+baseline, changes and validation counts remain historical.
+
 October 31, 2026. **Blocked: no approved managed Content execution envelope has been proved.**
 Ordinary Content dispatch remains disabled. This increment corrects the earlier feed-count
 claim, audits the actual retained evidence, rejects an unsupported depth boundary without

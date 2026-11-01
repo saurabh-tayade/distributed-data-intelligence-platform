@@ -3,6 +3,11 @@
 Current checkpoint: [D5b-2b inherited-attempt recovery and activation blocker](d5b2b-inherited-recovery-validation.md).
 The [Gate B0 envelope audit](content-recovery-envelope.md) corrects the Content admission limit
 to eight feeds and documents the remaining admission/retention blocker.
+The [completion investigation](content-recovery-envelope-completion.md) records exact
+private file budgets, native measurements and interrupted-write gaps. No operational
+Content profile has a proved recoverable envelope; Gate B0 is incomplete and Gate B1
+activation remains blocked. Retain original journals, ancestor/control evidence and native
+data volumes; do not delete files to make capture fit or retry an incomplete publisher.
 Ordinary Content worker dispatch remains disabled. The internal native pipeline and explicit
 operator resume/recovery paths do not establish resource readiness for worker activation.
 

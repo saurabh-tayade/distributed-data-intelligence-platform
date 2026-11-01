@@ -16,6 +16,31 @@ class ContentRecoveryFilesTest {
     List<Map<String,Object>> stage(String address,String sha){return List.of(Map.of("command_address",address,"command_sha256",sha));}
     RecoveryFiles.Capture capture(List<Map<String,Object>> stages){return ContentRecoveryFiles.capture(guard,run,attempt,stages);}
     @Test void crashBeforeAnyPrivateDirectoryDoesNotInventEvidence(){assertThat(capture(List.of()).inventory().get("files")).isEmpty();}
+    @Test void recordedCommandWithoutPrivateDirectoryIsUnavailable(){
+        String address="runs/"+run+"/attempts/"+attempt+"/publish-content/"+UUID.randomUUID()+"/command.json";
+        assertThatThrownBy(()->capture(stage(address,"0".repeat(64)))).hasMessage("EVIDENCE_UNAVAILABLE");
+        assertThat(Files.exists(root)).isFalse();
+    }
+    @Test void interruptedRecordedCommandWriteRetainsPartialBytesAndRejectsItsSeal()throws Exception{
+        byte[] complete=SourceJson.canonical(SourceJson.object().put("protocolVersion",1));
+        byte[] partial=Arrays.copyOf(complete,complete.length-1);Path path=file("command.json",partial);
+        String address=guard.binding().root().relativize(path).toString();
+        assertThatThrownBy(()->capture(stage(address,SourceJson.sha(complete)))).hasMessage("EVIDENCE_CHANGED");
+        assertThat(Files.readAllBytes(path)).isEqualTo(partial);
+    }
+    @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings={"child.json","result.json"})
+    void interruptedProcessSidecarCannotHideAnUnknownChild(String name)throws Exception{
+        byte[] partial="{\"pid\":\"12345".getBytes(java.nio.charset.StandardCharsets.UTF_8);Path path=file(name,partial);
+        assertThatThrownBy(()->capture(List.of())).hasMessage("EVIDENCE_CHANGED");
+        assertThat(Files.readAllBytes(path)).isEqualTo(partial);
+    }
+    @Test void uncommittedPartialEvidenceIsHashedWithoutInventingAResult()throws Exception{
+        byte[] partial="{\"status\":".getBytes(java.nio.charset.StandardCharsets.UTF_8);Path path=file("evidence.json",partial);
+        var entry=capture(List.of()).inventory().get("files").get(1);
+        assertThat(entry.get("sha256").stringValue()).isEqualTo(SourceJson.sha(partial));
+        assertThat(entry.get("length").stringValue()).isEqualTo(Integer.toString(partial.length));
+        assertThat(Files.readAllBytes(path)).isEqualTo(partial);assertThat(Files.exists(root.resolve("result.json"))).isFalse();
+    }
     @Test void childSidecarRetainsLaunchGapIdentityHint()throws Exception{file("child.json",SourceJson.canonical(SourceJson.object().put("pid","12345").put("startedAt","2026-10-30T12:00:00Z")));assertThat(capture(List.of()).descendantPids()).containsExactly(12345L);}
     @Test void nativeGatewayHintInSilverResultIsRetained()throws Exception{file("result.json",SourceJson.canonical(SourceJson.object().set("cleanup",SourceJson.object().put("kind","PYSPARK_GATEWAY_REAPED").put("pid","12346"))));assertThat(capture(List.of()).descendantPids()).containsExactly(12346L);}
     @Test void changedBytesAreCapturedIndependently()throws Exception{Path p=file("payload.xml",new byte[]{1});var first=capture(List.of());Files.write(p,new byte[]{2});assertThat(capture(List.of()).inventory()).isNotEqualTo(first.inventory());}

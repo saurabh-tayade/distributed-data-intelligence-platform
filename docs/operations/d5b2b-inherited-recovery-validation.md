@@ -3,6 +3,9 @@
 Implementation and validation record for the trusted local installation. Content worker
 dispatch remains disabled; E5 backend closeout is **blocked**, not complete.
 [ADR 0020](../adr/0020-inherited-content-reconciliation.md) is pending owner acceptance.
+The later [Gate B0 completion investigation](content-recovery-envelope-completion.md)
+adds native evidence measurement and interrupted-write tests; it does not resolve the
+activation blocker or change the historical validation below.
 
 ## Baseline inspection and acceptance criteria
 

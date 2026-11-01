@@ -14,6 +14,20 @@ public final class RssContentTestSupport {
     public static Completed execute(JdbcTemplate j,ManagementTransactions t,WorkerRepository w,InstallationHostGuard g,WorkerRepository.Owner o,String runtime,Fault f){var r=new RssContentExecution(j,t,w,(phase,point,owner)->f.at(phase,point.name(),owner)).execute(g,o,runtime);return new Completed(r.artifact(),r.session(),r.evidence());}
     public static UUID inspect(JdbcTemplate j,ManagementTransactions t,WorkerRepository w,InstallationHostGuard g,UUID run,String runtime){return new RssContentExecution(j,t,w).inspect(g,run,runtime);}
     public static JsonNode modules(Path root)throws Exception{var n=SourceJson.object();for(String m:RssContentRuntime.MODULES)n.put(m,SourceJson.sha(Files.readAllBytes(root.resolve(m))));return n;}
+    /** Measures the actual captured private tree, separately from referenced native publications. */
+    public static JsonNode privateEvidence(JdbcTemplate j,InstallationHostGuard g,WorkerRepository.Owner o){
+        var inventory=ContentRecoveryFiles.capture(g,o.runId(),o.attemptId(),j.queryForList("SELECT * FROM ddip_management.stage_invocations WHERE attempt_id=?",o.attemptId())).inventory();
+        var summary=SourceJson.object();var groups=summary.putObject("groups");long bytes=0;int files=0;
+        String prefix="runs/"+o.runId()+"/attempts/"+o.attemptId()+"/";
+        for(var entry:inventory.get("files")){
+            if(entry.get("directory").booleanValue())continue;
+            long length=Long.parseLong(entry.get("length").stringValue());bytes+=length;files++;
+            String group=entry.get("address").stringValue().substring(prefix.length()).split("/",2)[0];
+            var totals=groups.has(group)?(tools.jackson.databind.node.ObjectNode)groups.get(group):groups.putObject(group).put("bytes",0L).put("files",0);
+            totals.put("bytes",totals.get("bytes").longValue()+length).put("files",totals.get("files").intValue()+1);
+        }
+        return summary.put("bytes",bytes).put("files",files).put("entries",inventory.get("files").size()).put("inventoryBytes",SourceJson.canonical(inventory).length);
+    }
     /** Synthetic metadata only: exercises SQL fencing/atomicity, never asserts native qualification. */
     public record Fence(Object stage,JsonNode frozen,JsonNode gold,JsonNode reference,byte[] artifact){}
     public static void checkpointPublication(WorkerRepository w,InstallationHostGuard g,Fence f){var stage=(WorkerRepository.PublicationStage)f.stage();stage=w.recordPublicationChild(g,stage,new InstallationHostGuard.ProcessIdentity(UUID.randomUUID(),ProcessHandle.current().pid(),ProcessHandle.current().info().startInstant().orElseThrow()));w.checkpointContent(g,stage,"a".repeat(64),f.frozen(),f.gold(),f.reference());}
