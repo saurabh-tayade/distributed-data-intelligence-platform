@@ -295,3 +295,22 @@ tbody tr:hover { background: #f9fbf8; }
   .article-timing { flex-wrap: wrap; gap: 20px; }
   .article-detail-grid { grid-template-columns: 1fr; }
 }
+
+/* Source records and immutable revision references reuse the workspace panels. */
+.source-back { display: inline-block; padding: 12px 0; margin-bottom: 12px; }
+.source-detail-panel { padding: 24px; margin-bottom: 24px; min-width: 0; }
+.source-detail-panel > h2 { margin-bottom: 20px; }
+.source-display-name { overflow-wrap: anywhere; margin: 16px 0; }
+.source-metadata { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin: 22px 0; }
+.source-metadata dt { font-size: 12px; font-weight: 650; margin-bottom: 8px; }
+.source-metadata dd { font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }
+.source-metadata code { font-size: 12px; }
+.revision-list { list-style: none; padding: 0; margin: 20px 0; }
+.revision-card { border-top: 1px solid var(--line); padding: 22px 0; }
+.revision-card h3 { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.revision-card summary { cursor: pointer; color: #176756; padding: 12px 0; min-height: 44px; }
+@media (max-width: 760px) {
+  .source-detail-panel { padding: 20px 18px; }
+  .source-detail-panel .panel-heading { flex-wrap: wrap; gap: 12px; }
+  .source-metadata { grid-template-columns: minmax(0, 1fr); }
+}

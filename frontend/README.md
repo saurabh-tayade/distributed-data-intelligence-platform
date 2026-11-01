@@ -36,8 +36,9 @@ These are flags for an already configured API invocation, not a database/bootstr
 Vite retains the browser Host header; an unapproved UI authority is rejected even on GET.
 Preview uses port 4173 and needs its own approved origin. No CORS/security bypass, backend
 change or new dependency is introduced. Operations can work without a configured Analytics
-publication. Mutations, source details/revisions, execution pages, imports and recovery actions
-are outside this slice; enabled admission never implies ordinary Content dispatch is active.
+publication. Source details/revisions extend this slice in F2a.2 below. Mutations, execution
+pages, imports and recovery actions remain unavailable; enabled admission never implies
+ordinary Content dispatch is active.
 
 The management client uses its own typed envelope, bounded parsers and safe errors, separately
 from Analytics publication validation. Loading, an empty catalog, filtered-empty results, local
@@ -74,6 +75,68 @@ npm run build --prefix frontend
 npm run check
 git diff --check
 ```
+
+## E5-F2a.2 — Source detail and revision history
+
+Select a source identity in the list, or open
+`#/operations/sources/content-intelligence/<source-id>` (use `application-reliability` for
+Reliability). The route is `#/operations/sources/:product/:source`; invalid identities use the
+navigation fallback, while an unknown valid identity displays the API's safe 404 state.
+Back/Forward and **Back to Sources** retain the list's filters and cursor position within
+the mounted application. A browser reload starts a new list session. Analytics filters and
+publication selection remain independent. Route changes focus the main content and cancel
+obsolete requests.
+
+The existing management API supplies two independent read-only panels:
+
+- `GET /api/management/v1/sources/{product}/{source}`: current identity, admission gate,
+  revision, configuration fingerprint, UTC dates, exact decimal row version and fixed
+  configuration references. The client retains the quoted decimal ETag and rejects missing
+  or mismatched tags. No conditional GET or mutation is performed.
+- `GET /api/management/v1/sources/{product}/{source}/revisions?limit=20[&cursor=…]`:
+  immutable historical configurations in ascending server order. Expand a revision's
+  configuration references to inspect its own profile, origin, endpoint/profile/storage IDs
+  and nullable fields. There is no single-revision endpoint or revision-specific route.
+
+Revision Previous/Next follows only opaque backend cursors, one 20-row page per request.
+The client enforces the API's 1–100 limit; this view uses 20. It retains cursor positions,
+not a growing merged result collection. **Refresh revisions** starts a new high-water
+traversal; **Refresh source and revisions** also rereads current metadata. A rejected cursor
+offers **Start from first revision page**. No polling, totals or automatic retry is added.
+Current markers mean **current in the displayed source record**, not a continuously verified
+live state. History can contain a newer revision than that record; refresh both panels to
+update it. Historical configuration is never replaced with the current configuration or
+treated as a historical run selection.
+
+Panel loading, errors and retries are independent. A history failure leaves valid source
+metadata visible; failed refreshes clear the refreshed panel's obsolete data. Abort and
+request-key guards reject late responses across source, route and cursor changes. Safe
+codes, correlation IDs and retryability guidance are preserved without rendering arbitrary
+server text. Content and Reliability configurations expose only registered references, not
+editable URLs, credentials or private storage paths. Enabled remains an admission gate;
+the UI claims no source health, approval, ingestion success or Content activation.
+
+The API role, approved Host/Origin configuration and relative Vite proxy requests are
+unchanged from F2a.1 above. This milestone adds no backend contract, dependency, action or
+execution/artifact link. The [F1 audit](../docs/operations/e5-f1-operations-ui-audit.md) remains
+the unchanged implementation reference. F2b.1 should add the bounded execution list using
+the existing runs API before related-execution links are offered.
+
+Local validation uses Node.js **24.22.1**. Typecheck, ESLint, production build and **334 tests**
+(256 existing Analytics/Operations regressions and 78 detail/revision tests) pass. The new
+tests cover wire/config/ETag rejection, independent errors, immutable references, explicit
+paging/refresh, navigation, source switches, aborts and ignored late responses. The existing
+500 kB build warning remains; the main chunk is **634.70 kB minified / 187.69 kB gzip**.
+Repository Markdown/link/hygiene checks and `git diff --check` also pass.
+The default local API was unreachable, so live API/browser smoke testing, responsive visual
+and screen-reader acceptance, and hosted CI acceptance remain pending. No Spark, PostgreSQL
+recovery or Docker suite is needed for this frontend change.
+
+For browser acceptance with a configured API: open a filtered second Sources page, select
+a source by keyboard, inspect current metadata and an expanded historical configuration,
+page revisions, refresh, and return with the link and browser history. Repeat for a disabled
+source and both products; exercise a missing source and independent panel failures. Confirm
+Analytics selection survives and narrow-screen identifiers wrap without hiding controls.
 
 ## Acceptance and design
 
