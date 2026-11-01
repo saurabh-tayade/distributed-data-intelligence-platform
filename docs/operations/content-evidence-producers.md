@@ -1,5 +1,9 @@
 # Gate B0: bounded Content evidence producers
 
+**Later CI follow-up:** the [current CI inventory](ci.md) has five partitions, with gold=3 and
+content_recovery=3 after repeated Gold timeouts in runs 41317309717 and 41282407982.
+The four-partition inventory and validation results below describe this implementation's historical runs.
+
 October 31 / November 1, 2026 (local / UTC). **Gate B0 is incomplete. Production managed
 Content dispatch remains disabled and is not safe to consider for Gate B1.** ADR 0021 stays
 Proposed, with owner acceptance pending. This implementation supplies enforceable private

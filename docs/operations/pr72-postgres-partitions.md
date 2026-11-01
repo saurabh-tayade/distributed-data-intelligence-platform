@@ -6,6 +6,11 @@ and [CI issue #54](https://github.com/saurabh-tayade/distributed-data-intelligen
 Production managed Content dispatch remains disabled; Managed Content remains **Partially implemented**.
 No datasets, source contracts, native transformations, accepted ADRs or application execution code change.
 
+**Later CI follow-up:** repeated Gold timeouts in runs 41317309717 and 41282407982 led to the
+[five-partition correction](ci.md). Gold and Content recovery now contain three classes each.
+The four-partition design and measurements below describe PR #72 at the time; they are not
+measurements of the later split.
+
 ## Acceptance and root cause
 
 Require the original known-clean launch failure, no child/Gold success, occupied coordinator and no

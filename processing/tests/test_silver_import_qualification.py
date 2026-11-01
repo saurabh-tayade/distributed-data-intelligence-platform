@@ -175,6 +175,148 @@ class SilverQualificationTest(unittest.TestCase):
             self.assertEqual(recheck.returncode,0,recheck.stdout);self.assertEqual(json.loads(recheck.stdout)['status'],'UNCHANGED');self.assertEqual(self.store.writes,[])
 
 
+class SilverCaptureLimitTest(unittest.TestCase):
+    """Filesystem capture only: these byte fixtures do not claim Parquet qualification."""
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name).resolve()
+        ingestion = '50000000-0000-4000-8000-000000000001'
+        key = f'bronze/rss/source_id=ZGVtbw/ingestion_date=2026-10-12/ingestion_id={ingestion}/metadata.json'
+        address = 'v1/' + sha256(b'local').hexdigest() + '/' + key[len('bronze/rss/'):].replace('metadata.json', 'complete.json')
+        self.a = dict(kind='SILVER', productId='content-intelligence', storageBindingId='silver',
+                      contractVersion=1, processorRevision=1, relativeAddress=address,
+                      identity=dict(sourceId='demo', ingestionId=ingestion, bronzeStorageBindingId='bronze',
+                                    bronzeBucket='local', bronzeMetadataKey=key,
+                                    bronzePayloadKey=key.replace('metadata.json', 'payload.xml')))
+        q.selection(self.a)
+        self.namespace = (self.root / address).parent
+        for name in ('accepted', 'rejected'):
+            directory = self.namespace / name
+            directory.mkdir(parents=True)
+            (directory / 'part.parquet').write_bytes(name.encode())
+        (self.namespace / 'complete.json').write_bytes(b'{}')
+        s = self.root.stat()
+        self.binding = dict(root=str(self.root), rootDevice=str(s.st_dev), rootInode=str(s.st_ino))
+
+    def add_files(self, directory, count, prefix='.f'):
+        directory.mkdir(parents=True, exist_ok=True)
+        for i in range(count):
+            (directory / f'{prefix}{i:03d}').write_bytes(b'bookkeeping')
+
+    def entry_count(self):
+        return 1 + sum(1 for _ in self.namespace.rglob('*'))
+
+    def capture(self):
+        value = q.capture(self.a, self.binding)
+        self.assertEqual(len(value['files']) + len(value['directories']), self.entry_count())
+        return value
+
+    def resource_limit(self):
+        with self.assertRaises(protocol.Failure) as failure:
+            self.capture()
+        self.assertEqual(failure.exception.code, 'RESOURCE_LIMIT')
+
+    def test_exactly_512_entries_including_namespace_root(self):
+        self.add_files(self.namespace / 'rejected', 506)
+        self.assertEqual(self.entry_count(), 512)
+        value = self.capture()
+        self.assertEqual(len(value['files']), 509)
+        self.assertEqual(len(value['directories']), 3)
+        self.assertEqual(value['analyticalFileCounts'], dict(accepted=1, rejected=1))
+        # Guards duplicate namespace/ancestor identities, not additional captured entries.
+        self.assertGreater(len(value['guards']), 0)
+        self.assertEqual(q.capture(self.a, self.binding, value), value)
+
+    def test_513_flat_entries_are_rejected(self):
+        self.add_files(self.namespace / 'rejected', 507)
+        self.assertEqual(self.entry_count(), 513)
+        self.resource_limit()
+
+    def test_nested_subtree_and_later_files_share_the_limit(self):
+        rejected = self.namespace / 'rejected'
+        self.add_files(rejected / '.branch' / 'nested', 300)
+        self.add_files(rejected, 204, '.z')
+        self.assertEqual(self.entry_count(), 512)
+        value = self.capture()
+        self.assertIn('rejected/.branch/nested/.f000', [f['path'] for f in value['files']])
+        self.assertEqual(len(value['directories']), 5)
+        (rejected / '.z-extra').write_bytes(b'one entry too many')
+        self.assertEqual(self.entry_count(), 513)
+        self.resource_limit()
+
+    def test_multiple_sibling_subtrees_and_later_files_share_the_limit(self):
+        rejected = self.namespace / 'rejected'
+        self.add_files(rejected / '.first', 150)
+        self.add_files(rejected / '.second', 150)
+        self.add_files(rejected, 204, '.z')
+        self.assertEqual(self.entry_count(), 512)
+        self.capture()
+        (rejected / '.z-extra').write_bytes(b'one entry too many')
+        self.assertEqual(self.entry_count(), 513)
+        self.resource_limit()
+
+    def test_empty_directories_count_toward_512_and_513(self):
+        rejected = self.namespace / 'rejected'
+        self.add_files(rejected, 505)
+        (rejected / '.empty-first').mkdir()
+        self.assertEqual(self.entry_count(), 512)
+        value = self.capture()
+        self.assertIn('rejected/.empty-first', [d['path'] for d in value['directories']])
+        (rejected / '.empty-second').mkdir()
+        self.assertEqual(self.entry_count(), 513)
+        self.resource_limit()
+
+    def test_previously_demonstrated_607_entry_bypass_is_readonly_and_rejected(self):
+        rejected = self.namespace / 'rejected'
+        self.add_files(rejected / '.branch', 300)
+        self.add_files(rejected, 300, '.z')
+        self.assertEqual(self.entry_count(), 607)
+        before = {p: (p.stat().st_ino, p.stat().st_mtime_ns, p.read_bytes())
+                  for p in self.namespace.rglob('*') if p.is_file()}
+        for _ in range(2):
+            self.resource_limit()
+        self.assertEqual(before, {p: (p.stat().st_ino, p.stat().st_mtime_ns, p.read_bytes())
+                                  for p in self.namespace.rglob('*') if p.is_file()})
+        self.assertEqual(self.entry_count(), 607)
+
+    def test_root_bookkeeping_and_both_datasets_share_the_limit(self):
+        self.add_files(self.namespace, 150)
+        self.add_files(self.namespace / 'accepted' / '_temporary', 150)
+        self.add_files(self.namespace / 'rejected' / '_temporary', 204)
+        self.assertEqual(self.entry_count(), 512)
+        self.capture()
+        (self.namespace / '.extra').write_bytes(b'one entry too many')
+        self.assertEqual(self.entry_count(), 513)
+        self.resource_limit()
+
+    def test_nested_bookkeeping_preserves_hash_identity_and_mutation_checks(self):
+        self.add_files(self.namespace / 'accepted' / '_temporary' / '0' / 'attempt', 1)
+        value = self.capture()
+        file = next(f for f in value['files'] if f['path'].endswith('/.f000'))
+        self.assertEqual(file['dataset'], 'bookkeeping')
+        self.assertEqual(file['sha256'], sha256(b'bookkeeping').hexdigest())
+        identity = q.identity(self.a, value, {})
+        self.assertEqual(q.identity(self.a, q.capture(self.a, self.binding, value), {}), identity)
+        (self.namespace / file['path']).write_bytes(b'changed bookkeeping')
+        with self.assertRaises(protocol.Failure) as failure:
+            q.capture(self.a, self.binding, value)
+        self.assertEqual(failure.exception.code, 'EVIDENCE_CHANGED')
+        self.assertNotEqual(q.identity(self.a, self.capture(), {})[1], identity[1])
+
+    def test_symlinks_and_hardlinks_remain_unsafe(self):
+        path = self.namespace / 'rejected' / '.unsafe'
+        target = self.root / 'outside'
+        target.write_bytes(b'outside')
+        for link in (lambda: path.symlink_to(target), lambda: os.link(target, path)):
+            with self.subTest(link=link):
+                link()
+                with self.assertRaises(protocol.Failure) as failure:
+                    self.capture()
+                self.assertEqual(failure.exception.code, 'PATH_UNSAFE')
+                path.unlink()
+
+
 class SilverInventoryVectorTest(unittest.TestCase):
     """Literal metadata vectors, not fabricated native acceptance fixtures."""
     def vector(self):

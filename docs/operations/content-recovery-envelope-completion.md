@@ -277,6 +277,10 @@ asserts all retained final cases pass; it does not relabel a failed Maven invoca
 Disposable test containers and managed fixture worker/publisher processes were absent after
 the drivers finished. Ordinary operator data volumes are unaffected.
 
+**Later CI follow-up:** the [current five-partition inventory](ci.md) splits gold=3 and
+content_recovery=3 after repeated Gold timeouts in runs 41317309717 and 41282407982.
+The following inventory and timing discussion describes this investigation's historical state.
+
 CI keeps core=10, reliability=7, ingestion=3 and gold=6 classes and the existing aggregate gate.
 Both added integration cases remain in ContentRecoveryIT; their final passing local case time
 is approximately **162s combined**. The local run excludes the full RssGoldIT class and is
