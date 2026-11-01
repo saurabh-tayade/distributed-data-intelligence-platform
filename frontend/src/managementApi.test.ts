@@ -84,18 +84,27 @@ describe('management source contract', () => {
   ])('maps HTTP %s to safe classifications, never remote messages', async (status, code, kind) => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(managementFailure(code as string), status as number)));
     const error = await fetchSources({}, new AbortController().signal).catch((error: unknown) => error);
-    expect(error).toMatchObject({ kind, code, correlationId: CORRELATION });
+    expect(error).toMatchObject({ kind, code, correlationId: CORRELATION, retryable: code === 'MANAGEMENT_UNAVAILABLE' });
     expect((error as Error).message).not.toMatch(/secret|traceback/);
+  });
+
+  it.each([true, false])('retains explicit server retryability %s without scheduling another request', async (retryable) => {
+    const fetch = vi.fn().mockResolvedValue(jsonResponse({ ...managementFailure(), retryable }, 503));
+    vi.stubGlobal('fetch', fetch);
+    const error = await fetchSources({}, new AbortController().signal).catch((error: unknown) => error);
+    expect(error).toMatchObject({ kind: 'unavailable', retryable, code: 'MANAGEMENT_UNAVAILABLE', correlationId: CORRELATION });
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it('handles non-JSON errors, malformed success and unsupported codes without disclosing bodies', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response('<html>secret</html>', { status: 503 }))
       .mockResolvedValueOnce(jsonResponse({ ...managementFailure('PRIVATE_SECRET'), correlationId: '/private/path' }, 503))
+      .mockResolvedValueOnce(jsonResponse({ ...managementFailure(), retryable: 'true' }, 503))
       .mockResolvedValueOnce(new Response('not JSON', { headers: { 'Content-Type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify(sourcePage()), { headers: { 'Content-Type': 'text/html' } })));
-    for (const kind of ['unavailable', 'unavailable', 'invalid-response', 'invalid-response']) {
+    for (const kind of ['unavailable', 'unavailable', 'unavailable', 'invalid-response', 'invalid-response']) {
       const error = await fetchSources({}, new AbortController().signal).catch((error: unknown) => error);
-      expect(error).toMatchObject({ kind, code: null, correlationId: null });
+      expect(error).toMatchObject({ kind, code: null, correlationId: null, retryable: null });
       expect((error as Error).message).not.toContain('secret');
     }
   });

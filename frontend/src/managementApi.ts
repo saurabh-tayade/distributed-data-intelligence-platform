@@ -26,7 +26,7 @@ const messages: Record<ManagementErrorKind, string> = {
 };
 export class ManagementError extends Error {
   constructor(public readonly kind: ManagementErrorKind, public readonly code: string | null = null,
-    public readonly correlationId: string | null = null) {
+    public readonly correlationId: string | null = null, public readonly retryable: boolean | null = null) {
     super(messages[kind]); this.name = 'ManagementError';
   }
 }
@@ -127,16 +127,16 @@ export async function fetchSources(query: SourcesQuery, signal: AbortSignal): Pr
   }
   if (response.status !== 200) {
     const failure = failures[response.status];
-    let code: string | null = null, correlationId: string | null = null;
+    let code: string | null = null, correlationId: string | null = null, retryable: boolean | null = null;
     try {
       const body = object(await response.json());
       fields(body, ['apiVersion', 'code', 'message', 'correlationId', 'retryable']);
       if (failure && body.apiVersion === 1 && body.code === failure.code && typeof body.message === 'string'
         && typeof body.retryable === 'boolean' && typeof body.correlationId === 'string' && uuid.test(body.correlationId)) {
-        code = failure.code; correlationId = body.correlationId;
+        code = failure.code; correlationId = body.correlationId; retryable = body.retryable;
       }
     } catch { /* Proxy errors can be non-JSON. No server text crosses into the UI. */ }
-    throw new ManagementError(failure?.kind ?? 'server', code, correlationId);
+    throw new ManagementError(failure?.kind ?? 'server', code, correlationId, retryable);
   }
   try {
     need(response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() === 'application/json');

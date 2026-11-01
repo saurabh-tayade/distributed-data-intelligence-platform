@@ -15,5 +15,5 @@ export function fullSourcePage(nextCursor = FIRST_CURSOR): SourcesPage {
   return sourcePage(Array.from({ length: 20 }, (_, index) => source(`source-${String(index).padStart(3, '0')}`)), 20, nextCursor);
 }
 export function managementFailure(code = 'MANAGEMENT_UNAVAILABLE') {
-  return { apiVersion: 1, code, message: '/private/secret traceback', correlationId: CORRELATION, retryable: true };
+  return { apiVersion: 1, code, message: '/private/secret traceback', correlationId: CORRELATION, retryable: code === 'MANAGEMENT_UNAVAILABLE' };
 }

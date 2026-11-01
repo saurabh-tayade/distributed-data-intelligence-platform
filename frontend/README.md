@@ -42,24 +42,38 @@ are outside this slice; enabled admission never implies ordinary Content dispatc
 The management client uses its own typed envelope, bounded parsers and safe errors, separately
 from Analytics publication validation. Loading, an empty catalog, filtered-empty results, local
 boundary rejection, management unavailability, network failure and invalid responses have distinct
-presentations. Only recognized public error codes and validated correlation IDs are displayed;
+presentations. Recognized public error codes, validated correlation IDs and explicit server
+retryability guidance are preserved without automatically retrying a request;
 server/proxy messages and private diagnostics are never rendered. Semantic tables, labeled filters,
 keyboard paging, area-specific skip links, route focus, horizontal overflow and responsive layout
 reuse the existing visual conventions. F1 remains an unchanged historical audit/planning artifact.
 
 F2a.1 local validation used Node.js **24.22.1** within the existing supported Node 24 range;
 the runtime/version files and dependency pins were not changed. Type checking, ESLint,
-**250 frontend tests** (184 existing plus 66 new), and production build passed. Tests use
+**256 frontend tests** (184 existing plus 72 new), and production build passed. Tests use
 mocked HTTP responses and cover protocol rejection, exact values, composite source identity,
-paging/filter resets, cursor failures/cycles, late responses, StrictMode, workspace history,
+paging/filter resets, cursor failures/cycles, rapid filter changes, cross-workspace late responses,
+retryability guidance, StrictMode, workspace history,
 keyboard controls, Analytics pin isolation and existing analytical table anchors. The build
-retains the existing 500 kB chunk warning: the main chunk is now **621.49 kB minified /
-185.19 kB gzip**; no threshold was raised. Backend/Spark/Docker suites were not run.
+retains the existing 500 kB chunk warning: the main chunk is now **621.72 kB minified /
+185.28 kB gzip**; no threshold was raised. Backend/Spark/Docker suites were not run.
 
-The browser inventory reported that its access host was unavailable. Live management API,
+The browser inventory reported that its access host was unavailable; the default local API at
+`127.0.0.1:8080` was also unreachable during the follow-up. Live management API,
 desktop/narrow browser rendering and full screen-reader acceptance remain pending; mocked DOM
 tests are not those runtime checks. Repository Markdown/link/hygiene and whitespace checks
 are recorded with the implementation handoff. The owner handles commits, pushes and PR updates.
+
+Reproduce the local checks from the repository root with a supported Node 24 executable on PATH:
+
+```sh
+npm run typecheck --prefix frontend
+npm test --prefix frontend
+npm run lint --prefix frontend
+npm run build --prefix frontend
+npm run check
+git diff --check
+```
 
 ## Acceptance and design
 

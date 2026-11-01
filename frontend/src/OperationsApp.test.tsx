@@ -39,6 +39,9 @@ describe('Operations foundation and source browsing', () => {
     const user = userEvent.setup(), fetch = vi.fn().mockImplementation(async () => jsonResponse(sourcePage([])));
     vi.stubGlobal('fetch', fetch); render(<App />);
     expect(await screen.findByRole('heading', { name: 'No registered sources' })).toBeVisible();
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Admission status' }), 'true');
+    expect(await screen.findByRole('heading', { name: 'No sources match these filters' })).toBeVisible();
+    expect(fetch.mock.calls.at(-1)?.[0]).toContain('enabled=true');
     await user.selectOptions(screen.getByRole('combobox', { name: 'Admission status' }), 'false');
     expect(await screen.findByRole('heading', { name: 'No sources match these filters' })).toBeVisible();
     expect(fetch.mock.calls.at(-1)?.[0]).toContain('enabled=false');
@@ -55,6 +58,7 @@ describe('Operations foundation and source browsing', () => {
     vi.stubGlobal('fetch', fetch); render(<App />);
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(message); expect(alert).toHaveTextContent(CORRELATION);
+    expect(alert).toHaveTextContent(status === 503 ? 'The service marked this read as retryable.' : 'Resolve the reported condition before trying again.');
     expect(alert).not.toHaveTextContent(/secret|traceback/);
     expect(screen.queryByRole('heading', { name: 'No registered sources' })).not.toBeInTheDocument();
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -89,6 +93,13 @@ describe('Operations foundation and source browsing', () => {
     expect(screen.getByText(/Page 2.*End of results/)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Previous sources' })); await waitFor(() => expect(row('source-000')).toBeVisible());
     expect(urlOf(fetch.mock.calls.at(-1)![0]).searchParams.has('cursor')).toBe(false);
+    await user.click(screen.getByRole('button', { name: 'Next sources' })); await waitFor(() => expect(row('tail')).toBeVisible());
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Admission status' }), 'false');
+    await screen.findByRole('heading', { name: 'No sources match these filters' });
+    expect(urlOf(fetch.mock.calls.at(-1)![0]).searchParams.has('cursor')).toBe(false);
+    expect(screen.getByText(/Page 1/)).toBeVisible();
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Admission status' }), '');
+    await waitFor(() => expect(row('source-000')).toBeVisible());
     await user.click(screen.getByRole('button', { name: 'Next sources' })); await waitFor(() => expect(row('tail')).toBeVisible());
     await user.selectOptions(screen.getByRole('combobox', { name: 'Product' }), 'application-reliability');
     await screen.findByRole('heading', { name: 'No sources match these filters' });
@@ -139,6 +150,31 @@ describe('Operations foundation and source browsing', () => {
     expect(screen.getByRole('button', { name: 'Next sources' })).toBeDisabled(); expect(fetch).toHaveBeenCalledTimes(3);
   });
 
+  it('keeps only the latest rapid product/status selection despite out-of-order success and failure', async () => {
+    const initial = deferred<Response>(), intermediate = deferred<Response>(), latest = deferred<Response>();
+    const fetch = vi.fn().mockReturnValueOnce(initial.promise).mockReturnValueOnce(intermediate.promise).mockReturnValueOnce(latest.promise);
+    const user = userEvent.setup(); vi.stubGlobal('fetch', fetch); render(<App />);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Product' }), 'application-reliability');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Admission status' }), 'false');
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect((fetch.mock.calls[0]?.[1] as RequestInit).signal?.aborted).toBe(true);
+    expect((fetch.mock.calls[1]?.[1] as RequestInit).signal?.aborted).toBe(true);
+    expect((fetch.mock.calls[2]?.[1] as RequestInit).signal?.aborted).toBe(false);
+    await act(async () => latest.resolve(jsonResponse(sourcePage([{ ...source('current', 'application-reliability'), enabled: false }]))));
+    await ready();
+    await act(async () => {
+      initial.resolve(jsonResponse(sourcePage([source('obsolete')])));
+      intermediate.reject(new Error('/private/late-error'));
+    });
+    expect(row('current')).toBeVisible();
+    expect(screen.queryByRole('rowheader', { name: /obsolete/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Product' })).toHaveValue('application-reliability');
+    expect(screen.getByRole('combobox', { name: 'Admission status' })).toHaveValue('false');
+    const last = urlOf(fetch.mock.calls[2]![0]);
+    expect(last.searchParams.get('enabled')).toBe('false'); expect(last.searchParams.has('cursor')).toBe(false);
+  });
+
   it('renders untrusted labels as text and distinguishes identical IDs in different products', async () => {
     const rows = [source('same', 'application-reliability'), { ...source('same'), displayName: '<img src=x onerror=alert(1)>', enabled: false }];
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(sourcePage(rows))));
@@ -161,6 +197,40 @@ describe('Operations foundation and source browsing', () => {
 });
 
 describe('workspace navigation and independent Analytics session', () => {
+  it('ignores late Analytics identity changes after navigating to Operations', async () => {
+    window.history.replaceState(null, '', '/#/analytics'); const user = userEvent.setup(), late = deferred<Response>();
+    const filtered = fixture(); filtered.data = filtered.data.filter((item) => item.sourceId === 'beta'); filtered.meta.returned = 1;
+    const fetch = vi.fn().mockResolvedValueOnce(jsonResponse(fixture())).mockReturnValueOnce(late.promise)
+      .mockResolvedValueOnce(jsonResponse(sourcePage())).mockResolvedValueOnce(jsonResponse(filtered));
+    vi.stubGlobal('fetch', fetch); render(<App />); await screen.findByRole('heading', { name: 'Publisher breakdown' });
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Publisher scope' }), 'beta');
+    await user.click(workspace('Operations')); await ready();
+    expect((fetch.mock.calls[1]?.[1] as RequestInit).signal?.aborted).toBe(true);
+    await act(async () => late.resolve(jsonResponse({ ...filtered, publication: 'b'.repeat(64) })));
+    expect(row('alpha')).toBeVisible(); expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await user.click(workspace('Analytics')); await screen.findByRole('heading', { name: 'Publisher breakdown' });
+    expect(screen.getByLabelText('Publication fingerprint')).toHaveTextContent(FINGERPRINT);
+    expect(screen.getByRole('combobox', { name: 'Publisher scope' })).toHaveValue('beta');
+    expect(screen.queryByRole('button', { name: 'Reload dashboard' })).not.toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledTimes(4);
+  });
+
+  it('ignores a late Sources page while Analytics is visible and revalidates on returning', async () => {
+    const user = userEvent.setup(), late = deferred<Response>();
+    const fetch = vi.fn().mockReturnValueOnce(late.promise).mockResolvedValueOnce(jsonResponse(fixture()))
+      .mockResolvedValueOnce(jsonResponse(sourcePage([source('fresh')])));
+    vi.stubGlobal('fetch', fetch); render(<App />);
+    await user.click(workspace('Analytics')); await screen.findByRole('heading', { name: 'Publisher breakdown' });
+    expect((fetch.mock.calls[0]?.[1] as RequestInit).signal?.aborted).toBe(true);
+    await act(async () => late.resolve(jsonResponse(sourcePage([source('obsolete')]))));
+    expect(screen.getByLabelText('Publication fingerprint')).toHaveTextContent(FINGERPRINT);
+    expect(screen.queryByRole('heading', { name: 'Registered sources' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await user.click(workspace('Operations')); await ready(); expect(row('fresh')).toBeVisible();
+    expect(screen.queryByRole('rowheader', { name: /obsolete/ })).not.toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
   it.each([
     ['Publisher Overview', 'View exact values', 'Publisher breakdown'],
     ['Daily Activity', 'View exact daily values', 'Daily breakdown'],
@@ -210,6 +280,19 @@ describe('workspace navigation and independent Analytics session', () => {
     await user.click(workspace('Operations')); await ready();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     await user.click(workspace('Analytics')); expect(await screen.findByRole('button', { name: 'Reload dashboard' })).toBeVisible();
+  });
+
+  it('shows Operations-specific unavailability even when Analytics is unavailable too', async () => {
+    window.history.replaceState(null, '', '/#/analytics'); const user = userEvent.setup();
+    const fetch = vi.fn().mockResolvedValueOnce(jsonResponse({ code: 'INPUT_UNAVAILABLE' }, 503))
+      .mockResolvedValueOnce(jsonResponse(managementFailure(), 503));
+    vi.stubGlobal('fetch', fetch); render(<App />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Publisher analytics are unavailable');
+    await user.click(workspace('Operations'));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('The source catalog is unavailable'));
+    expect(screen.getByRole('alert')).not.toHaveTextContent(/Gold|publication|secret/);
+    expect(screen.queryByRole('heading', { name: 'No registered sources' })).not.toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it('supports keyboard workspace navigation and skip links without replacing the route', async () => {

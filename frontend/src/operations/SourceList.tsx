@@ -36,6 +36,8 @@ export function SourceList({ active }: { active: boolean }) {
         <h2>Unable to load sources</h2><p>{error.message}</p>
         {error.code && <p><code>{error.code}</code></p>}
         {error.correlationId && <p>Reference: <code>{error.correlationId}</code></p>}
+        {error.retryable !== null && <p>Retry guidance: {error.retryable
+          ? 'The service marked this read as retryable.' : 'Resolve the reported condition before trying again.'}</p>}
         <button className="primary-button" type="button" onClick={() => model.refresh()}>Try again</button>
         {model.hasCursor && error.kind === 'invalid-request' && <button className="secondary-button" type="button" onClick={() => model.refresh(true)}>Start from first page</button>}
       </section>}
