@@ -47,6 +47,37 @@ export interface RunSummary {
 }
 export interface RunsQuery { productId?: ProductId; sourceId?: string; state?: RunState; limit?: number; cursor?: string }
 export type RunsPage = ManagementPage<RunSummary>;
+export const ATTEMPT_STATES = ['CLAIMED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'INTERRUPTED'] as const;
+export const CONTROL_TYPES = ['CANCEL', 'RETRY', 'RECONCILE', 'RESUME'] as const;
+export const CONTROL_STATES = ['REQUESTED', 'APPLIED', 'TOO_LATE', 'REJECTED'] as const;
+export const AUDIT_STATES = [...RUN_STATES, 'CLAIMED', 'INTERRUPTED', 'INTENT', 'VERIFIED', 'UNKNOWN', 'REQUESTED', 'APPLIED', 'TOO_LATE', 'REJECTED', 'RECOVERY_ONLY', 'READY'] as const;
+export const AUDIT_ACTIONS = ['CONTENT_RESUME_QUEUED', 'CONTENT_RESUME_CLAIMED', 'RUN_SUBMITTED', 'RUN_CLAIMED', 'RUN_STARTED', 'RUN_CANCEL_REQUESTED', 'RUN_CANCELLED', 'RUN_FAILED', 'RUN_SUCCEEDED', 'RUN_RECOVERY_REQUIRED', 'RUN_REQUEUED',
+  'ATTEMPT_CLAIMED', 'ATTEMPT_STARTED', 'ATTEMPT_FINISHED', 'ATTEMPT_INTERRUPTED', 'STAGE_INTENT', 'STAGE_LAUNCH_AUTHORIZED', 'STAGE_STARTED', 'STAGE_VERIFIED', 'STAGE_FAILED', 'STAGE_UNKNOWN',
+  'CONTROL_REQUESTED', 'CONTROL_APPLIED', 'CONTROL_TOO_LATE', 'CONTROL_REJECTED', 'RECOVERY_HANDOFF', 'RECOVERY_CLOSED', 'SOURCE_DISABLED_AT_DISPATCH',
+  'RECOVERY_ATTEMPT_RUNNING', 'RECOVERY_STAGE_INTENT', 'RECOVERY_LAUNCH_AUTHORIZED', 'RECOVERY_CHILD_STARTED', 'RECOVERY_STAGE_OBSERVED',
+  'RECOVERY_ATTEMPT_FINISHED', 'RECOVERY_RUN_FINISHED', 'RECOVERY_CONTROL_APPLIED', 'RECOVERY_SLOT_RELEASED', 'RECOVERY_FINALIZED'] as const;
+export const RUN_COUNT_KEYS = ['accepted', 'rejected', 'articles', 'occurrences', 'events', 'windows', 'rows', 'files', 'bytes'] as const;
+export interface LatestControl {
+  controlId: string; type: typeof CONTROL_TYPES[number]; state: typeof CONTROL_STATES[number]; reason: typeof RUN_OUTCOMES[number] | null;
+  requestedAt: string; appliedAt: string | null; rowVersion: string;
+}
+export interface ControlReceipt extends LatestControl { runId: string; runVersion: string }
+export interface RunDetail extends RunSummary {
+  counts: Partial<Record<typeof RUN_COUNT_KEYS[number], string>> | null;
+  attempts: { count: string; currentAttemptId: string | null }; latestControl: LatestControl | null;
+  sourceRevisions: { sourceId: string; revision: number }[]; inputArtifactIds: string[];
+}
+export interface RunDetailResponse extends ManagementEnvelope<RunDetail> { etag: string }
+export interface ControlResponse extends ManagementEnvelope<ControlReceipt> { etag: string }
+export interface RunAttempt {
+  attemptId: string; attemptNo: number; kind: 'EXECUTE' | 'RECONCILE'; state: typeof ATTEMPT_STATES[number];
+  startedAt: string; finishedAt: string | null; outcomeCode: typeof RUN_OUTCOMES[number] | null; stageCount: string;
+}
+export interface AuditEvent {
+  eventSeq: string; timestamp: string; action: typeof AUDIT_ACTIONS[number]; beforeState: typeof AUDIT_STATES[number] | null;
+  afterState: typeof AUDIT_STATES[number] | null; code: typeof RUN_OUTCOMES[number] | null; beforeVersion: string | null; afterVersion: string | null;
+  context: { attemptId: string | null; controlId: string | null };
+}
 
 export type ManagementErrorKind = 'invalid-request' | 'local-boundary' | 'not-found' | 'capacity'
   | 'unavailable' | 'server' | 'network' | 'invalid-response';
@@ -68,6 +99,7 @@ export class ManagementError extends Error {
 }
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+export function isManagementId(value: unknown): value is string { return typeof value === 'string' && uuid.test(value); }
 const cursorPattern = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/;
 const isProduct = (value: unknown): value is ProductId => value === 'content-intelligence' || value === 'application-reliability';
 export function isSourceIdentity(value: { productId: unknown; sourceId: unknown }): value is SourceIdentity {
@@ -215,40 +247,119 @@ export function parseRevisions(value: unknown, identity: SourceIdentity, query: 
   });
 }
 
+function runSummary(item: unknown, query: RunsQuery = {}): RunSummary {
+  const row = object(item);
+  const reliability = row.pipeline === 'RELIABILITY_V2';
+  fields(row, ['runId', 'productId', 'pipeline', 'state', 'currentStage', 'rowVersion', 'requestedAt', 'finishedAt',
+    'outcomeCode', 'retryEligibility', 'result', ...(reliability ? ['dataOrigin'] : [])]);
+  need(isManagementId(row.runId));
+  need(isProduct(row.productId) && (query.productId === undefined || row.productId === query.productId));
+  need(reliability ? row.productId === 'application-reliability' && row.dataOrigin === 'synthetic'
+    : row.pipeline === 'CONTENT_RSS_V1' && row.productId === 'content-intelligence');
+  need(member(RUN_STATES, row.state) && (query.state === undefined || row.state === query.state));
+  need(row.currentStage === null || member(RUN_STAGES, row.currentStage));
+  need(row.outcomeCode === null || member(RUN_OUTCOMES, row.outcomeCode));
+  need(typeof row.retryEligibility === 'boolean');
+  let result: RunResult | null = null;
+  if (row.result !== null) {
+    const record = object(row.result); fields(record, ['artifactId', 'nativeFingerprint', 'productContractVersion', 'processorRevision', 'verificationStatus', 'verifiedAt']);
+    const revision = reliability ? 2 : 1;
+    need(row.state === 'SUCCEEDED' && typeof record.artifactId === 'string' && uuid.test(record.artifactId));
+    need(typeof record.nativeFingerprint === 'string' && /^[0-9a-f]{64}$/.test(record.nativeFingerprint));
+    need(record.productContractVersion === revision && record.processorRevision === revision && record.verificationStatus === 'VERIFIED_AT_EXECUTION');
+    result = { artifactId: record.artifactId, nativeFingerprint: record.nativeFingerprint, productContractVersion: revision,
+      processorRevision: revision, verificationStatus: record.verificationStatus, verifiedAt: timestamp(record.verifiedAt) };
+  }
+  // Persisted run constraints require terminal timestamps and a verified result for SUCCEEDED.
+  need(row.state !== 'SUCCEEDED' || result !== null);
+  need(!['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(row.state) || row.finishedAt !== null);
+  return { runId: row.runId, productId: row.productId, pipeline: reliability ? 'RELIABILITY_V2' : 'CONTENT_RSS_V1', state: row.state,
+    currentStage: row.currentStage, rowVersion: version(row.rowVersion), requestedAt: timestamp(row.requestedAt),
+    finishedAt: row.finishedAt === null ? null : timestamp(row.finishedAt), outcomeCode: row.outcomeCode, retryEligibility: row.retryEligibility,
+    result, ...(reliability ? { dataOrigin: 'synthetic' as const } : {}) };
+}
 export function parseRuns(value: unknown, query: RunsQuery = {}): RunsPage {
   runsParameters(query);
   const ids = new Set<string>();
   return parsePage(value, query, (item) => {
-    const row = object(item);
-    const reliability = row.pipeline === 'RELIABILITY_V2';
-    fields(row, ['runId', 'productId', 'pipeline', 'state', 'currentStage', 'rowVersion', 'requestedAt', 'finishedAt',
-      'outcomeCode', 'retryEligibility', 'result', ...(reliability ? ['dataOrigin'] : [])]);
-    need(typeof row.runId === 'string' && uuid.test(row.runId) && !ids.has(row.runId)); ids.add(row.runId);
-    need(isProduct(row.productId) && (query.productId === undefined || row.productId === query.productId));
-    need(reliability ? row.productId === 'application-reliability' && row.dataOrigin === 'synthetic'
-      : row.pipeline === 'CONTENT_RSS_V1' && row.productId === 'content-intelligence');
-    need(member(RUN_STATES, row.state) && (query.state === undefined || row.state === query.state));
-    need(row.currentStage === null || member(RUN_STAGES, row.currentStage));
-    need(row.outcomeCode === null || member(RUN_OUTCOMES, row.outcomeCode));
-    need(typeof row.retryEligibility === 'boolean');
-    let result: RunResult | null = null;
-    if (row.result !== null) {
-      const record = object(row.result); fields(record, ['artifactId', 'nativeFingerprint', 'productContractVersion', 'processorRevision', 'verificationStatus', 'verifiedAt']);
-      const revision = reliability ? 2 : 1;
-      need(row.state === 'SUCCEEDED' && typeof record.artifactId === 'string' && uuid.test(record.artifactId));
-      need(typeof record.nativeFingerprint === 'string' && /^[0-9a-f]{64}$/.test(record.nativeFingerprint));
-      need(record.productContractVersion === revision && record.processorRevision === revision && record.verificationStatus === 'VERIFIED_AT_EXECUTION');
-      result = { artifactId: record.artifactId, nativeFingerprint: record.nativeFingerprint, productContractVersion: revision,
-        processorRevision: revision, verificationStatus: record.verificationStatus, verifiedAt: timestamp(record.verifiedAt) };
-    }
-    // Persisted run constraints require terminal timestamps and a verified result for SUCCEEDED.
-    need(row.state !== 'SUCCEEDED' || result !== null);
-    need(!['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(row.state) || row.finishedAt !== null);
-    return { runId: row.runId, productId: row.productId, pipeline: reliability ? 'RELIABILITY_V2' : 'CONTENT_RSS_V1', state: row.state,
-      currentStage: row.currentStage, rowVersion: version(row.rowVersion), requestedAt: timestamp(row.requestedAt),
-      finishedAt: row.finishedAt === null ? null : timestamp(row.finishedAt), outcomeCode: row.outcomeCode, retryEligibility: row.retryEligibility,
-      result, ...(reliability ? { dataOrigin: 'synthetic' as const } : {}) };
+    const row = runSummary(item, query); need(!ids.has(row.runId)); ids.add(row.runId); return row;
   });
+}
+
+function recordEnvelope(value: unknown) {
+  const root = object(value); fields(root, ['apiVersion', 'data', 'meta']); need(root.apiVersion === 1);
+  const meta = object(root.meta); fields(meta, ['correlationId']); need(isManagementId(meta.correlationId));
+  return { row: object(root.data), meta: { correlationId: meta.correlationId } };
+}
+const nullableTime = (value: unknown) => value === null ? null : timestamp(value);
+function nullableId(value: unknown): string | null { need(value === null || isManagementId(value)); return value; }
+function publicCode(value: unknown) { need(value === null || member(RUN_OUTCOMES, value)); return value; }
+function latestControl(value: unknown): LatestControl {
+  const row = object(value); fields(row, ['controlId', 'type', 'state', 'reason', 'requestedAt', 'appliedAt', 'rowVersion']);
+  need(isManagementId(row.controlId) && member(CONTROL_TYPES, row.type) && member(CONTROL_STATES, row.state));
+  need(row.state === 'REQUESTED' || (row.reason !== null && row.appliedAt !== null));
+  return { controlId: row.controlId, type: row.type, state: row.state, reason: publicCode(row.reason), requestedAt: timestamp(row.requestedAt),
+    appliedAt: nullableTime(row.appliedAt), rowVersion: version(row.rowVersion) };
+}
+function tag(value: string | null, rowVersion: string): string { need(value === `"${rowVersion}"`); return value; }
+
+export function parseRunDetail(value: unknown, runId: string, etag: string | null): RunDetailResponse {
+  const { row, meta } = recordEnvelope(value);
+  const extra = ['counts', 'attempts', 'latestControl', 'sourceRevisions', 'inputArtifactIds'];
+  need(extra.every((key) => Object.hasOwn(row, key)));
+  const summary = runSummary(Object.fromEntries(Object.entries(row).filter(([key]) => !extra.includes(key))));
+  need(summary.runId === runId);
+  let counts: RunDetail['counts'] = null;
+  if (row.counts !== null) {
+    const entries = object(row.counts); need(Object.keys(entries).every((key) => member(RUN_COUNT_KEYS, key)));
+    counts = Object.fromEntries(Object.entries(entries).map(([key, count]) => [key, version(count)]));
+  }
+  const attempts = object(row.attempts); fields(attempts, ['count', 'currentAttemptId']);
+  const count = version(attempts.count); need(BigInt(count) <= 20n);
+  need(Array.isArray(row.sourceRevisions) && row.sourceRevisions.length <= (summary.productId === 'content-intelligence' ? 8 : 32));
+  let previous = '';
+  const sourceRevisions = row.sourceRevisions.map((item) => {
+    const source = object(item); fields(source, ['sourceId', 'revision']);
+    need(isSourceId(source.sourceId) && previous < source.sourceId); previous = source.sourceId;
+    need(typeof source.revision === 'number' && Number.isInteger(source.revision) && source.revision >= 1 && source.revision <= 1000);
+    return { sourceId: source.sourceId, revision: source.revision };
+  });
+  need(Array.isArray(row.inputArtifactIds) && row.inputArtifactIds.length <= 129 && row.inputArtifactIds.every(isManagementId));
+  return { apiVersion: 1, meta, etag: tag(etag, summary.rowVersion), data: { ...summary, counts,
+    attempts: { count, currentAttemptId: nullableId(attempts.currentAttemptId) }, sourceRevisions, inputArtifactIds: row.inputArtifactIds,
+    latestControl: row.latestControl === null ? null : latestControl(row.latestControl) } };
+}
+export function parseAttempts(value: unknown, query: RevisionQuery = {}): ManagementPage<RunAttempt> {
+  let previous = 0; const ids = new Set<string>();
+  return parsePage(value, query, (item) => {
+    const row = object(item); fields(row, ['attemptId', 'attemptNo', 'kind', 'state', 'startedAt', 'finishedAt', 'outcomeCode', 'stageCount']);
+    need(isManagementId(row.attemptId) && !ids.has(row.attemptId)); ids.add(row.attemptId);
+    need(typeof row.attemptNo === 'number' && Number.isInteger(row.attemptNo) && row.attemptNo > previous && row.attemptNo <= 20); previous = row.attemptNo;
+    need((row.kind === 'EXECUTE' || row.kind === 'RECONCILE') && member(ATTEMPT_STATES, row.state));
+    need(['CLAIMED', 'RUNNING'].includes(row.state) || row.finishedAt !== null);
+    return { attemptId: row.attemptId, attemptNo: row.attemptNo, kind: row.kind, state: row.state, startedAt: timestamp(row.startedAt),
+      finishedAt: nullableTime(row.finishedAt), outcomeCode: publicCode(row.outcomeCode), stageCount: version(row.stageCount) };
+  });
+}
+export function parseEvents(value: unknown, query: RevisionQuery = {}): ManagementPage<AuditEvent> {
+  let previous = 0n;
+  return parsePage(value, query, (item) => {
+    const row = object(item); fields(row, ['eventSeq', 'timestamp', 'action', 'beforeState', 'afterState', 'code', 'beforeVersion', 'afterVersion', 'context']);
+    const eventSeq = version(row.eventSeq); need(BigInt(eventSeq) > previous); previous = BigInt(eventSeq);
+    need(member(AUDIT_ACTIONS, row.action));
+    need(row.beforeState === null || member(AUDIT_STATES, row.beforeState)); need(row.afterState === null || member(AUDIT_STATES, row.afterState));
+    const context = object(row.context); fields(context, ['attemptId', 'controlId']);
+    return { eventSeq, timestamp: timestamp(row.timestamp), action: row.action, beforeState: row.beforeState, afterState: row.afterState,
+      code: publicCode(row.code), beforeVersion: row.beforeVersion === null ? null : version(row.beforeVersion), afterVersion: row.afterVersion === null ? null : version(row.afterVersion),
+      context: { attemptId: nullableId(context.attemptId), controlId: nullableId(context.controlId) } };
+  });
+}
+export function parseControl(value: unknown, runId: string, controlId: string, etag: string | null): ControlResponse {
+  const { row, meta } = recordEnvelope(value);
+  need(Object.hasOwn(row, 'runId') && row.runId === runId && Object.hasOwn(row, 'runVersion'));
+  const summary = latestControl(Object.fromEntries(Object.entries(row).filter(([key]) => !['runId', 'runVersion'].includes(key))));
+  need(summary.controlId === controlId);
+  return { apiVersion: 1, meta, etag: tag(etag, summary.rowVersion), data: { ...summary, runId, runVersion: version(row.runVersion) } };
 }
 
 const failures: Record<number, { kind: ManagementErrorKind; code: string }> = {
@@ -307,4 +418,21 @@ export async function fetchRevisions(identity: SourceIdentity, query: RevisionQu
 }
 export async function fetchRuns(query: RunsQuery, signal: AbortSignal): Promise<RunsPage> {
   return read(`/api/management/v1/runs?${runsParameters(query)}`, signal, (body) => parseRuns(body, query));
+}
+function runPath(runId: string): string {
+  if (!isManagementId(runId)) throw new ManagementError('invalid-request');
+  return `/api/management/v1/runs/${runId}`;
+}
+export async function fetchRunDetail(runId: string, signal: AbortSignal): Promise<RunDetailResponse> {
+  return read(runPath(runId), signal, (body, response) => parseRunDetail(body, runId, response.headers.get('ETag')));
+}
+export async function fetchAttempts(runId: string, query: RevisionQuery, signal: AbortSignal): Promise<ManagementPage<RunAttempt>> {
+  return read(`${runPath(runId)}/attempts?${parameters(query)}`, signal, (body) => parseAttempts(body, query));
+}
+export async function fetchEvents(runId: string, query: RevisionQuery, signal: AbortSignal): Promise<ManagementPage<AuditEvent>> {
+  return read(`${runPath(runId)}/events?${parameters(query)}`, signal, (body) => parseEvents(body, query));
+}
+export async function fetchControl(runId: string, controlId: string, signal: AbortSignal): Promise<ControlResponse> {
+  if (!isManagementId(controlId)) throw new ManagementError('invalid-request');
+  return read(`${runPath(runId)}/controls/${controlId}`, signal, (body, response) => parseControl(body, runId, controlId, response.headers.get('ETag')));
 }

@@ -6,8 +6,8 @@ import type { ExecutionFilters } from '../navigation';
 export const RUN_CURSOR_HISTORY_LIMIT = 20;
 type Result = { key: string } & ({ status: 'ready'; page: RunsPage } | { status: 'error'; error: ManagementError });
 
-/** Mounted only on Executions. Retain at most 20 cursor positions, and just one result page. */
-export function useRuns(query: ExecutionFilters) {
+/** Fetch only while Executions is visible; keep cursor context during run inspection. Retain at most 20 cursor positions, and just one result page. */
+export function useRuns(query: ExecutionFilters, active = true) {
   const [state, setState] = useState<{ cursors: (string | undefined)[]; firstPage: number; refresh: number }>({
     cursors: [undefined], firstPage: 1, refresh: 0,
   });
@@ -15,6 +15,7 @@ export function useRuns(query: ExecutionFilters) {
   const { cursors } = state, cursor = cursors.at(-1);
   const key = JSON.stringify([query, cursor, state.refresh]);
   useEffect(() => {
+    if (!active) return;
     const controller = new AbortController(); let current = true;
     void fetchRuns({ ...query, ...(cursor === undefined ? {} : { cursor }) }, controller.signal).then((page) => {
       if (!current || controller.signal.aborted) return;
@@ -24,8 +25,8 @@ export function useRuns(query: ExecutionFilters) {
       if (!current || controller.signal.aborted) return;
       setResult({ key, status: 'error', error: error instanceof ManagementError ? error : new ManagementError('network') });
     });
-    return () => { current = false; controller.abort(); };
-  }, [query, cursor, key, cursors]);
+    return () => { current = false; controller.abort(); setResult(null); };
+  }, [active, query, cursor, key, cursors]);
 
   const current = result?.key === key ? result : null;
   function next() {

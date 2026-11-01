@@ -338,3 +338,12 @@ tbody tr:hover { background: #f9fbf8; }
 @media (max-width: 760px) {
   .execution-filters input { width: 100%; }
 }
+
+.inspection-note { font-size: 12px; line-height: 1.8; color: #435d62; margin: 16px 0; overflow-wrap: anywhere; }
+.inspection-note time { display: inline-block; vertical-align: top; margin-left: 8px; }
+.inspection-id { display: block; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; max-width: 100%; }
+.inspection-references { padding-left: 20px; margin: 16px 0; font-size: 12px; line-height: 2; overflow-wrap: anywhere; }
+.history-limit { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 12px; margin: 18px 0; }
+.history-limit select { width: 100px; }
+.audit-list h3 code { font-size: 12px; overflow-wrap: anywhere; }
+.source-detail-panel > h3, .source-detail-panel > h4 { margin-top: 24px; }
