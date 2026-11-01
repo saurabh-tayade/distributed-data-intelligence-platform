@@ -37,7 +37,7 @@ Vite retains the browser Host header; an unapproved UI authority is rejected eve
 Preview uses port 4173 and needs its own approved origin. No CORS/security bypass, backend
 change or new dependency is introduced. Operations can work without a configured Analytics
 publication. Source details/revisions extend this slice in F2a.2 below; execution history
-follows in F2b.1. Mutations, individual run inspection, imports and recovery actions remain unavailable; enabled admission never implies
+follows in F2b.1 and run inspection in F2b.2. Mutations, imports and recovery actions remain unavailable; enabled admission never implies
 ordinary Content dispatch is active.
 
 The management client uses its own typed envelope, bounded parsers and safe errors, separately
@@ -143,8 +143,8 @@ Analytics selection survives and narrow-screen identifiers wrap without hiding c
 Open **Operations → Executions**, or `#/operations/executions`. Sources and Executions share
 the existing Operations navigation; Analytics filters/publication selection and Sources list
 context remain intact. **View executions for this source** on Source Detail opens a fresh
-first page filtered by the exact composite product/source identity. No Run Detail or artifact
-record links are offered yet; identifiers remain selectable text.
+first page filtered by the exact composite product/source identity. F2b.2 below adds Run Detail
+links; artifact identifiers remain selectable text without invented record destinations.
 
 Execution history consumes only `GET /api/management/v1/runs` from the existing
 [RunController](../services/content-api/src/main/java/platform/contentapi/management/RunController.java)
@@ -212,10 +212,91 @@ refresh and reset. Follow a Source Detail execution link and use browser history
 filters. Exercise a rejected/expired cursor and unavailable API; check keyboard focus and
 narrow-screen table scrolling with configured local fixtures.
 
-F2b.2 should add working run-detail links only with `GET /runs/{id}` (retaining its ETag),
-independent bounded attempts/events panels and explicit current-run versus attempt states.
-Preserve event sequence order and frozen revision/input references. Active-run polling belongs
-there; named-stage timelines and action controls remain outside this milestone.
+F2b.2 below adds run-detail links, independent attempts/events/control reads and visible
+active-run polling. Named-stage records and action controls remain deferred.
+
+## E5-F2b.2 — Run inspection, attempts and audit events
+
+Select a run ID in Execution History, or open `#/operations/executions/<canonical-run-uuid>`.
+The existing four execution-filter hash parameters may accompany this route for return
+navigation. Back/Forward and **Back to Executions** preserve the list's filters and cursor
+position while the execution workspace stays mounted. The hidden list cancels reads and
+clears obsolete rows; returning rereads the retained position. Reloading starts a new list
+session. Invalid UUIDs, unknown paths and unsupported query parameters use the navigation
+fallback. Analytics state and Sources/revision navigation remain independent.
+
+All paths below start with `/api/management/v1`; these are existing GET contracts:
+
+| Panel | Endpoint and behavior |
+| --- | --- |
+| Run record | `/runs/{runId}`: summary plus safe decimal-string counts, captured source revisions/input artifact IDs, attempt count/current identity and latest control reference. Retains the quoted run row-version ETag. |
+| Attempts | `/runs/{runId}/attempts?limit=20[&cursor=…]`: ascending attempt number; separate EXECUTE and RECONCILE records with attempt-domain state, times, outcome and exact stage count. The database bounds attempt numbers to 1–20. |
+| Audit events | `/runs/{runId}/events?limit=20[&cursor=…]`: ascending decimal event sequence, timestamp, public action/classification, before/after states and versions, nullable attempt/control context. BigInt comparisons preserve sequence values beyond JavaScript's safe integer range. |
+| Latest control receipt | `/runs/{runId}/controls/{controlId}`: control type/state/reason, times, its row version and separately observed `runVersion`. Retains its own ETag, never substituting it for the run ETag. |
+
+The [RunHistoryRepository](../services/content-api/src/main/java/platform/contentapi/management/RunHistoryRepository.java)
+and [ControlRepository](../services/content-api/src/main/java/platform/contentapi/management/ControlRepository.java)
+are the wire references. Clients reject unknown/private fields, unsupported enum values,
+malformed envelopes/identities, numeric replacements for decimal strings and mismatched ETags.
+Captured sources remain limited to 8 Content / 32 Reliability; input references to 129.
+Repeated input UUIDs are preserved because different roles can reference the same artifact.
+These references do not expose full frozen configurations or artifact roles/details.
+
+Run, attempt, audit and control states remain separate. Audit before/after states can describe
+attempt, stage, control or coordinator transitions as well as runs. STAGE_* events have no
+named stage field; no stage names, durations, process identities or commands are inferred.
+Stage count never expands into a fabricated timeline. Captured source revisions are not
+replaced by current source configuration. Result `VERIFIED_AT_EXECUTION` remains historical;
+no current artifact requalification or Analytics activation occurs.
+
+Attempts and audit events load, fail, retry and page independently of the run record and each
+other. Both default to 20 rows, offer 5/10/20/50/100 and enforce the API's 1–100 bound. Each
+retains at most 20 cursor positions and one result page. Refresh/page-size changes start a
+new high-water traversal; Retry rereads the failed position. Rejected/expired cursors offer
+an explicit first-page restart. Paging never merges responses, invents totals or automatically
+loads the complete history. A run refresh does not refresh or merge these historical pages.
+
+Only visible QUEUED/RUNNING/CANCEL_REQUESTED run records automatically refresh, five seconds
+after the preceding read settles. There is at most one in-flight run read. Hidden documents
+cancel timers and invalidate the current transport; returning waits for that transport to
+settle before rereading an active/unknown record. Navigation/unmount cancels all panels.
+SUCCEEDED/FAILED/CANCELLED stop automatic reads. PAUSED and RECOVERY_REQUIRED explicitly
+request operator attention and remain manual-only, including visibility changes.
+
+Transient network/service failures use 10/20/30-second capped backoff while active or before
+the first successful classification. Permanent boundary/not-found/malformed responses require
+manual retry. A failed refresh retaining a successful same-run record prominently marks it
+**stale** and displays the last successful read time. Safe public codes, correlation IDs and
+retryability guidance remain visible; raw server messages and diagnostics are never rendered.
+
+The latest control receipt loads only when its reference is known. A changed control ID or
+row version in a refreshed run starts a new lookup; otherwise **Refresh control receipt**
+rereads it explicitly. Control failures leave the run and histories visible. REQUESTED means
+intent, not completed recovery; APPLIED/TOO_LATE/REJECTED are receipt states, not run outcomes.
+Historical CANCEL/RETRY/RECONCILE/RESUME types can be inspected without executable buttons.
+No mutations, automatic recovery or Content dispatch activation are introduced. The API role,
+approved local Host/Origin boundary and Vite proxy setup above are unchanged.
+
+Local validation on Node.js **24.22.1** passes typecheck, lint, production build and **571 tests
+in 19 files**: all 447 prior regressions plus 124 new contract, panel, cursor and deterministic
+polling/race tests. The existing 500 kB warning remains; the main chunk measures **676.28 kB
+minified / 197.41 kB gzip**. Markdown/link/hygiene and whitespace checks also pass.
+The default local API was unreachable from the workspace, so live browser/API, responsive
+visual/screen-reader and hosted CI acceptance remain pending. No Spark, PostgreSQL recovery
+or full backend integration suites were run.
+
+Suggested browser acceptance with a configured local API: open a filtered second execution
+page, inspect a run and return using both the link and browser history. Inspect an original
+and reconciliation attempt, page audit events, refresh each history, and inspect a REQUESTED
+then applied receipt. Verify a visible active run refreshes and stops at terminal state; hide
+the tab and confirm reads suspend. Exercise an expired cursor, partial panel failures and a
+failed refresh with its stale timestamp. Repeat with Reliability, PAUSED and RECOVERY_REQUIRED
+records; check keyboard focus, narrow-screen scrolling and unchanged Analytics selection.
+
+Next: complete read-only browser acceptance, then scope F3.1 source mutations against the
+existing capabilities/catalog and source ETag/idempotency contracts. Run/recovery actions,
+artifact discovery, full frozen-selection inspection and named-stage records remain separately
+gated work; this milestone does not make those capabilities executable.
 
 ## Acceptance and design
 

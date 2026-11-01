@@ -42,7 +42,7 @@ describe('read-only execution history', () => {
     expect(historyRow().getByText('Not available')).toBeVisible();
     expect(screen.queryByRole('button', { name: /run now|submit run|cancel|retry run|resume|recover/i })).not.toBeInTheDocument();
     expect(screen.getByRole('region', { name: /Execution history table/ })).toHaveAttribute('tabindex', '0');
-    expect(screen.queryByRole('link', { name: new RegExp(run().runId) })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: run().runId })).toHaveAttribute('href', '#/operations/executions/' + run().runId);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
@@ -55,7 +55,8 @@ describe('read-only execution history', () => {
     expect(row.getByText(succeeded.result!.artifactId)).toBeVisible(); expect(row.getByText(succeeded.result!.nativeFingerprint)).toBeVisible();
     expect(row.getByText('12:39:59.987654 UTC').closest('time')).toHaveAttribute('datetime', succeeded.result!.verifiedAt);
     expect(row.getByText('12:40:00.123456 UTC').closest('time')).toHaveAttribute('datetime', succeeded.finishedAt);
-    expect(row.queryByRole('link')).not.toBeInTheDocument();
+    expect(row.getAllByRole('link')).toHaveLength(1);
+    expect(row.queryByRole('link', { name: succeeded.result!.artifactId })).not.toBeInTheDocument();
     expect(historyRow(failed.runId).getByText('INPUT_INVALID')).toBeVisible();
     expect(historyRow(failed.runId).getByText('Retry eligibility (recorded): true')).toBeVisible();
     expect(historyRow(failed.runId).getByText('No result recorded')).toBeVisible(); expect(screen.queryByRole('alert')).not.toBeInTheDocument();
@@ -220,7 +221,7 @@ describe('Operations navigation and filter URLs', () => {
   });
 
   it.each(['?productId=unknown', '?sourceId=UPPER', '?sourceId=%20alpha%20', '?state=waiting', '?limit=101', '?limit=01',
-    '?sourceId=a&sourceId=b', '?cursor=invented', '?pipeline=RELIABILITY_V2', '/40000000-0000-4000-8000-000000000001'])('rejects unsupported or malformed route %s safely', (suffix) => {
+    '?sourceId=a&sourceId=b', '?cursor=invented', '?pipeline=RELIABILITY_V2', '/invalid-run-identity'])('rejects unsupported or malformed route %s safely', (suffix) => {
     window.history.replaceState(null, '', '/#/operations/executions' + suffix); const fetch = vi.fn(); vi.stubGlobal('fetch', fetch); render(<App />);
     expect(screen.getByRole('heading', { name: 'Page not found' })).toBeVisible(); expect(fetch).not.toHaveBeenCalled();
   });

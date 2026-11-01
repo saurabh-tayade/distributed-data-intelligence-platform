@@ -1,8 +1,9 @@
 import { useState } from 'react';
+import { PublicationResult } from './PublicationResult';
 import { Timestamp } from '../components/Timestamp';
 import { isSourceId, RUN_STATES } from '../managementApi';
 import type { ManagementErrorKind, ProductId, RunState } from '../managementApi';
-import { executionsHref } from '../navigation';
+import { executionsHref, runHref } from '../navigation';
 import type { ExecutionFilters } from '../navigation';
 import { ManagementErrorDetails } from './ManagementErrorDetails';
 import { productLabel } from './SourceList';
@@ -20,8 +21,8 @@ const messages: Record<ManagementErrorKind, string> = {
 };
 const draftFrom = (query: ExecutionFilters) => ({ productId: query.productId ?? '', sourceId: query.sourceId ?? '', state: query.state ?? '', limit: query.limit ?? 20 });
 
-export function RunList({ query }: { query: ExecutionFilters }) {
-  const model = useRuns(query);
+export function RunList({ query, active = true }: { query: ExecutionFilters; active?: boolean }) {
+  const model = useRuns(query, active);
   const [draft, setDraft] = useState(draftFrom(query));
   const [sourceInvalid, setSourceInvalid] = useState(false);
   const page = model.current?.status === 'ready' ? model.current.page : null;
@@ -88,26 +89,17 @@ export function RunList({ query }: { query: ExecutionFilters }) {
         <div className="panel-heading"><h2 id="executions-title">Execution history</h2><span className="row-badge">{page.data.length} returned on this page</span></div>
         {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Keyboard users must be able to scroll the table. */}
         <div className="table-scroll" role="region" aria-label="Execution history table; scroll horizontally on small screens" tabIndex={0}>
-          <table className="execution-table"><caption className="visually-hidden">Persisted run summaries in server submission order, newest first. Times are UTC. Run identifiers are read-only; individual run inspection is not yet available.</caption>
+          <table className="execution-table"><caption className="visually-hidden">Persisted run summaries in server submission order, newest first. Times are UTC. Run identifiers open read-only run inspection.</caption>
             <thead><tr><th scope="col">Execution</th><th scope="col">Run state / current stage</th><th scope="col">Persisted outcome</th>
               <th scope="col">Requested (UTC)</th><th scope="col">Finished (UTC)</th><th scope="col">Result at execution</th></tr></thead>
             <tbody>{page.data.map((run) => <tr key={run.runId}>
-              <th scope="row"><code className="run-id">{run.runId}</code><span className="run-metadata">{productLabel(run.productId)}</span>
+              <th scope="row"><a href={runHref(run.runId, query)}><code className="run-id">{run.runId}</code></a><span className="run-metadata">{productLabel(run.productId)}</span>
                 <code className="run-metadata">{run.pipeline}</code>{run.dataOrigin && <span className="run-metadata">Synthetic data origin</span>}
                 <span className="run-metadata">Row version: <code>{run.rowVersion}</code></span></th>
               <td><span className="run-state">{run.state}</span><span className="run-metadata">Current stage: {run.currentStage ?? 'Not recorded'}</span></td>
               <td><code>{run.outcomeCode ?? 'No outcome recorded'}</code><span className="run-metadata">Retry eligibility (recorded): {run.retryEligibility ? 'true' : 'false'}</span></td>
               <td><Timestamp value={run.requestedAt} /></td><td><Timestamp value={run.finishedAt} /></td>
-              <td>{run.result === null ? <span>No result recorded</span> : <>
-                <strong>VERIFIED_AT_EXECUTION</strong><span className="run-metadata">Historical verification only</span>
-                <details className="run-result"><summary>Recorded result metadata</summary><dl>
-                  <dt>Artifact ID</dt><dd><code>{run.result.artifactId}</code></dd>
-                  <dt>Native fingerprint</dt><dd><code>{run.result.nativeFingerprint}</code></dd>
-                  <dt>Product contract version</dt><dd>{run.result.productContractVersion}</dd>
-                  <dt>Processor revision</dt><dd>{run.result.processorRevision}</dd>
-                  <dt>Verified at (UTC)</dt><dd><Timestamp value={run.result.verifiedAt} /></dd>
-                </dl></details>
-              </>}</td>
+              <td><PublicationResult result={run.result} /></td>
             </tr>)}</tbody>
           </table>
         </div>
