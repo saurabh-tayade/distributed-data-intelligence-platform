@@ -52,7 +52,10 @@ def selection(a):
 
 
 def capture(a, binding, previous=None):
-    """Explicit selected namespace only, including native-ignored hidden bookkeeping."""
+    """Capture the exact selected namespace, including native-ignored hidden bookkeeping.
+
+    MAX_ENTRIES counts its root and every file/directory once; ancestor guards are excluded.
+    """
     root = Path(binding['root'])
     p.need(root.is_absolute() and root == root.resolve(strict=True), 'PATH_UNSAFE')
     r = p.info(root, True, previous is not None)
@@ -68,10 +71,11 @@ def capture(a, binding, previous=None):
     previous_files = {f['path']: f for f in previous['files']} if previous else {}
     total, analytical = 0, {'accepted': 0, 'rejected': 0}
     completion = None
+    entries = 1  # Namespace root; ancestor guards are separate identity checks.
 
     def visit(directory, dataset=None, depth=0, bookkeeping=False):
-        nonlocal total, completion
-        p.need(depth <= 6 and len(files) + len(directories) < MAX_ENTRIES, 'RESOURCE_LIMIT')
+        nonlocal total, completion, entries
+        p.need(depth <= 6, 'RESOURCE_LIMIT')
         relative = directory.relative_to(namespace).as_posix()
         before = p.info(directory, True, previous is not None)
         if relative in previous_dirs:p.need(p.stamp(before) == previous_dirs[relative]['stamp'], 'EVIDENCE_CHANGED')
@@ -79,7 +83,9 @@ def capture(a, binding, previous=None):
             with os.scandir(directory) as stream:
                 names = []
                 for entry in stream:
-                    p.need(len(names) + len(files) + len(directories) < MAX_ENTRIES, 'RESOURCE_LIMIT')
+                    # Charge every child once, including siblings still awaiting traversal.
+                    p.need(entries < MAX_ENTRIES, 'RESOURCE_LIMIT')
+                    entries += 1
                     names.append(entry.name)
             names.sort(key=lambda n: n.encode('utf-8'))
         except FileNotFoundError:
