@@ -1,6 +1,7 @@
 import type { ProductId } from '../managementApi';
 import { Timestamp } from '../components/Timestamp';
 import { useSources } from './useSources';
+import { sourceHref } from '../navigation';
 
 export const productLabel = (product: ProductId) => product === 'content-intelligence' ? 'Content Intelligence' : 'Application Reliability';
 
@@ -53,7 +54,7 @@ export function SourceList({ active }: { active: boolean }) {
             <thead><tr><th scope="col">Source</th><th scope="col">Product</th><th scope="col">Admission</th><th scope="col">Revision</th>
               <th scope="col">Row version</th><th scope="col">Updated (UTC)</th><th scope="col">Created (UTC)</th><th scope="col">Configuration SHA-256</th></tr></thead>
             <tbody>{page.data.map((source) => <tr key={`${source.productId}:${source.sourceId}`}>
-              <th scope="row"><span className="source-name">{source.displayName}</span><code className="source-id">{source.sourceId}</code></th>
+              <th scope="row"><a href={sourceHref(source)}><span className="source-name">{source.displayName}</span>{' '}<code className="source-id">{source.sourceId}</code></a></th>
               <td>{productLabel(source.productId)}</td><td><span className={`admission-status ${source.enabled ? 'enabled' : 'disabled'}`}>{source.enabled ? 'Enabled' : 'Disabled'}</span></td>
               <td>{source.currentRevision}</td><td><code>{source.rowVersion}</code></td>
               <td><Timestamp value={source.updatedAt} /></td><td><Timestamp value={source.createdAt} /></td><td><code className="config-digest">{source.configSha256}</code></td>
