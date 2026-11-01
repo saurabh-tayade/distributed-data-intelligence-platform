@@ -24,6 +24,6 @@ export function AppShell({ children, section = 'Publisher analytics', area = 'an
     </nav>
     <main id="main" tabIndex={-1}>{children}</main>
     <footer className="site-footer"><span>Content Intelligence <span aria-hidden="true">/</span> {area === 'analytics' ? 'Analytics' : area === 'operations' ? 'Operations' : 'DDIP'} workspace</span>
-      <span>{area === 'analytics' ? 'One publication. A consistent view.' : area === 'operations' ? 'Registered sources. Read-only inspection.' : 'Analytics and Operations.'}</span></footer>
+      <span>{area === 'analytics' ? 'One publication. A consistent view.' : area === 'operations' ? 'Sources and executions. Read-only inspection.' : 'Analytics and Operations.'}</span></footer>
   </>;
 }

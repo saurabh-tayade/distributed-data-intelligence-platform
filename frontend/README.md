@@ -36,8 +36,8 @@ These are flags for an already configured API invocation, not a database/bootstr
 Vite retains the browser Host header; an unapproved UI authority is rejected even on GET.
 Preview uses port 4173 and needs its own approved origin. No CORS/security bypass, backend
 change or new dependency is introduced. Operations can work without a configured Analytics
-publication. Source details/revisions extend this slice in F2a.2 below. Mutations, execution
-pages, imports and recovery actions remain unavailable; enabled admission never implies
+publication. Source details/revisions extend this slice in F2a.2 below; execution history
+follows in F2b.1. Mutations, individual run inspection, imports and recovery actions remain unavailable; enabled admission never implies
 ordinary Content dispatch is active.
 
 The management client uses its own typed envelope, bounded parsers and safe errors, separately
@@ -118,9 +118,9 @@ the UI claims no source health, approval, ingestion success or Content activatio
 
 The API role, approved Host/Origin configuration and relative Vite proxy requests are
 unchanged from F2a.1 above. This milestone adds no backend contract, dependency, action or
-execution/artifact link. The [F1 audit](../docs/operations/e5-f1-operations-ui-audit.md) remains
-the unchanged implementation reference. F2b.1 should add the bounded execution list using
-the existing runs API before related-execution links are offered.
+execution/artifact link in F2a.2. The [F1 audit](../docs/operations/e5-f1-operations-ui-audit.md)
+remains the unchanged implementation reference. F2b.1 below adds the bounded execution
+list and the related-executions link; artifact links remain deferred.
 
 Local validation uses Node.js **24.22.1**. Typecheck, ESLint, production build and **334 tests**
 (256 existing Analytics/Operations regressions and 78 detail/revision tests) pass. The new
@@ -137,6 +137,85 @@ a source by keyboard, inspect current metadata and an expanded historical config
 page revisions, refresh, and return with the link and browser history. Repeat for a disabled
 source and both products; exercise a missing source and independent panel failures. Confirm
 Analytics selection survives and narrow-screen identifiers wrap without hiding controls.
+
+## E5-F2b.1 — Read-only execution history
+
+Open **Operations → Executions**, or `#/operations/executions`. Sources and Executions share
+the existing Operations navigation; Analytics filters/publication selection and Sources list
+context remain intact. **View executions for this source** on Source Detail opens a fresh
+first page filtered by the exact composite product/source identity. No Run Detail or artifact
+record links are offered yet; identifiers remain selectable text.
+
+Execution history consumes only `GET /api/management/v1/runs` from the existing
+[RunController](../services/content-api/src/main/java/platform/contentapi/management/RunController.java)
+and [RunHistoryRepository](../services/content-api/src/main/java/platform/contentapi/management/RunHistoryRepository.java).
+The typed client validates the management v1 envelope, exact summary/result fields, UUIDs,
+lowercase fingerprints, decimal-string row versions, nullable stage/outcome/timestamps/results,
+and the backend's public states, stages and outcome-code allowlists. Reliability responses
+always include `dataOrigin: "synthetic"` in the current implementation. Content result contract
+and processor versions are 1; Reliability uses 2. Results are historical
+`VERIFIED_AT_EXECUTION` records, not current re-verification or Analytics activation.
+
+Use **Apply filters** to submit product, optional exact source ID, run state and page size.
+Draft changes do not fetch on each keystroke; the applied-filter summary identifies the query
+currently displayed. Invalid source IDs remain unchanged and show a validation error: no
+trimming, case conversion or silent truncation occurs. **Reset filters** restores all products,
+sources and states at 20 rows. All eight backend states are supported: QUEUED, RUNNING, PAUSED,
+RECOVERY_REQUIRED, SUCCEEDED, FAILED, CANCEL_REQUESTED and CANCELLED. No date, free-text,
+pipeline or ordering filters are added. The source filter matches selected run sources; it
+does not establish complete retained-artifact provenance.
+
+Only `productId`, `sourceId`, `state` and `limit` appear in execution hash query parameters,
+for example `#/operations/executions?productId=content-intelligence&sourceId=demo-feed`.
+Direct entry and browser Back/Forward restore applied filters and start fresh first pages.
+Invalid/duplicate/unsupported route parameters use the safe navigation fallback. The view
+offers 20/50/100 rows; a direct URL can use any valid backend limit from 1 through 100.
+Cursors stay in memory. Opening Executions from its navigation link opens the unfiltered
+first page; returning through browser history restores that entry's filters.
+
+Previous/Next fetch one server page explicitly, retaining at most **20 cursor positions**
+and one result page. Forward traversal continues beyond that bound; Previous stops at the
+oldest retained position and the UI explains how to restart. There are no inferred totals,
+automatic full-history downloads or polling. Filter/page-size changes, **Refresh executions**
+and reapplying filters start a fresh traversal. Retry rereads the failed position; an invalid
+or expired cursor offers **Start from first execution page**. Signed run cursors bind endpoint,
+filters and submission order, expire after 24 hours, and use high-water membership. Mutable
+fields/filter membership can change between pages. Server submission-sequence order is
+preserved; neither requested timestamps nor UUIDs can reconstruct that private ordering key.
+
+The table shows persisted state, current stage, outcome, exact versions, UTC timing and
+historical result metadata. QUEUED is waiting, PAUSED is distinct from CANCELLED, and
+RECOVERY_REQUIRED is distinct from FAILED. Retry eligibility grants no permission to retry;
+an absent result alone means no recorded result. Historical Content records do not enable
+ordinary Content dispatch. No submission, cancellation, retry, recovery or resume action is
+implemented. Request errors remain separate from run outcomes and expose only fixed local
+copy plus validated public codes, correlation IDs and retryability guidance.
+
+Each traversal uses AbortController plus request-key/cleanup guards. Navigation unmounts the
+execution view and invalidates outstanding requests; changing applied filters remounts it
+with an empty traversal. Failed refreshes clear old rows. A shared error-metadata component
+keeps Sources, revisions and execution read errors consistent. The API role, PostgreSQL setup,
+approved Host/Origin allowlist and same-origin Vite proxy requirements above are unchanged.
+
+Local Node.js **24.22.1** validation passes typecheck, lint, production build and **447 tests
+across 14 files**: all 334 existing Analytics/Operations regressions plus 113 execution
+contract, UI and bounded-cursor tests. Tests include independent outcomes/API errors,
+filter/history URLs, opaque paging, invalid cursors, bounded Previous history, refresh,
+rapid filter changes, ignored late responses and aborts. The existing 500 kB build warning
+remains; the main chunk measures **651.20 kB minified / 191.56 kB gzip**. The validation
+commands are listed above. Live API/browser and hosted CI acceptance remain pending: the
+default API at `127.0.0.1:8080` was unreachable. No Spark/PostgreSQL recovery/Docker suite was run.
+
+Suggested browser acceptance: switch Analytics → Sources → Executions; apply each filter,
+inspect a successful Reliability result and nullable queued record, page forward/back,
+refresh and reset. Follow a Source Detail execution link and use browser history to verify
+filters. Exercise a rejected/expired cursor and unavailable API; check keyboard focus and
+narrow-screen table scrolling with configured local fixtures.
+
+F2b.2 should add working run-detail links only with `GET /runs/{id}` (retaining its ETag),
+independent bounded attempts/events panels and explicit current-run versus attempt states.
+Preserve event sequence order and frozen revision/input references. Active-run polling belongs
+there; named-stage timelines and action controls remain outside this milestone.
 
 ## Acceptance and design
 

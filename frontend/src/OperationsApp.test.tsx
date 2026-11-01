@@ -301,7 +301,10 @@ describe('workspace navigation and independent Analytics session', () => {
     await user.tab(); expect(screen.getByRole('link', { name: 'Skip to operations' })).toHaveFocus();
     await user.keyboard('{Enter}'); expect(screen.getByRole('main')).toHaveFocus();
     expect(window.location.hash).toBe('#/operations/sources');
-    workspace('Operations').focus(); await user.tab(); expect(screen.getByRole('combobox', { name: 'Product' })).toHaveFocus();
+    workspace('Operations').focus(); await user.tab();
+    expect(within(screen.getByRole('navigation', { name: 'Operations views' })).getByRole('link', { name: 'Sources' })).toHaveFocus();
+    await user.tab(); expect(screen.getByRole('link', { name: 'Executions' })).toHaveFocus();
+    await user.tab(); expect(screen.getByRole('combobox', { name: 'Product' })).toHaveFocus();
   });
 
   it('handles unknown routes without fetching data and offers supported navigation', async () => {
