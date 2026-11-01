@@ -37,8 +37,9 @@ Vite retains the browser Host header; an unapproved UI authority is rejected eve
 Preview uses port 4173 and needs its own approved origin. No CORS/security bypass, backend
 change or new dependency is introduced. Operations can work without a configured Analytics
 publication. Source details/revisions extend this slice in F2a.2 below; execution history
-follows in F2b.1 and run inspection in F2b.2. Mutations, imports and recovery actions remain unavailable; enabled admission never implies
-ordinary Content dispatch is active.
+follows in F2b.1 and run inspection in F2b.2. Source mutations are added in F3.1 below;
+imports and recovery actions remain unavailable. Enabled admission never implies ordinary
+Content dispatch is active.
 
 The management client uses its own typed envelope, bounded parsers and safe errors, separately
 from Analytics publication validation. Loading, an empty catalog, filtered-empty results, local
@@ -92,7 +93,8 @@ The existing management API supplies two independent read-only panels:
 - `GET /api/management/v1/sources/{product}/{source}`: current identity, admission gate,
   revision, configuration fingerprint, UTC dates, exact decimal row version and fixed
   configuration references. The client retains the quoted decimal ETag and rejects missing
-  or mismatched tags. No conditional GET or mutation is performed.
+  or mismatched tags. The detail GET remains unconditional; F3.1 below uses its ETag for
+  explicitly reviewed source mutations.
 - `GET /api/management/v1/sources/{product}/{source}/revisions?limit=20[&cursor=…]`:
   immutable historical configurations in ascending server order. Expand a revision's
   configuration references to inspect its own profile, origin, endpoint/profile/storage IDs
@@ -297,6 +299,92 @@ Next: complete read-only browser acceptance, then scope F3.1 source mutations ag
 existing capabilities/catalog and source ETag/idempotency contracts. Run/recovery actions,
 artifact discovery, full frozen-selection inspection and named-stage records remain separately
 gated work; this milestone does not make those capabilities executable.
+
+## E5-F3.1 — Source management actions
+
+Open **Sources → Register source** (`#/operations/sources/new`), or expand **Source management
+actions** on an existing Source Detail. Review the exact configuration and original precondition,
+then explicitly confirm registration, an immutable revision, or enable/disable admission. Source
+identity is selected from reviewed references for the product; display names preserve whitespace
+and must be nonblank, at most 128 UTF-8 bytes, without control characters. No URL, credential,
+private path, run submission or recovery input is exposed. Disabling admission does not cancel
+active processing. A successful HTTP command never establishes ingestion, publication or
+ordinary Content dispatch.
+
+The client consumes the existing source contracts in
+[SourceController](../services/content-api/src/main/java/platform/contentapi/management/SourceController.java),
+[SourceCommands](../services/content-api/src/main/java/platform/contentapi/management/SourceCommands.java)
+and [ReviewedSourceCatalog](../services/content-api/src/main/java/platform/contentapi/management/ReviewedSourceCatalog.java):
+
+| Operation | Contract |
+| --- | --- |
+| Reviewed choices | `GET /api/management/v1/capabilities`; source-management scope, public reference IDs and fixed capacity bounds only. Empty or unavailable catalogs block configuration submission. |
+| Register | `POST /api/management/v1/sources` → 201; exact product/source/name/enabled/config body, no If-Match. Admission defaults off. |
+| New revision | `POST /api/management/v1/sources/{product}/{source}/revisions` → 200; name/config body and original source ETag in If-Match. |
+| Admission | `PUT /api/management/v1/sources/{product}/{source}/enabled` → 200; exactly `{ "enabled": boolean }` and original source ETag. This does not create a configuration revision. |
+
+Content uses `rss-atom-v1`/`publisher`, a reviewed feed endpoint and BRONZE storage reference,
+with a null registered-profile hash. Reliability uses `request-jsonl-v2` or `request-parquet-v1`,
+`synthetic` origin, a reviewed profile/hash tuple, BATCH storage and a null endpoint. Revision
+creation retains the exact existing profile; the backend rejects profile changes. Identical
+revision/admission requests can succeed without a new revision/version. Existing history stays
+immutable. Capabilities are available only when editing configuration, not fetched for ordinary
+read-only navigation or admission toggles; the server remains authoritative for catalog and
+installed binding validation.
+
+Each reviewed intent gets one random Idempotency-Key. Its exact serialized body, identity and
+original If-Match are retained in bounded per-tab session storage before transmission, under
+`ddip.source-intent.v1`. There is at most one unresolved source intent per tab. Duplicate submission
+is disabled. Navigation aborts/invalidates pending work, and reload never automatically sends it.
+An unknown outcome offers **Resolve same request**, replaying the original key/body/precondition;
+it does not permit editing or issuing a new key. Keep the tab and its session data until resolved:
+closing the tab or clearing storage loses this client receipt. Invalid/unavailable storage blocks
+source writes. An unsent review can be cancelled.
+
+Known 400/403/404/409/412/428/429 failures show fixed safe messages, public codes, correlation IDs
+and retryability guidance. Network, malformed/unrecognized responses and 5xx failures are treated
+as potentially committed. There is no automatic mutation retry. A 412/428 triggers a current-record
+GET; a new intent requires deliberate review after refresh. A 409 requires inspecting the current
+record before another intent. Failed reads keep the unresolved receipt. Saved command responses
+may be historical, so confirmed commands always reread the persisted source; a failed follow-up
+GET offers only a read retry. Successful confirmation refreshes source/history and starts a new
+Sources cursor traversal while retaining list filters. Explicit source refresh can discard an
+unreviewed revision draft; a retained intent never changes its original precondition.
+
+Local setup keeps the existing `api` role, PostgreSQL installation and exact approved Host/Origin
+configuration above. Mutations use relative same-origin requests through the unchanged Vite
+`/api/` proxy, JSON and `X-DDIP-Local-Request: 1`. The browser supplies Origin; do not add permissive
+CORS or override Host/Origin. Registration/revisions additionally require an existing operator-owned
+`DDIP_MANAGEMENT_CATALOG` and matching storage bindings for the isolated installation. See
+[operator reference setup](../services/content-api/README.md#operator-reference-setup). The UI
+cannot create catalog entries or storage bindings.
+
+F3.1 live mutation acceptance is **BLOCKED**: the inspected local environment has no configured
+`DDIP_MANAGEMENT_CATALOG`, no root `.env` catalog setting, no `local-data` directory and no discovered
+catalog/binding fixture files. No disposable mutation database or new fixture infrastructure was
+created, and no source HTTP mutation or Chrome mutation workflow was exercised. Frontend tests use
+mocked HTTP, not PostgreSQL. Populated Execution History, attempts/events/control receipts and active
+polling browser acceptance remain separately incomplete; the earlier
+[F2 read-only acceptance report](../docs/operations/e5-f2-read-only-acceptance.md) is unchanged.
+Hosted CI, browser layout and screen-reader acceptance are pending.
+
+Local Node.js **24.22.1** validation passes TypeScript, ESLint, production build and **642 tests
+across 21 files**: 571 existing Analytics/Operations regressions plus 71 source-action tests.
+Coverage includes both configuration variants, immutable revisions, admission confirmations,
+exact original ETags, stable ambiguous replay across reload, safe HTTP error classes, independent
+follow-up read failures, stale navigation, pending-request persistence and storage failures.
+`npm run check` passes Markdown/internal links and repository hygiene; `git diff --check` passes.
+The existing 500 kB bundle warning remains (main JavaScript **697.60 kB minified / 202.92 kB gzip**).
+No Spark, PostgreSQL recovery, Docker processing or hosted CI suite was run for this change.
+
+Smallest live follow-up: supply already reviewed catalog references and supported installation
+bindings, provision a disposable isolated database using documented tooling, and run only the API
+role through the approved proxy. In Chrome, register disabled Content and Reliability fixtures,
+create a changed-name revision, inspect current/history distinctions, enable then disable admission,
+and verify the persisted ETag/version changes. Review a stale ETag against a second operator's
+change and confirm that refresh requires deliberate review. Inspect network traffic for stable
+keys/original preconditions on explicit ambiguous replay. Do not seed records with direct SQL or
+start a worker to populate execution history. Tear down only the disposable resources.
 
 ## Acceptance and design
 

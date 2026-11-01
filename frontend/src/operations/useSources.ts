@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { fetchSources, ManagementError, SOURCE_PAGE_LIMIT } from '../managementApi';
 import type { ProductId, SourcesPage, SourcesQuery } from '../managementApi';
+import { SOURCE_CHANGED } from './sourceIntent';
 
 export interface SourceFilters { productId: ProductId | ''; enabled: '' | 'true' | 'false'; limit: number }
 type Result = { key: string } & ({ status: 'ready'; page: SourcesPage } | { status: 'error'; error: ManagementError });
@@ -13,6 +14,11 @@ export function useSources(active: boolean) {
   const [result, setResult] = useState<Result | null>(null);
   const { filters, cursors } = state, cursor = cursors.at(-1);
   const key = JSON.stringify([filters.productId, filters.enabled, filters.limit, cursor, state.refresh]);
+  useEffect(() => {
+    const changed = () => setState((old) => ({ ...old, cursors: [undefined], refresh: old.refresh + 1 }));
+    window.addEventListener(SOURCE_CHANGED, changed);
+    return () => window.removeEventListener(SOURCE_CHANGED, changed);
+  }, []);
   useEffect(() => {
     if (!active) return;
     const controller = new AbortController();
