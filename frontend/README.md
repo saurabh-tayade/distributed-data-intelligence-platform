@@ -2,6 +2,65 @@
 
 The React/TypeScript application provides Publisher Overview, Daily Activity, Data Quality and Article Explorer over the existing [M6.2/M6.4 Content API](../services/content-api/README.md). M6.5 adds the three analytical views without backend capabilities, direct Gold access or changes to the Python verification boundary. [Accepted ADR 0005](../docs/adr/0005-gold-consumer-integration.md) and the [analytical contracts](../docs/architecture/analytics-api-contracts.md) remain unchanged. The implementation is ready for the remaining browser acceptance and final M6 end-to-end closeout; M6 is not marked complete.
 
+## E5-F2a.1 — Operations foundation and Sources list
+
+The same application now has Analytics and Operations workspace links. Open
+`http://127.0.0.1:5173/#/operations/sources` for the read-only Sources list, or
+`#/analytics` for the existing dashboard. Empty hashes and existing analytical table anchors
+remain supported. Browser Back/Forward switches workspaces; unknown routes show a navigation
+fallback. Analytics filters and its publication pin survive workspace switches, including a
+latched publication-change error. Only the visible workspace fetches; a blocked Analytics
+session does not block Operations.
+
+The list calls only `GET /api/management/v1/sources`. It shows source/product identity,
+current revision, admission gate, exact decimal row version, configuration digest and UTC
+timestamps. Product/enabled filters and 20/50/100-row pages use opaque signed server cursors.
+Previous/Next fetch one page at a time; filter/page-size changes and Refresh sources start
+a fresh traversal. There are no invented totals or background polling. Rows are current
+projections, not a snapshot of mutable fields across all pages. Invalid/repeated cursors,
+out-of-scope or malformed rows fail closed; a rejected cursor offers an explicit restart.
+Obsolete responses cannot replace the current query, even if the transport ignores abort.
+
+Operations needs the existing local **`api` role**, compatible management PostgreSQL schema
+and configured installation; the default `analytics` role does not expose management routes.
+Use the existing [management setup](../services/content-api/README.md) and
+[F1 contract audit](../docs/operations/e5-f1-operations-ui-audit.md), adding the actual UI/API
+origins to the approved startup configuration. For the default development proxy:
+
+```text
+--ddip.role=api
+--ddip.management.origins=http://127.0.0.1:8080,http://127.0.0.1:5173
+```
+
+These are flags for an already configured API invocation, not a database/bootstrap command.
+Vite retains the browser Host header; an unapproved UI authority is rejected even on GET.
+Preview uses port 4173 and needs its own approved origin. No CORS/security bypass, backend
+change or new dependency is introduced. Operations can work without a configured Analytics
+publication. Mutations, source details/revisions, execution pages, imports and recovery actions
+are outside this slice; enabled admission never implies ordinary Content dispatch is active.
+
+The management client uses its own typed envelope, bounded parsers and safe errors, separately
+from Analytics publication validation. Loading, an empty catalog, filtered-empty results, local
+boundary rejection, management unavailability, network failure and invalid responses have distinct
+presentations. Only recognized public error codes and validated correlation IDs are displayed;
+server/proxy messages and private diagnostics are never rendered. Semantic tables, labeled filters,
+keyboard paging, area-specific skip links, route focus, horizontal overflow and responsive layout
+reuse the existing visual conventions. F1 remains an unchanged historical audit/planning artifact.
+
+F2a.1 local validation used Node.js **24.22.1** within the existing supported Node 24 range;
+the runtime/version files and dependency pins were not changed. Type checking, ESLint,
+**250 frontend tests** (184 existing plus 66 new), and production build passed. Tests use
+mocked HTTP responses and cover protocol rejection, exact values, composite source identity,
+paging/filter resets, cursor failures/cycles, late responses, StrictMode, workspace history,
+keyboard controls, Analytics pin isolation and existing analytical table anchors. The build
+retains the existing 500 kB chunk warning: the main chunk is now **621.49 kB minified /
+185.19 kB gzip**; no threshold was raised. Backend/Spark/Docker suites were not run.
+
+The browser inventory reported that its access host was unavailable. Live management API,
+desktop/narrow browser rendering and full screen-reader acceptance remain pending; mocked DOM
+tests are not those runtime checks. Repository Markdown/link/hygiene and whitespace checks
+are recorded with the implementation handoff. The owner handles commits, pushes and PR updates.
+
 ## Acceptance and design
 
 M6.5 acceptance, recorded before implementation: preserve all publisher tests and functionality; load only the active analytical view; pin one publication across views and permanently block results after a current-response identity mismatch until explicit reload. Daily/quality must use exact source and inclusive UTC ingestion-date filters. Article pages must come from the server, preserve order, reset on source changes and obey `hasMore` and offset bounds. Counters remain exact, distinct daily counts are never aggregated as global identities, and quality rates are never presented as percentages. Untrusted article metadata is rendered as text with explicit HTTP(S)-only navigation. Synthetic automated coverage and retained-data/browser evidence are recorded separately; M6 closeout remains a separate review.
@@ -33,7 +92,7 @@ Use **Node.js 24.15+ within major 24**; local checks used **24.19.0**, pinned in
 
 Versions, engines and peers were checked against npm registry metadata before installation on October 18, 2026, alongside the [Vite guide](https://vite.dev/guide/), [Recharts guide](https://recharts.github.io/en-US/guide/) and [Vitest guide](https://vitest.dev/guide/). TypeScript 7 and ESLint 10 were not selected because the current TypeScript/accessibility lint peers do not support them together. npm labels ESLint 9 deprecated; this is a deliberate development-tool compatibility limitation to revisit when the accessibility plugin supports ESLint 10. No forced peer overrides are used.
 
-There is no application Redux store, global state framework, UI framework, router, SSR, authentication infrastructure, external font or image service. Recharts may bring internal state dependencies transitively; application state remains React hooks. No additional runtime validation library is needed for this small fixed contract.
+There is no application Redux store, global state framework, UI framework, router dependency, SSR, authentication infrastructure, external font or image service. Recharts may bring internal state dependencies transitively; application state remains React hooks. No additional runtime validation library is needed for this small fixed contract.
 
 ## Local startup
 
