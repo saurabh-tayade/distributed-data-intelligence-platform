@@ -4,6 +4,7 @@ import type { ManagementError, SourceConfig, SourceIdentity } from '../managemen
 import { productLabel } from './SourceList';
 import { useSource } from './useSource';
 import { executionsHref } from '../navigation';
+import { SourceActions } from './SourceActions';
 
 function ReadError({ error, title, retry, restart }: {
   error: ManagementError; title: string; retry: () => void; restart?: (() => void) | undefined;
@@ -66,6 +67,8 @@ export function SourceDetail({ identity }: { identity: SourceIdentity }) {
         <h3>Current configuration references</h3><Configuration config={source.config} />
       </>}
     </section>
+
+    {model.detail?.status === 'ready' && <SourceActions source={model.detail.value} />}
 
     <section className="panel source-detail-panel" aria-labelledby="revisions-title" aria-busy={model.revisions === null}>
       <div className="panel-heading"><h2 id="revisions-title">Revision history</h2>

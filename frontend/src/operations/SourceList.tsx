@@ -16,7 +16,7 @@ export function SourceList({ active }: { active: boolean }) {
       <p className="eyebrow">OPERATIONS WORKSPACE <span aria-hidden="true">/</span> SOURCE CATALOG</p>
       <h1>Sources<span className="title-period">.</span></h1>
       <p className="page-description">Registered sources, current revisions and admission status.</p>
-    </div><span className="row-badge">Read-only</span></div>
+    </div><a className="secondary-button" href="#/operations/sources/new">Register source</a></div>
     <p className="scope-notice">Enabled sources are eligible for admission. This catalog does not start ingestion or activate Content dispatch.</p>
     <div className="source-filters" role="group" aria-label="Source filters">
       <label>Product<select value={filters.productId} onChange={(event) => model.changeFilters({ productId: event.target.value as ProductId | '' })}>

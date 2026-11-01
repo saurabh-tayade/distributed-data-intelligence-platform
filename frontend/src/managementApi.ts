@@ -20,6 +20,17 @@ export interface SourceRevision extends SourceIdentity {
   revision: number; displayName: string; configSha256: string; createdAt: string; config: SourceConfig;
 }
 export interface SourceResponse extends ManagementEnvelope<SourceRecord> { etag: string }
+export interface SourceCapabilities {
+  scope: 'SOURCE_MANAGEMENT_ONLY'; profiles: SourceConfig['profile'][];
+  endpoints: { endpointId: string; sourceId: string }[];
+  reliabilityProfiles: { sourceId: string; profile: 'request-jsonl-v2' | 'request-parquet-v1'; dataOrigin: 'synthetic'; registeredProfileSha256: string }[];
+  storageProfiles: { profileId: string; productId: ProductId; role: 'BRONZE' | 'BATCH' }[];
+  maxSources: 128; maxRevisionsPerSource: 1000;
+}
+export type SourceCommandAction = 'create' | 'revise' | 'enabled';
+export interface SourceCommand {
+  action: SourceCommandAction; identity: SourceIdentity; body: string; ifMatch: string | null; key: string;
+}
 export type RevisionsPage = ManagementPage<SourceRevision>;
 export type SourcesPage = ManagementPage<SourceSummary>;
 export const SOURCE_PAGE_LIMIT = 20;
@@ -137,6 +148,7 @@ function label(value: string): boolean {
     return point >= 32 && (point < 127 || point > 159) && (point < 0xd800 || point > 0xdfff);
   });
 }
+export function isSourceDisplayName(value: unknown): value is string { return typeof value === 'string' && label(value); }
 function parameters(query: SourcesQuery): URLSearchParams {
   const limit = query.limit ?? SOURCE_PAGE_LIMIT;
   if (!Number.isInteger(limit) || limit < 1 || limit > 100
@@ -230,6 +242,54 @@ export function parseSource(value: unknown, identity: SourceIdentity, etag: stri
   need(etag === `"${source.rowVersion}"`);
   return { apiVersion: 1, data: { ...source, config: configuration(row.config, source.productId) },
     meta: { correlationId: meta.correlationId }, etag };
+}
+
+export function parseSourceCapabilities(value: unknown): ManagementEnvelope<SourceCapabilities> {
+  const { row, meta } = recordEnvelope(value);
+  fields(row, ['scope', 'profiles', 'endpoints', 'reliabilityProfiles', 'storageProfiles', 'maxSources', 'maxRevisionsPerSource']);
+  need(row.scope === 'SOURCE_MANAGEMENT_ONLY' && row.maxSources === 128 && row.maxRevisionsPerSource === 1000);
+  const profiles = ['rss-atom-v1', 'request-jsonl-v2', 'request-parquet-v1'] as const;
+  need(Array.isArray(row.profiles) && row.profiles.length === 3 && profiles.every((p) => (row.profiles as unknown[]).includes(p)));
+  for (const key of ['endpoints', 'reliabilityProfiles', 'storageProfiles']) need(Array.isArray(row[key]) && row[key].length <= 128);
+  const endpointIds = new Set<string>(), storageIds = new Set<string>(), profileKeys = new Set<string>();
+  const endpoints = (row.endpoints as unknown[]).map((item) => {
+    const e = object(item); fields(e, ['endpointId', 'sourceId']);
+    need(isManagementId(e.endpointId) && isSourceId(e.sourceId) && !endpointIds.has(e.endpointId)); endpointIds.add(e.endpointId);
+    return { endpointId: e.endpointId, sourceId: e.sourceId };
+  });
+  const reliabilityProfiles = (row.reliabilityProfiles as unknown[]).map((item): SourceCapabilities['reliabilityProfiles'][number] => {
+    const p = object(item); fields(p, ['sourceId', 'profile', 'dataOrigin', 'registeredProfileSha256']);
+    need(isSourceId(p.sourceId) && (p.profile === 'request-jsonl-v2' || p.profile === 'request-parquet-v1') && p.dataOrigin === 'synthetic'
+      && typeof p.registeredProfileSha256 === 'string' && /^[0-9a-f]{64}$/.test(p.registeredProfileSha256));
+    const key = `${p.sourceId}:${p.profile}:${p.registeredProfileSha256}`; need(!profileKeys.has(key)); profileKeys.add(key);
+    return { sourceId: p.sourceId, profile: p.profile, dataOrigin: p.dataOrigin, registeredProfileSha256: p.registeredProfileSha256 };
+  });
+  const storageProfiles = (row.storageProfiles as unknown[]).map((item): SourceCapabilities['storageProfiles'][number] => {
+    const p = object(item); fields(p, ['profileId', 'productId', 'role']);
+    need(isManagementId(p.profileId) && isProduct(p.productId) && p.role === (p.productId === 'content-intelligence' ? 'BRONZE' : 'BATCH') && !storageIds.has(p.profileId)); storageIds.add(p.profileId);
+    return { profileId: p.profileId, productId: p.productId, role: p.role as 'BRONZE' | 'BATCH' };
+  });
+  return { apiVersion: 1, meta, data: { scope: row.scope, profiles: [...profiles], endpoints, reliabilityProfiles, storageProfiles, maxSources: 128, maxRevisionsPerSource: 1000 } };
+}
+
+/** Static command validation also protects resumed tab-session intents; it never changes the body. */
+export function validateSourceCommand(command: SourceCommand): void {
+  try {
+    need(['create', 'revise', 'enabled'].includes(command.action) && isSourceIdentity(command.identity));
+    need(typeof command.key === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(command.key));
+    need(typeof command.body === 'string' && new TextEncoder().encode(command.body).length <= 65536);
+    if (command.action === 'create') need(command.ifMatch === null);
+    else {
+      need(typeof command.ifMatch === 'string' && /^"(0|[1-9][0-9]{0,18})"$/.test(command.ifMatch)); version(command.ifMatch.slice(1, -1));
+    }
+    const body = object(JSON.parse(command.body));
+    if (command.action === 'enabled') { fields(body, ['enabled']); need(typeof body.enabled === 'boolean'); }
+    else {
+      fields(body, command.action === 'create' ? ['productId', 'sourceId', 'displayName', 'enabled', 'config'] : ['displayName', 'config']);
+      need(isSourceDisplayName(body.displayName)); configuration(body.config, command.identity.productId);
+      if (command.action === 'create') need(body.productId === command.identity.productId && body.sourceId === command.identity.sourceId && typeof body.enabled === 'boolean');
+    }
+  } catch { throw new ManagementError('invalid-request'); }
 }
 
 export function parseRevisions(value: unknown, identity: SourceIdentity, query: RevisionQuery = {}): RevisionsPage {
@@ -370,27 +430,32 @@ const failures: Record<number, { kind: ManagementErrorKind; code: string }> = {
   500: { kind: 'server', code: 'INTERNAL_FAILURE' },
   503: { kind: 'unavailable', code: 'MANAGEMENT_UNAVAILABLE' },
 };
-async function read<T>(path: string, signal: AbortSignal, parse: (body: unknown, response: Response) => T): Promise<T> {
-  let response: Response;
+async function managementFetch(path: string, signal: AbortSignal, init: RequestInit = {}): Promise<Response> {
   try {
-    response = await fetch(path, {
+    return await fetch(path, {
       method: 'GET', signal, cache: 'no-store', credentials: 'omit', headers: { Accept: 'application/json' },
+      ...init,
     });
   } catch (error) {
     if (signal.aborted) throw error;
     throw new ManagementError('network');
   }
+}
+async function failureMetadata(response: Response, allowed: readonly string[]) {
+  try {
+    const body = object(await response.json()); fields(body, ['apiVersion', 'code', 'message', 'correlationId', 'retryable']);
+    if (body.apiVersion === 1 && typeof body.code === 'string' && allowed.includes(body.code) && typeof body.message === 'string'
+      && typeof body.retryable === 'boolean' && isManagementId(body.correlationId)) {
+      return { code: body.code, correlationId: body.correlationId, retryable: body.retryable };
+    }
+  } catch { /* Fixed local copy only, including proxy and malformed responses. */ }
+  return { code: null, correlationId: null, retryable: null };
+}
+async function read<T>(path: string, signal: AbortSignal, parse: (body: unknown, response: Response) => T): Promise<T> {
+  const response = await managementFetch(path, signal);
   if (response.status !== 200) {
     const failure = failures[response.status];
-    let code: string | null = null, correlationId: string | null = null, retryable: boolean | null = null;
-    try {
-      const body = object(await response.json());
-      fields(body, ['apiVersion', 'code', 'message', 'correlationId', 'retryable']);
-      if (failure && body.apiVersion === 1 && body.code === failure.code && typeof body.message === 'string'
-        && typeof body.retryable === 'boolean' && typeof body.correlationId === 'string' && uuid.test(body.correlationId)) {
-        code = failure.code; correlationId = body.correlationId; retryable = body.retryable;
-      }
-    } catch { /* Proxy errors can be non-JSON. No server text crosses into the UI. */ }
+    const { code, correlationId, retryable } = await failureMetadata(response, failure ? [failure.code] : []);
     throw new ManagementError(failure?.kind ?? 'server', code, correlationId, retryable);
   }
   try {
@@ -400,6 +465,41 @@ async function read<T>(path: string, signal: AbortSignal, parse: (body: unknown,
     if (signal.aborted) throw error;
     throw new ManagementError('invalid-response');
   }
+}
+
+export class SourceCommandError extends Error {
+  constructor(public readonly status: number | null, public readonly code: string | null, public readonly correlationId: string | null,
+    public readonly retryable: boolean | null, public readonly ambiguous: boolean) {
+    super('The source change was not confirmed.'); this.name = 'SourceCommandError';
+  }
+}
+const sourceFailures: Record<number, string[]> = {
+  400: ['INVALID_ARGUMENT'], 403: ['LOCAL_BOUNDARY_REJECTED'], 404: ['NOT_FOUND'],
+  409: ['STATE_CONFLICT', 'IDEMPOTENCY_CONFLICT'], 412: ['PRECONDITION_FAILED'], 428: ['PRECONDITION_REQUIRED'],
+  429: ['MANAGEMENT_CAPACITY_EXCEEDED'], 500: ['INTERNAL_FAILURE'], 503: ['MANAGEMENT_UNAVAILABLE'],
+};
+export async function sendSourceCommand(command: SourceCommand, signal: AbortSignal): Promise<SourceResponse> {
+  validateSourceCommand(command);
+  const base = sourcePath(command.identity);
+  const path = command.action === 'create' ? '/api/management/v1/sources' : base + (command.action === 'revise' ? '/revisions' : '/enabled');
+  const headers: Record<string, string> = { Accept: 'application/json', 'Content-Type': 'application/json',
+    'X-DDIP-Local-Request': '1', 'Idempotency-Key': command.key };
+  if (command.ifMatch !== null) headers['If-Match'] = command.ifMatch;
+  let response: Response;
+  try { response = await managementFetch(path, signal, { method: command.action === 'enabled' ? 'PUT' : 'POST', headers, body: command.body }); }
+  catch { throw new SourceCommandError(null, null, null, null, true); }
+  if (response.status !== (command.action === 'create' ? 201 : 200)) {
+    const meta = await failureMetadata(response, sourceFailures[response.status] ?? []);
+    throw new SourceCommandError(response.status, meta.code, meta.correlationId, meta.retryable, meta.code === null || response.status >= 500);
+  }
+  try {
+    need(response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() === 'application/json');
+    return parseSource(await response.json(), command.identity, response.headers.get('ETag'));
+  } catch { throw new SourceCommandError(response.status, null, null, null, true); }
+}
+
+export async function fetchSourceCapabilities(signal: AbortSignal): Promise<ManagementEnvelope<SourceCapabilities>> {
+  return read('/api/management/v1/capabilities', signal, parseSourceCapabilities);
 }
 
 export async function fetchSources(query: SourcesQuery, signal: AbortSignal): Promise<SourcesPage> {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { fetchSource, fetchRevisions, ManagementError, SOURCE_PAGE_LIMIT } from '../managementApi';
 import type { SourceIdentity, SourceResponse, RevisionsPage, RevisionQuery } from '../managementApi';
+import { SOURCE_CHANGED } from './sourceIntent';
 
 type Result<T> = { key: string } & ({ status: 'ready'; value: T } | { status: 'error'; error: ManagementError });
 const safeError = (error: unknown) => error instanceof ManagementError ? error : new ManagementError('network');
@@ -17,6 +18,12 @@ export function useSource(identity: SourceIdentity) {
   const detailKey = JSON.stringify([productId, sourceId, detailRefresh]);
   const { pages } = traversal, position = pages.at(-1)!;
   const revisionKey = JSON.stringify([productId, sourceId, pages, traversal.refresh]);
+
+  useEffect(() => {
+    const changed = () => { setDetailRefresh((old) => old + 1); setTraversal((old) => ({ pages: [{ after: 0 }], refresh: old.refresh + 1 })); };
+    window.addEventListener(SOURCE_CHANGED, changed);
+    return () => window.removeEventListener(SOURCE_CHANGED, changed);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController(); let current = true;

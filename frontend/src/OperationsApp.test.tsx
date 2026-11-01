@@ -304,6 +304,7 @@ describe('workspace navigation and independent Analytics session', () => {
     workspace('Operations').focus(); await user.tab();
     expect(within(screen.getByRole('navigation', { name: 'Operations views' })).getByRole('link', { name: 'Sources' })).toHaveFocus();
     await user.tab(); expect(screen.getByRole('link', { name: 'Executions' })).toHaveFocus();
+    await user.tab(); expect(screen.getByRole('link', { name: 'Register source' })).toHaveFocus();
     await user.tab(); expect(screen.getByRole('combobox', { name: 'Product' })).toHaveFocus();
   });
 

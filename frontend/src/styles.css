@@ -347,3 +347,14 @@ tbody tr:hover { background: #f9fbf8; }
 .history-limit select { width: 100px; }
 .audit-list h3 code { font-size: 12px; overflow-wrap: anywhere; }
 .source-detail-panel > h3, .source-detail-panel > h4 { margin-top: 24px; }
+
+/* Source actions retain the workspace's native form and focus conventions. */
+.source-actions, .source-editor, .source-action-review { margin-block: 1.25rem; padding: 1.25rem; }
+.source-actions summary { cursor: pointer; font-weight: 600; }
+.source-form-fields { display: grid; gap: 1rem; border: 0; padding: 0; margin-block: 1rem; min-width: 0; }
+.source-form-fields label { display: grid; gap: .4rem; }
+.source-form-fields input, .source-form-fields select { max-width: 100%; min-width: 0; padding: .65rem; font: inherit; }
+.source-form-fields .source-checkbox { display: flex; align-items: center; gap: .6rem; }
+.source-action-buttons { display: flex; flex-wrap: wrap; gap: .75rem; margin-block: 1rem; }
+.source-request-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .85rem; }
+.source-editor p, .source-action-review p { overflow-wrap: anywhere; }
