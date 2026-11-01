@@ -24,7 +24,8 @@ final class RssFetchRuntime {
             var rows=tx.required(()->jdbc.queryForList("SELECT configuration_bytes,configuration_sha256 FROM ddip_management.execution_profiles WHERE profile_id=?",id));need(rows.size()==1,RUNTIME_MISMATCH);
             String hash=(String)rows.getFirst().get("configuration_sha256");var c=FrozenRunSelection.canonical((byte[])rows.getFirst().get("configuration_bytes"),hash,65536);
             SourceJson.fields(c,"rssFetchRuntimeVersion","pipeline","runProfileId","runProfileSha256","deploymentSha256","javaHome","manifest","controlBindingId","testEndpoint","httpTimeoutMillis");
-            need(c.get("rssFetchRuntimeVersion").isIntegralNumber() && c.get("rssFetchRuntimeVersion").canConvertToInt() && c.get("rssFetchRuntimeVersion").intValue()==1 && c.get("pipeline").stringValue().equals("CONTENT_RSS_V1") && c.get("runProfileId").stringValue().equals(profileId) && c.get("runProfileSha256").stringValue().equals(profileDigest) && c.get("deploymentSha256").stringValue().equals(deploymentDigest) && SourceJson.sha(SourceJson.canonical(c.get("manifest"))).equals(deploymentDigest),RUNTIME_MISMATCH);
+            need(c.get("rssFetchRuntimeVersion").isIntegralNumber() && c.get("rssFetchRuntimeVersion").canConvertToInt() && Set.of(1,2).contains(c.get("rssFetchRuntimeVersion").intValue()) && c.get("pipeline").stringValue().equals("CONTENT_RSS_V1") && c.get("runProfileId").stringValue().equals(profileId) && c.get("runProfileSha256").stringValue().equals(profileDigest) && c.get("deploymentSha256").stringValue().equals(deploymentDigest) && SourceJson.sha(SourceJson.canonical(c.get("manifest"))).equals(deploymentDigest),RUNTIME_MISMATCH);
+            ContentEvidenceProfile.runtime(jdbc,tx,frozen,"FETCH",id,c.get("rssFetchRuntimeVersion").intValue());
             need(frozen.get("pipeline").stringValue().equals("CONTENT_RSS_V1") && frozen.get("executionProfile").get("configurationSha256").stringValue().equals(profileDigest),RUNTIME_MISMATCH);
             need(c.get("controlBindingId").stringValue().equals(guard.binding().id()) && c.get("testEndpoint").isBoolean() && c.get("httpTimeoutMillis").isIntegralNumber() && c.get("httpTimeoutMillis").canConvertToInt() && c.get("httpTimeoutMillis").intValue()>0 && c.get("httpTimeoutMillis").intValue()<=30000,RUNTIME_MISMATCH);
             need(tx.required(()->jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.execution_profile_storage p JOIN ddip_management.storage_bindings b USING(binding_id) WHERE p.profile_id=? AND b.binding_id=? AND b.installation_id=? AND b.role='CONTROL' AND b.configuration_bytes=? AND b.configuration_sha256=?)",Boolean.class,id,guard.binding().id(),guard.binding().installationId(),guard.binding().descriptor(),guard.binding().digest())),RUNTIME_MISMATCH);
@@ -43,7 +44,7 @@ final class RssFetchRuntime {
             Path javaHome=Path.of(configuration.get("javaHome").stringValue());
             need(Runtime.version().feature()==21 && javaHome.isAbsolute() && javaHome.equals(javaHome.toRealPath()) && javaHome.equals(Path.of(System.getProperty("java.home")).toRealPath()),RUNTIME_MISMATCH);
             var manifest=configuration.get("manifest");SourceJson.fields(manifest,"adapter","javaRuntime","classpath");
-            need(manifest.get("adapter").stringValue().equals(MAIN) && manifest.get("javaRuntime").stringValue().equals(Runtime.version().toString()) && manifest.get("classpath").isArray() && manifest.get("classpath").size()>0 && manifest.get("classpath").size()<=128,RUNTIME_MISMATCH);
+            need(manifest.get("adapter").stringValue().equals(bounded()?"platform.ingestion.managed.BoundedManagedRssFetch":MAIN) && manifest.get("javaRuntime").stringValue().equals(Runtime.version().toString()) && manifest.get("classpath").isArray() && manifest.get("classpath").size()>0 && manifest.get("classpath").size()<=128,RUNTIME_MISMATCH);
             Set<Path> paths=new HashSet<>();long total=0;
             for(var entry:manifest.get("classpath")){
                 SourceJson.fields(entry,"path","sha256");Path path=Path.of(entry.get("path").stringValue());
@@ -64,8 +65,9 @@ final class RssFetchRuntime {
             need(test?Set.of("127.0.0.1","[::1]").contains(host):host.matches("[a-z0-9][a-z0-9.-]*\\.[a-z][a-z0-9.-]*") && !host.endsWith(".localhost") && !host.endsWith(".local") && !host.endsWith(".internal"),RUNTIME_MISMATCH);
         }catch(PreflightFailure ex){throw ex;}catch(RuntimeException ex){throw new PreflightFailure(RUNTIME_MISMATCH);}
     }
-    List<String> command(Path descriptor){return command(descriptor,MAIN);}
-    List<String> bronzeCommand(Path descriptor){return command(descriptor,"platform.ingestion.managed.ManagedBronze");}
+    boolean bounded(){return configuration.get("rssFetchRuntimeVersion").intValue()==2;}
+    List<String> command(Path descriptor){return command(descriptor,bounded()?"platform.ingestion.managed.BoundedManagedRssFetch":MAIN);}
+    List<String> bronzeCommand(Path descriptor){return command(descriptor,bounded()?"platform.ingestion.managed.BoundedManagedBronze":"platform.ingestion.managed.ManagedBronze");}
     private List<String> command(Path descriptor,String main){var cp=new ArrayList<String>();for(var entry:configuration.get("manifest").get("classpath"))cp.add(entry.get("path").stringValue());return List.of(Path.of(configuration.get("javaHome").stringValue(),"bin/java").toString(),"-Xmx128m","-cp",String.join(File.pathSeparator,cp),main,descriptor.toString());}
     Map<String,String> environment(){return Map.of("PATH","/usr/bin:/bin","TZ","UTC","LANG","C.UTF-8");}
     String digest(){return digest;}

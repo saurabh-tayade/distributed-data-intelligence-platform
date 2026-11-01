@@ -14,12 +14,13 @@ import static org.assertj.core.api.Assertions.*;
 
 /** One real D1-D5a fixture; deterministic failure injection reuses its immutable final publication. */
 abstract class ContentRecoveryFixture {
+    boolean boundedEvidence;
     @TempDir(cleanup=org.junit.jupiter.api.io.CleanupMode.ON_SUCCESS) Path temp;
     String phase="start";
     void recover(String mode)throws Exception{
-        String expected=mode.equals("FINAL")?"SUCCEEDED":mode.equals("PARTIAL_CONTENT")?"FAILED":"PAUSED";
+        String expected=mode.equals("FINAL")?"SUCCEEDED":(mode.equals("PARTIAL_CONTENT") || mode.equals("CONTENT_INTENT"))?"FAILED":"PAUSED";
         long start=System.nanoTime();String cp=System.getProperty("surefire.test.class.path",System.getProperty("java.class.path"));
-        var child=new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin/java").toString(),"-cp",cp,"platform.contentapi.management.ContentRecoveryTestProcess",temp.toString(),mode).redirectError(temp.resolve("worker.log").toFile()).redirectOutput(temp.resolve("worker.out").toFile()).start();
+        var child=new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin/java").toString(),"-cp",cp,"platform.contentapi.management.ContentRecoveryTestProcess",temp.toString(),mode,boundedEvidence?"BOUNDED":"LEGACY").redirectError(temp.resolve("worker.log").toFile()).redirectOutput(temp.resolve("worker.out").toFile()).start();
         JdbcTemplate j=null;InstallationHostGuard guard=null;String database=null;UUID run=null;
         try{
             Map<Long,Instant> observedDescendants=new HashMap<>();Path info=temp.resolve("owner.json");long end=System.nanoTime()+TimeUnit.MINUTES.toNanos(8);while(!Files.exists(info) && child.isAlive() && System.nanoTime()<end){var live=child.descendants().limit(33).toList();assertThat(live.size()).isLessThanOrEqualTo(32);for(var process:live)process.info().startInstant().ifPresent(at->observedDescendants.putIfAbsent(process.pid(),at));assertThat(observedDescendants.size()).isLessThanOrEqualTo(128);Thread.sleep(100);}
@@ -47,26 +48,20 @@ abstract class ContentRecoveryFixture {
             }
             // Refresh the explicit process review after the infrastructure interruption.
             review=new RecoveryQuiescence.Review(target.digest(),Instant.now(),true,true,true,target.unresolvedCheckpoints(),descendants);
-            if(mode.equals("CONTENT_INTENT")){
-                var held=guard;var fresh=review;var retained=snapshot(binding.root().resolve("runs/"+run+"/attempts/"+original));
-                assertThatThrownBy(()->recovery.qualify(held,bootstrap,fresh)).hasMessage("EVIDENCE_UNAVAILABLE");
-                assertThat(snapshot(binding.root().resolve("runs/"+run+"/attempts/"+original))).isEqualTo(retained);
-                assertThat(j.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isEqualTo(control);
-                assertThat(j.queryForObject("SELECT state FROM ddip_management.runs WHERE run_id=?",String.class,run)).isEqualTo("RECOVERY_REQUIRED");
-                assertThat(j.queryForObject("SELECT state FROM ddip_management.controls WHERE control_id=?",String.class,control)).isEqualTo("REQUESTED");
-                var intent=j.queryForMap("SELECT state,intended_namespace,command_address,command_sha256,child_pid FROM ddip_management.stage_invocations WHERE attempt_id=? AND stage='PUBLISH_CONTENT'",original);
-                assertThat(intent.get("state")).isEqualTo("UNKNOWN");assertThat(intent.get("command_address")).isNull();assertThat(intent.get("command_sha256")).isNull();assertThat(intent.get("child_pid")).isNull();
-                assertThat(Files.exists(binding.root().resolve(intent.get("intended_namespace")+"/command.json"))).isFalse();
-                assertThat(j.queryForObject("SELECT count(*) FROM ddip_management.artifacts WHERE kind='CONTENT'",Integer.class)).isZero();
-                assertThat(snapshot(outputRoot(frozen))).containsOnlyKeys("untouched.native");
-                System.out.println("B0_INTENT_GAP code=EVIDENCE_UNAVAILABLE occupied="+control+" retainedFiles="+retained.size()+" commandLinked=false publisherLaunched=false");return;
-            }
             if(mode.equals("PARTIAL_SILVER")){
                 var currentGuard=guard;var currentReview=review;var originalFiles=ContentRecoveryFiles.capture(guard,run,original,j.queryForList("SELECT * FROM ddip_management.stage_invocations WHERE attempt_id=?",original)).inventory();
                 assertThatThrownBy(()->recovery.qualify(currentGuard,bootstrap,currentReview)).hasMessage("EVIDENCE_UNAVAILABLE");assertThat(j.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isEqualTo(control);assertThat(j.queryForObject("SELECT state FROM ddip_management.runs WHERE run_id=?",String.class,run)).isEqualTo("RECOVERY_REQUIRED");
                 var resumeCommand=ControlCommands.parse(run.toString(),SourceJson.canonical(SourceJson.object().put("action","RESUME").putNull("attemptId").putNull("quiescenceConfirmed")),"partial-resume","\""+j.queryForObject("SELECT row_version FROM ddip_management.runs WHERE run_id=?",Long.class,run)+"\"");assertThatThrownBy(()->controls.request(resumeCommand)).hasMessage("COORDINATOR_RECOVERY_REQUIRED");assertThat(ContentRecoveryFiles.capture(guard,run,original,j.queryForList("SELECT * FROM ddip_management.stage_invocations WHERE attempt_id=?",original)).inventory()).isEqualTo(originalFiles);System.out.println("D5B2A_BLOCKED partialSilver=1 selectedSources=2 occupied="+control);return;
             }
             phase="qualify-content";var qualified=recovery.qualify(guard,bootstrap,review);assertThat(qualified.observation.get("state").stringValue()).isEqualTo(expected);
+            if(mode.equals("CONTENT_INTENT")){
+                assertThat(qualified.observation.get("code").stringValue()).isEqualTo("PUBLICATION_ABSENT");
+                var intent=j.queryForMap("SELECT state,intended_namespace,command_address,command_sha256,child_pid FROM ddip_management.stage_invocations WHERE attempt_id=? AND stage='PUBLISH_CONTENT'",original);
+                assertThat(intent.get("state")).isEqualTo("UNKNOWN");assertThat(intent.get("child_pid")).isNull();
+                assertThat(intent.get("command_address")).isEqualTo(intent.get("intended_namespace")+"/command.json");
+                assertThat(SourceJson.sha(Files.readAllBytes(binding.root().resolve((String)intent.get("command_address"))))).isEqualTo(intent.get("command_sha256"));
+                assertThat(before).containsOnlyKeys("untouched.native");
+            }
             if(mode.equals("PARTIAL_CONTENT")){
                 assertThat(qualified.observation.get("code").stringValue()).isEqualTo("INCOMPLETE_OUTPUT");
                 assertThat(before).hasSize(2);assertThat(before).containsKey("untouched.native");assertThat(before.keySet()).anySatisfy(path->assertThat(path).endsWith("interrupted-part.bin"));

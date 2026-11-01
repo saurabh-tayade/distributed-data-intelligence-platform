@@ -161,7 +161,7 @@ final class RecoveryHandoff {
         descriptor.put("qualificationId",qualificationId.toString()).put("oldCoordinatorVersion",s.coordinator.get("row_version").toString()).put("oldRunVersion",s.run.get("row_version").toString()).put("oldAttemptVersion",s.attempt.get("row_version").toString()).put("controlVersion",s.control.get("row_version").toString()).put("runProfileId",target.recovery.profileId()).put("runProfileSha256",target.recovery.profileDigest());
         descriptor.set("originalMetadata",json(List.of(s.coordinator,s.run,s.attempt,s.control,s.oldWorker,s.recovery,s.stages,s.history)));
         descriptor.set("operatorReview",review.json());descriptor.set("privateEvidence",captured.inventory());
-        byte[] bytes=SourceJson.canonical(descriptor);String address=RecoveryFiles.write(guard,s.controlId(),qualificationId,bytes);
+        byte[] bytes=SourceJson.canonical(descriptor);String address=runtime.content!=null && runtime.content.config.get("contentRuntimeVersion").intValue()==2?RecoveryFiles.writeBounded(guard,s.runId(),s.controlId(),qualificationId,bytes):RecoveryFiles.write(guard,s.controlId(),qualificationId,bytes);
         var q=new Qualified(target,review,runtime,captured,address,SourceJson.sha(bytes),at);fresh(guard,q);return q;
     }
     /** Operational caller additionally reviews native ancestry; the C3b metadata seam stays independent. */
@@ -394,6 +394,7 @@ final class RecoveryHandoff {
     }
     private void checkProcesses(Snapshot s,RecoveryQuiescence.Review review,String target){RecoveryQuiescence.check(review,target,s.unresolved(),s.processes(),processes,clock.instant());}
     private void checkHints(Snapshot s,RecoveryQuiescence.Review review,RecoveryFiles.Capture captured){
+        need(!captured.inventory().has("processEvidenceIncomplete"),PROCESS_UNRESOLVED);
         for(long pid:captured.descendantPids()) {
             // A gateway PID-only hint is not the worker/Python identity, even if its number was reused.
             var identities=review.descendants().stream().filter(p->p.pid()==pid).toList();need(identities.size()==1,PROCESS_UNRESOLVED);

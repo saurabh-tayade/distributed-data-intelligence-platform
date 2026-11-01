@@ -3377,3 +3377,23 @@ The [Gate B0 audit](../operations/content-recovery-envelope.md) corrects the err
 the implemented Content maximum is eight feeds/40 MiB of payloads, before sidecars.
 [ADR 0020](../adr/0020-inherited-content-reconciliation.md)
 records this implementation with owner acceptance pending. No publication selection changes.
+
+## Gate B0 bounded producer protocol (partial)
+
+[ADR 0021](../adr/0021-content-evidence-producer-reservations.md) remains Proposed. The
+[implementation record and calculation](../operations/content-evidence-producers.md) describe
+the new fixed version-2 writer protocol: monotonic reservations before directory/file growth,
+shared parent/child locks, full temporary-file accounting, and command preparation before
+fenced SQL intent. Prepared commands are immutable evidence, never execution authorization.
+Original native processor modules, data contracts and V1–V9 migrations are unchanged.
+
+A one-fresh-feed internal validation candidate reserves 59.125 MiB for its fixed original
+plan and exactly 64 MiB with one complete extra inspection. Entry, inventory, packet and
+individual sidecar ceilings remain independent. Original, recovery, resume and resumed
+attempt trees are separately qualified; no ancestry is inferred or manufactured.
+
+This establishes private writer ceilings, not complete recovery availability for every
+permitted native result. Joint bounds for nested native metadata, output inventories and
+qualification packets remain unproved. Oversized proofs are refused and ownership is retained;
+no scanner truncation or automatic publisher replay is allowed. Gate B0 remains incomplete,
+Content dispatch stays disabled, and no operational profile or Gate B1 activation is approved.

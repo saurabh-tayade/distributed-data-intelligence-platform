@@ -19,7 +19,7 @@ final class RecoveryFiles {
     }
     record Capture(JsonNode inventory,Set<Long> descendantPids) { }
     static Capture capture(InstallationHostGuard guard,UUID run,UUID attempt,long epoch,String selectionSha,JsonNode runtime,List<Map<String,Object>> stages) {
-        if(runtime.has("contentRecoveryRuntimeVersion"))return ContentRecoveryFiles.capture(guard,run,attempt,stages);
+        if(runtime.has("contentRecoveryRuntimeVersion"))return ContentRecoveryFiles.capture(guard,run,attempt,stages,runtime.get("contentRecoveryRuntimeVersion").intValue()==2);
         var result=SourceJson.object();var files=result.putArray("files");Set<Long> hints=new HashSet<>();
         try {
             for(var stage:stages) {
@@ -75,6 +75,18 @@ final class RecoveryFiles {
             try(var channel=FileChannel.open(p.resolve("qualification.json"),Set.of(StandardOpenOption.WRITE,StandardOpenOption.CREATE_NEW,LinkOption.NOFOLLOW_LINKS),PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))){var b=ByteBuffer.wrap(bytes);while(b.hasRemaining())channel.write(b);channel.force(true);}
             need(Arrays.equals(bytes,read(guard,address)),EVIDENCE_CHANGED);return address;
         }catch(RecoveryFailure ex){throw ex;}catch(IOException | RuntimeException ex){throw new RecoveryFailure(EVIDENCE_UNAVAILABLE);}
+    }
+    static String writeBounded(InstallationHostGuard guard,UUID run,UUID control,UUID qualification,byte[] bytes){
+        need(bytes.length<=MAXIMUM,EVIDENCE_UNAVAILABLE);
+        try{
+            ContentEvidenceBudget.initializePackets(guard,run,control);
+            Path directory=guard.binding().root().resolve("recovery/"+control+"/"+qualification);
+            ContentEvidenceBudget.reserve(directory,Map.of("qualification.json",MAXIMUM));
+            Files.createDirectory(directory,PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+            PreparedCommand.forceDirectory(directory.getParent());
+            PreparedCommand.writeOnce(directory,"qualification.json",bytes,MAXIMUM);
+            return guard.binding().root().relativize(directory.resolve("qualification.json")).toString();
+        }catch(RecoveryFailure ex){throw ex;}catch(Exception ex){throw new RecoveryFailure(EVIDENCE_UNAVAILABLE);}
     }
     static byte[] read(InstallationHostGuard guard,String address) {
         try{return PreflightFiles.read(resolve(guard,address),MAXIMUM,true);}catch(RecoveryFailure ex){throw ex;}catch(RuntimeException ex){throw new RecoveryFailure(EVIDENCE_UNAVAILABLE);}

@@ -2,7 +2,40 @@
 
 Date: October 31, 2026
 
-Status: **Proposed — owner acceptance pending; not implemented.**
+Status: **Proposed — owner acceptance pending; producer safeguards partially implemented. Gate B0 remains blocked.**
+
+## Implementation amendment — November 1, 2026
+
+The implementation work separates durable command preparation from launch authorization.
+Prepared bytes are forced and read back before an intent references their address/digest;
+preparation alone never grants launch authority. Legacy retained commands keep their readers.
+
+Capacity accounting must charge both a final file and its interrupted preparation file,
+all parent directories and the canonical inventory's worst-case serialization. Reservations
+are monotonic: an interrupted or rejected operation does not reclaim its allowance. New
+work must validate the actual tree against its reservations before extending it. A shared
+cross-process lock serializes compliant writers; a reservation is not a filesystem quota.
+
+In particular, parent-side accounting cannot bound the current children that directly write
+sidecars. A supported profile therefore also needs fixed versioned child sinks or parent-owned
+result persistence. Installing a ledger alone must not advertise a supported profile, and a
+legacy child must not be authorized under a profile requiring bounded sinks. The implementation
+record must distinguish completed safeguards from any remaining producer integration gap.
+This amendment does not accept this ADR or authorize Content dispatch.
+
+The fixed version-2 Java/Python sinks and monotonic reservations are now implemented for
+an internal one-fresh-feed validation candidate. The existing version-1 readers and Python
+processor bytes are preserved. A recovery qualifier reserves the second independent
+observation's exact directory identities before sealing its first observation; extending a
+sealed mutable ledger would otherwise correctly fail the existing immutable-file comparison.
+No evidence file is exempted from that comparison.
+
+This implementation proves a private-write ceiling, not full qualification availability.
+The native inventory/metadata ceilings have not been jointly proved to fit the smaller
+private proof slots after every otherwise valid publication. The
+[implementation report](../operations/content-evidence-producers.md) states that blocker,
+the candidate calculation, tests and restrictions. Version 2 is not an accepted operational
+profile and does not authorize dispatch. Retain this ADR as Proposed.
 
 ## Context
 
@@ -13,9 +46,9 @@ reader of already written files. There is no aggregate producer reservation, and
 1 MiB inventory and recovery packet are independent limits. Native datasets are already
 referenced and independently requalified; their Parquet bytes are not private sidecars.
 
-There is also a concrete small-workload interruption gap: PUBLISH_CONTENT commits an
-intended namespace before creating its command; the command address/hash are recorded only
-at authorization. Initial capture/review can succeed with that null link, but native
+The audited baseline also had a concrete small-workload interruption gap: PUBLISH_CONTENT committed an
+intended namespace before creating its command; the command address/hash were recorded only
+at authorization. Initial capture/review could succeed with that null link, but native
 reconciliation still requires the command and cannot disposition the run. Partial child/result JSON
 can likewise leave process identity unresolved. Raising the byte cap cannot resolve either
 case. Missing or corrupt historical evidence must continue to fail closed.

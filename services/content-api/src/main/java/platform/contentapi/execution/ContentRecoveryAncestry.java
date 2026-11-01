@@ -30,7 +30,7 @@ final class ContentRecoveryAncestry {
                 return null;
             });
             var evidence=new ContentResumeEvidence(j,tx,processes);evidence.retained(g,plan);
-            need(SourceJson.sha(PreflightFiles.read(java.nio.file.Path.of(runtime.gold.silver.config.get("processingRoot").stringValue()).resolve("content_resume_verifier.py"),1024*1024,false)).equals(plan.get("resumeBridgeSha256").stringValue()),EVIDENCE_CHANGED);
+            need(SourceJson.sha(PreflightFiles.read(java.nio.file.Path.of(runtime.gold.silver.config.get("processingRoot").stringValue()).resolve(runtime.config.get("contentRuntimeVersion").intValue()==2?"bounded_content_producer.py":"content_resume_verifier.py"),1024*1024,false)).equals(plan.get("resumeBridgeSha256").stringValue()),EVIDENCE_CHANGED);
             var proof=evidence.privateProof(g,plan,runtime);
             need(SourceJson.sha(SourceJson.canonical(proof)).equals(plan.get("privateSha256").stringValue()),EVIDENCE_CHANGED);
             var anchors=tx.required(()->j.queryForList("SELECT details_bytes FROM ddip_management.audit_events WHERE attempt_id=? AND control_id=? AND action='RECOVERY_HANDOFF'",UUID.fromString(plan.get("recoveryAttemptId").stringValue()),UUID.fromString(plan.get("recoveryAttemptId").stringValue())));
@@ -41,7 +41,7 @@ final class ContentRecoveryAncestry {
             for(var s:packet.stages)if(s.get("child_pid")!=null)identities.add(new RecoveryQuiescence.Identity(((Number)s.get("child_pid")).longValue(),((Timestamp)s.get("child_started_at")).toInstant()));
             var recoveryStages=tx.required(()->j.queryForList("SELECT child_pid,child_started_at FROM ddip_management.stage_invocations WHERE attempt_id=?",UUID.fromString(plan.get("recoveryAttemptId").stringValue())));
             for(var s:recoveryStages)if(s.get("child_pid")!=null)identities.add(new RecoveryQuiescence.Identity(((Number)s.get("child_pid")).longValue(),((Timestamp)s.get("child_started_at")).toInstant()));
-            var verifierFiles=ContentRecoveryFiles.capture(g,run,UUID.fromString(plan.get("resumeControlId").stringValue()),List.of());
+            var verifierFiles=ContentRecoveryFiles.capture(g,run,UUID.fromString(plan.get("resumeControlId").stringValue()),List.of(),runtime.config.get("contentRuntimeVersion").intValue()==2);
             for(var f:verifierFiles.inventory().get("files"))if(!f.get("directory").booleanValue() && f.get("address").stringValue().endsWith("/child.json")){
                 var child=PreflightFiles.canonical(RecoveryFiles.readPrivate(g,f.get("address").stringValue(),65536),65536);
                 identities.add(new RecoveryQuiescence.Identity(Long.parseLong(child.get("pid").stringValue()),java.time.Instant.parse(child.get("startedAt").stringValue())));

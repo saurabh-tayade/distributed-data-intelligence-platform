@@ -21,11 +21,12 @@ final class PreflightFiles {
     PreflightFiles(InstallationHostGuard guard,UUID run,UUID attempt,UUID checkpoint,String stage) {
         need(Set.of("CHECK_INPUTS","PUBLISH_RELIABILITY","VERIFY_RESULT","STORE_BRONZE","INSPECT_BRONZE","SILVER","VERIFY_SILVER","INSPECT_SILVER","RECHECK_SILVER","PREPARE_GOLD","PUBLISH_GOLD","PUBLISH_CONTENT").contains(stage),INPUT_INVALID);
         address="runs/"+run+"/attempts/"+attempt+"/"+stage.toLowerCase(Locale.ROOT).replace('_','-')+"/"+checkpoint;
+        ContentEvidenceBudget.reserve(guard.binding().root().resolve(address),ContentEvidenceBudget.slots(stage));
         try {
             Path p=guard.binding().root();
             for(String segment:address.split("/")) {
                 p=p.resolve(segment);
-                try{Files.createDirectory(p,PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));}catch(FileAlreadyExistsException ignored){ }
+                try{Files.createDirectory(p,PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));if(ContentEvidenceBudget.enabled(p))PreparedCommand.forceDirectory(p.getParent());}catch(FileAlreadyExistsException ignored){ }
                 privateEntry(p,true);
             }
             directory=p;
@@ -58,6 +59,7 @@ final class PreflightFiles {
     }
     void write(String name,byte[] bytes,int maximum) {
         need(Set.of("command.json","selection.json","verified.json","retained.json","evidence.json","child.json").contains(name) && bytes.length<=maximum,INPUT_INVALID);
+        if(ContentEvidenceBudget.enabled(directory)){PreparedCommand.writeOnce(directory,name,bytes,maximum);return;}
         privateEntry(directory,true);
         try(var channel=FileChannel.open(directory.resolve(name),Set.of(StandardOpenOption.WRITE,StandardOpenOption.CREATE_NEW,LinkOption.NOFOLLOW_LINKS),PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))) {
             var buffer=ByteBuffer.wrap(bytes);while(buffer.hasRemaining())channel.write(buffer);channel.force(true);

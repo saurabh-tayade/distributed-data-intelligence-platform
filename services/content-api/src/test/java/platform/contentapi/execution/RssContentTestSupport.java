@@ -13,7 +13,8 @@ public final class RssContentTestSupport {
     @FunctionalInterface public interface Fault {void at(String phase,String point,WorkerRepository.Owner owner);}
     public static Completed execute(JdbcTemplate j,ManagementTransactions t,WorkerRepository w,InstallationHostGuard g,WorkerRepository.Owner o,String runtime,Fault f){var r=new RssContentExecution(j,t,w,(phase,point,owner)->f.at(phase,point.name(),owner)).execute(g,o,runtime);return new Completed(r.artifact(),r.session(),r.evidence());}
     public static UUID inspect(JdbcTemplate j,ManagementTransactions t,WorkerRepository w,InstallationHostGuard g,UUID run,String runtime){return new RssContentExecution(j,t,w).inspect(g,run,runtime);}
-    public static JsonNode modules(Path root)throws Exception{var n=SourceJson.object();for(String m:RssContentRuntime.MODULES)n.put(m,SourceJson.sha(Files.readAllBytes(root.resolve(m))));return n;}
+    public static JsonNode modules(Path root)throws Exception{return modules(root,false);}
+    public static JsonNode modules(Path root,boolean bounded)throws Exception{var n=SourceJson.object();for(String m:ContentEvidenceProfile.modules(RssContentRuntime.MODULES,bounded?2:1))n.put(m,SourceJson.sha(Files.readAllBytes(root.resolve(m))));return n;}
     /** Measures the actual captured private tree, separately from referenced native publications. */
     public static JsonNode privateEvidence(JdbcTemplate j,InstallationHostGuard g,WorkerRepository.Owner o){
         var inventory=ContentRecoveryFiles.capture(g,o.runId(),o.attemptId(),j.queryForList("SELECT * FROM ddip_management.stage_invocations WHERE attempt_id=?",o.attemptId())).inventory();
@@ -28,6 +29,7 @@ public final class RssContentTestSupport {
         }
         return summary.put("bytes",bytes).put("files",files).put("entries",inventory.get("files").size()).put("inventoryBytes",SourceJson.canonical(inventory).length);
     }
+    public static JsonNode budget(InstallationHostGuard guard,WorkerRepository.Owner owner){var b=ContentEvidenceBudget.totals(guard.binding().root().resolve("runs/"+owner.runId()+"/attempts/"+owner.attemptId()));return SourceJson.object().put("actualBytes",b.actualBytes()).put("actualEntries",b.actualEntries()).put("reservedBytes",b.reservedBytes()).put("reservedEntries",b.reservedEntries()).put("inventoryMaximum",b.inventoryMaximum());}
     /** Synthetic metadata only: exercises SQL fencing/atomicity, never asserts native qualification. */
     public record Fence(Object stage,JsonNode frozen,JsonNode gold,JsonNode reference,byte[] artifact){}
     public static void checkpointPublication(WorkerRepository w,InstallationHostGuard g,Fence f){var stage=(WorkerRepository.PublicationStage)f.stage();stage=w.recordPublicationChild(g,stage,new InstallationHostGuard.ProcessIdentity(UUID.randomUUID(),ProcessHandle.current().pid(),ProcessHandle.current().info().startInstant().orElseThrow()));w.checkpointContent(g,stage,"a".repeat(64),f.frozen(),f.gold(),f.reference());}

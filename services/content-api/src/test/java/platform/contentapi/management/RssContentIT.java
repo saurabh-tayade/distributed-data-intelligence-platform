@@ -18,10 +18,40 @@ class RssContentIT extends RssGoldFixtures {
         if(id.equals(PUB))try{var process=new ProcessBuilder(System.getenv("DDIP_TEST_PYTHON"),"-I","-B",Path.of("../../processing/tests/managed_content_fixture.py").toRealPath().toString(),"reference",roots.get(REFS).toString(),REFS).redirectError(ProcessBuilder.Redirect.INHERIT).start();byte[] raw=process.getInputStream().readAllBytes();assertThat(process.waitFor(30,java.util.concurrent.TimeUnit.SECONDS)).isTrue();assertThat(process.exitValue()).isZero();evidence=(ObjectNode)SourceJson.parse(raw,512*1024);}catch(Exception ex){throw new IllegalStateException(ex);}
         super.artifact(id,evidence);
     }
-    void goldReady()throws Exception{phase="d1-d4";silver();prepare();publish();var profile=SourceJson.object().put("contentRuntimeVersion",1).put("goldRuntimeId",goldRuntime).put("goldRuntimeSha256",digest(goldRuntime)).put("referenceBindingId",REFS).put("contentBindingId","content-CONTENT").put("seconds",300);profile.set("modules",RssContentTestSupport.modules(Path.of("../../processing").toRealPath()));register(contentRuntime,profile);}
+    void goldReady()throws Exception{phase="d1-d4";silver();prepare();publish();if(!boundedEvidence)registerContentRuntime();}
+    @Override void afterProcessingProfiles()throws Exception{if(boundedEvidence)registerContentRuntime();}
+    void registerContentRuntime()throws Exception{var profile=SourceJson.object().put("contentRuntimeVersion",boundedEvidence?2:1).put("goldRuntimeId",goldRuntime).put("goldRuntimeSha256",digest(goldRuntime)).put("referenceBindingId",REFS).put("contentBindingId","content-CONTENT").put("seconds",300);profile.set("modules",RssContentTestSupport.modules(Path.of("../../processing").toRealPath(),boundedEvidence));register(contentRuntime,profile);}
     RssContentTestSupport.Completed complete(){return complete((p,b,o)->{});}
     RssContentTestSupport.Completed complete(RssContentTestSupport.Fault f){phase="content";return RssContentTestSupport.execute(jdbc,tx,workers,guard,owner,contentRuntime,f);}
     UUID inspectContent(){return RssContentTestSupport.inspect(jdbc,tx,workers,guard,owner.runId(),contentRuntime);}
+    @Test void boundedProfileRejectsTwoFeedsBeforeRetrievalOrPublication()throws Exception{
+        release();closeProxy();boundedEvidence=true;
+        try{setup();multi=true;assertThatThrownBy(this::silver).hasMessage("RESOURCE_LIMIT");assertThat(requests.get()).isZero();assertThat(nonGet.get()).isZero();assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.stage_invocations",Integer.class)).isZero();assertThat(jdbc.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isEqualTo(owner.attemptId());}
+        finally{boundedEvidence=false;}
+    }
+    @Test void boundedProfilePublishesAndRetainsACompleteRecoveryTree()throws Exception{
+        release();closeProxy();boundedEvidence=true;
+        try{
+            setup();goldReady();var goldBefore=snapshot(gold());var silverBefore=snapshot(roots.get(SILVER_BINDING));var result=complete();var evidence=SourceJson.parse(result.evidence(),16*1024*1024);
+            assertThat(evidence.get("verification").get("completion").get("output_counts")).isEqualTo(SourceJson.object().put("content_catalog_v1",1).put("content_source_discovery_daily_v1",1));
+            var publication=roots.get("content-CONTENT").resolve(evidence.get("relativeAddress").stringValue());var before=snapshot(publication);
+            assertThat(inspectContent()).isEqualTo(result.artifact());assertThat(snapshot(publication)).isEqualTo(before);assertThat(snapshot(gold())).isEqualTo(goldBefore);
+            String command=jdbc.queryForObject("SELECT command_address FROM ddip_management.stage_invocations WHERE attempt_id=? AND stage='PUBLISH_CONTENT'",String.class,owner.attemptId());
+            var values=new ProcessBuilder(System.getenv("DDIP_TEST_PYTHON"),"-I","-B",Path.of("../../processing/tests/managed_content_fixture.py").toRealPath().toString(),"bounded-values",guard.binding().root().resolve(command).toString()).redirectError(ProcessBuilder.Redirect.INHERIT).start();byte[] analytical=values.getInputStream().readAllBytes();assertThat(values.waitFor(30,java.util.concurrent.TimeUnit.SECONDS)).isTrue();assertThat(values.exitValue()).isZero();var data=SourceJson.parse(analytical);
+            assertThat(data.get("article")).isEqualTo(SourceJson.object().put("source_id","demo-feed").put("title","One again").put("observation_count","2").put("distinct_ingestion_count","1").put("publisher_name","Demo Publisher").put("reference_status","MATCHED").put("reference_id","fixture-publishers").put("reference_revision","r1"));
+            assertThat(data.get("daily")).isEqualTo(SourceJson.object().put("source_id","demo-feed").put("discovered_article_count","1").put("articles_missing_reference_count","0"));
+            var measured=RssContentTestSupport.privateEvidence(jdbc,guard,owner);var budget=RssContentTestSupport.budget(guard,owner);
+            assertThat(measured.get("bytes").longValue()).isLessThanOrEqualTo(budget.get("reservedBytes").longValue());assertThat(budget.get("reservedBytes").longValue()).isLessThanOrEqualTo(64L*1024*1024);
+            assertThat(measured.get("entries").intValue()).isLessThanOrEqualTo(budget.get("reservedEntries").intValue());assertThat(jdbc.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isNull();assertThat(requests.get()).isEqualTo(1);
+            assertThat(budget.get("reservedBytes").longValue()).isEqualTo(64L*1024*1024);
+            int reads=proxy.gets.get(),writes=proxy.puts.get();assertThat(writes).isEqualTo(2);
+            assertThatThrownBy(this::inspectContent).hasMessage("RESOURCE_LIMIT");
+            assertThat(RssContentTestSupport.budget(guard,owner)).isEqualTo(budget);
+            assertThat(snapshot(publication)).isEqualTo(before);assertThat(snapshot(gold())).isEqualTo(goldBefore);assertThat(requests.get()).isEqualTo(1);
+            assertThat(proxy.gets.get()).isEqualTo(reads);assertThat(proxy.puts.get()).isEqualTo(writes);assertThat(proxy.deletes.get()).isZero();assertThat(snapshot(roots.get(SILVER_BINDING))).isEqualTo(silverBefore);
+            System.out.println("B0_BOUNDED_NATIVE private="+measured+" budget="+budget+" immutableFiles="+before.size()+" bronzePuts="+writes+" bronzeGets="+reads+" feedGets="+requests.get()+" result="+result.artifact());
+        }finally{boundedEvidence=false;}
+    }
     @Test void twoSourceContentFinalizationReplayAndStandaloneEquivalence()throws Exception{
         multi=true;goldReady();var receipts=jdbc.queryForList("SELECT source_id,encode(receipt_bytes,'hex') AS receipt,journal_sha256 FROM ddip_management.rss_deliveries ORDER BY source_id");var goldBefore=snapshot(gold());owner=workers.heartbeat(guard,owner);var queued=content();((ObjectNode)queued.get("fetchSources").get(0)).put("revision",2);submit(queued,"next-run");assertThatThrownBy(()->WorkerTestSupport.enabled(jdbc,tx,INSTALL).claim(guard,owner.worker(),UUID.randomUUID())).hasMessage("WORKER_NOT_READY");phase="content";var result=complete();phase="inspect";var e=SourceJson.parse(result.evidence(),16*1024*1024);var verification=e.get("verification");assertThat(verification.get("completion").get("output_counts")).isEqualTo(SourceJson.object().put("content_catalog_v1",2).put("content_source_discovery_daily_v1",2));assertThat(verification.get("coverage").get("matched_article_count").toString()).isIn("1","\"1\"");assertThat(verification.get("coverage").get("missing_article_count").toString()).isIn("1","\"1\"");
         var privateEvidence=RssContentTestSupport.privateEvidence(jdbc,guard,owner);assertThat(privateEvidence.get("bytes").longValue()).isBetween(1L,64L*1024*1024);assertThat(privateEvidence.get("entries").intValue()).isBetween(1,4096);assertThat(privateEvidence.get("inventoryBytes").intValue()).isBetween(1,1024*1024);System.out.println("B0_NATIVE_ENVELOPE feeds=2 retainedSilver=0 private="+privateEvidence);

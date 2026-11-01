@@ -14,5 +14,6 @@ final class RecoveryRuntime {
         return new RecoveryRuntime(ReliabilityRuntime.load(j,tx,g,o,id,frozen),null);
     }
     void check(){if(reliability!=null)reliability.check();else content.check();}
-    JsonNode json(){if(reliability!=null)return reliability.json();return SourceJson.object().put("contentRecoveryRuntimeVersion",1).put("digest",content.digest).put("bridgeSha256",SourceJson.sha(PreflightFiles.read(java.nio.file.Path.of(content.gold.silver.config.get("processingRoot").stringValue()).resolve("content_recovery_verifier.py"),1024*1024,false)));}
+    static JsonNode contentJson(RssContentRuntime content){int version=content.config.get("contentRuntimeVersion").intValue();return SourceJson.object().put("contentRecoveryRuntimeVersion",version).put("digest",content.digest).put("bridgeSha256",SourceJson.sha(PreflightFiles.read(java.nio.file.Path.of(content.gold.silver.config.get("processingRoot").stringValue()).resolve(version==2?"bounded_content_producer.py":"content_recovery_verifier.py"),1024*1024,false)));}
+    JsonNode json(){if(reliability!=null)return reliability.json();return contentJson(content);}
 }

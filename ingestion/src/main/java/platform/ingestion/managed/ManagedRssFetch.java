@@ -143,6 +143,7 @@ public final class ManagedRssFetch {
         byte[] bytes;try(var stream=Files.newInputStream(p,LinkOption.NOFOLLOW_LINKS)){bytes=stream.readNBytes(maximum+1);}check(bytes.length<=maximum);return bytes;
     }
     static void write(Path p,byte[] bytes) throws IOException {
+        if(ReservedEvidence.active()){ReservedEvidence.write(p,bytes);return;}
         privateEntry(p.getParent(),true);
         try(var ch=FileChannel.open(p,Set.of(StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE,LinkOption.NOFOLLOW_LINKS),PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))){
             var buffer=ByteBuffer.wrap(bytes);while(buffer.hasRemaining())ch.write(buffer);ch.force(true);

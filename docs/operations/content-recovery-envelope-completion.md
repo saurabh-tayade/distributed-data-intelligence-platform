@@ -1,5 +1,10 @@
 # Gate B0 completion investigation: retained evidence and interruption safety
 
+Historical investigation at the baseline below. The subsequent
+[bounded-producer implementation report](content-evidence-producers.md) records the code,
+new command protocol, validation candidate and remaining Gate B0 blocker. Statements about
+missing producer safeguards in this document describe that earlier baseline.
+
 October 31, 2026. **Gate B0 remains incomplete. Content dispatch is not safe to consider
 for Gate B1.** No supported operational Content profile satisfying the requested guarantee
 has been established. Production dispatch remains disabled; no enable switch is added.

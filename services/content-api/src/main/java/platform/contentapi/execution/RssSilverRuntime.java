@@ -22,7 +22,8 @@ final class RssSilverRuntime {
             var rows=tx.required(()->jdbc.queryForList("SELECT configuration_bytes,configuration_sha256 FROM ddip_management.execution_profiles WHERE profile_id=?",id));need(rows.size()==1,RUNTIME_MISMATCH);
             var row=rows.getFirst();String sha=(String)row.get("configuration_sha256");var c=FrozenRunSelection.canonical((byte[])row.get("configuration_bytes"),sha,65536);
             SourceJson.fields(c,"silverRuntimeVersion","bronzeRuntimeId","bronzeRuntimeSha256","runProfileSha256","deploymentSha256","python","javaHome","processingRoot","modules","versions","outputBindingId","tempBindingId","seconds");
-            need(c.get("silverRuntimeVersion").isIntegralNumber() && c.get("silverRuntimeVersion").canConvertToInt() && c.get("silverRuntimeVersion").intValue()==1 && c.get("bronzeRuntimeSha256").stringValue().equals(bronzeSha) && c.get("runProfileSha256").equals(frozen.get("executionProfile").get("configurationSha256")) && c.get("deploymentSha256").equals(frozen.get("executionProfile").get("configuration").get("runtime").get("deploymentSha256")),RUNTIME_MISMATCH);
+            need(c.get("silverRuntimeVersion").isIntegralNumber() && c.get("silverRuntimeVersion").canConvertToInt() && Set.of(1,2).contains(c.get("silverRuntimeVersion").intValue()) && c.get("bronzeRuntimeSha256").stringValue().equals(bronzeSha) && c.get("runProfileSha256").equals(frozen.get("executionProfile").get("configurationSha256")) && c.get("deploymentSha256").equals(frozen.get("executionProfile").get("configuration").get("runtime").get("deploymentSha256")),RUNTIME_MISMATCH);
+            ContentEvidenceProfile.runtime(jdbc,tx,frozen,"SILVER",id,c.get("silverRuntimeVersion").intValue());
             need(c.get("seconds").isIntegralNumber() && c.get("seconds").canConvertToInt() && c.get("seconds").intValue()>0 && c.get("seconds").intValue()<=900,RUNTIME_MISMATCH);
             JsonNode output=null,scratch=null;Set<Path> roots=new HashSet<>();
             for(var b:frozen.get("storageBindings")){
@@ -41,7 +42,7 @@ final class RssSilverRuntime {
             Path processing=Path.of(config.get("processingRoot").stringValue()),python=Path.of(config.get("python").stringValue()),java=Path.of(config.get("javaHome").stringValue());
             need(processing.isAbsolute() && processing.equals(processing.toRealPath()) && python.isAbsolute() && Files.isExecutable(python) && java.equals(Path.of(System.getProperty("java.home")).toRealPath()) && Runtime.version().feature()==21,RUNTIME_MISMATCH);
             need(config.get("versions").equals(SourceJson.object().put("python","3.12.15").put("pyspark","4.0.2").put("boto3","1.43.114").put("java","21")),RUNTIME_MISMATCH);
-            SourceJson.fields(config.get("modules"),MODULES.toArray(String[]::new));for(String module:MODULES)need(SourceJson.sha(PreflightFiles.read(processing.resolve(module),1024*1024,false)).equals(config.get("modules").get(module).stringValue()),RUNTIME_MISMATCH);
+            var modules=ContentEvidenceProfile.modules(MODULES,config.get("silverRuntimeVersion").intValue());SourceJson.fields(config.get("modules"),modules.toArray(String[]::new));for(String module:modules)need(SourceJson.sha(PreflightFiles.read(processing.resolve(module),1024*1024,false)).equals(config.get("modules").get(module).stringValue()),RUNTIME_MISMATCH);
             for(var binding:List.of(output,scratch)){
                 Path root=Path.of(binding.get("root").stringValue());var identity=InstallationHostGuard.identity(root);
                 need(root.isAbsolute() && root.equals(root.toRealPath()) && Long.toString(identity.device()).equals(binding.get("rootDevice").stringValue()) && Long.toString(identity.inode()).equals(binding.get("rootInode").stringValue()),INPUT_CHANGED);
@@ -53,6 +54,6 @@ final class RssSilverRuntime {
     }
     JsonNode binding(){var n=SourceJson.object();for(String key:List.of("root","rootDevice","rootInode"))n.set(key,output.get(key));return n;}
     JsonNode nativeRuntime(){return SourceJson.object().put("javaHome",config.get("javaHome").stringValue()).put("scratchRoot",scratch.get("root").stringValue()).put("scratchDevice",scratch.get("rootDevice").stringValue()).put("scratchInode",scratch.get("rootInode").stringValue());}
-    List<String> command(Path path){return List.of(config.get("python").stringValue(),"-I","-B","-X","utf8",Path.of(config.get("processingRoot").stringValue()).resolve("managed_silver.py").toString(),path.toString());}
+    List<String> command(Path path){if(config.get("silverRuntimeVersion").intValue()==2)return ContentEvidenceProfile.command(config,"SILVER",path);return List.of(config.get("python").stringValue(),"-I","-B","-X","utf8",Path.of(config.get("processingRoot").stringValue()).resolve("managed_silver.py").toString(),path.toString());}
     Map<String,String> environment(){return Map.of("PATH","/usr/bin:/bin","TZ","UTC","LANG","C.UTF-8","JAVA_HOME",config.get("javaHome").stringValue(),"OPENBLAS_NUM_THREADS","1","OMP_NUM_THREADS","1");}
 }

@@ -1418,3 +1418,17 @@ No completed Silver/Gold/Content publisher is rerun. An intended Content namespa
 that already exists is rejected. A writer ambiguity, unavailable dependency, changed
 proof or retained attempt above 64 MiB prevents continuation. Production Content dispatch,
 automatic recovery, unattended retry and analytical activation remain disabled.
+
+## Gate B0 producer safeguards and current restriction
+
+The [bounded producer implementation record](content-evidence-producers.md) documents the
+fixed version-2 Java/Python sinks, exact reservations, prepare-before-intent command protocol,
+interruption behavior and measured native fixture. [ADR 0021](../adr/0021-content-evidence-producer-reservations.md)
+is Proposed. The version-2 one-feed configuration is an internal validation candidate, not
+an approved operational profile. Production Content dispatch still has no enable switch.
+
+Do not use source submission, operator RESUME or a profile-version change to infer dispatch
+readiness. The complete native proof/packet envelope remains unproved; Gate B0 is blocked.
+On capacity, missing-evidence or writer-identity failure, retain the occupied coordinator,
+private prefixes, original deployment copies and native volumes. Use the existing explicit
+recovery/quiescence procedure; never delete a prefix or repeat a publisher to clear the slot.

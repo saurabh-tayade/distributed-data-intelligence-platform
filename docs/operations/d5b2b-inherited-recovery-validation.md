@@ -5,7 +5,9 @@ dispatch remains disabled; E5 backend closeout is **blocked**, not complete.
 [ADR 0020](../adr/0020-inherited-content-reconciliation.md) is pending owner acceptance.
 The later [Gate B0 completion investigation](content-recovery-envelope-completion.md)
 adds native evidence measurement and interrupted-write tests; it does not resolve the
-activation blocker or change the historical validation below.
+activation blocker or change the historical validation below. The subsequent
+[bounded producer implementation](content-evidence-producers.md) adds reservations and
+prepared commands, while documenting the remaining native proof/packet envelope blocker.
 
 ## Baseline inspection and acceptance criteria
 

@@ -25,9 +25,10 @@ final class RssBronzeExecution {
         var context=RssBronzeContext.load(jdbc,tx,guard,owner.runId(),source,runtimeId);context.check();
         need(context.state.equals("FETCH_JOURNALED"),INPUT_INVALID);
         UUID checkpoint=UUID.randomUUID();byte[] command=command(context,checkpoint,owner.worker().epoch(),true);
-        var current=new Current();current.stage=workers.beginBronze(guard,owner,context,checkpoint,SourceJson.sha(command));fault.at(Boundary.INTENT,current.stage);
+        var files=new PreflightFiles(guard,context.run,context.attempt,checkpoint,"STORE_BRONZE");
+        var prepared=PreparedCommand.prepare(guard,files.directory,command,65536);
+        var current=new Current();current.stage=workers.beginBronze(guard,owner,context,checkpoint,SourceJson.sha(command),prepared);fault.at(Boundary.INTENT,current.stage);
         try {
-            var files=new PreflightFiles(guard,context.run,context.attempt,checkpoint,"STORE_BRONZE");files.write("command.json",command,65536);
             var child=new ReadOnlyVerifierProcess().run(context.runtime.bronzeCommand(files.directory.resolve("command.json")),context.runtime.environment(),files.directory,Duration.ofSeconds(180),new ReadOnlyVerifierProcess.Observer(){
                 public void beforeStart(){fault.at(Boundary.BEFORE_AUTHORIZATION,current.stage);context.check();need(Arrays.equals(command,files.read("command.json",65536)),INPUT_CHANGED);current.stage=workers.authorizeBronze(guard,current.stage);}
                 public void started(InstallationHostGuard.ProcessIdentity child){current.stage=workers.recordBronzeChild(guard,current.stage,child);}
