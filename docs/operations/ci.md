@@ -8,8 +8,9 @@ contracts, required suite coverage, action/dependency pins and native execution 
 [PR #71 correction](#pr-71--d3-hosted-failure-and-postgresql-budget) increases only the PostgreSQL
 job timeout from 60 to 90 minutes. D1/D2's added
 PostgreSQL tests, prebuilt adapters and isolated storage are described below.
-[PR #72](pr72-postgres-partitions.md) replaces sequential PostgreSQL execution with four independent
-partitions and an unchanged logical PostgreSQL check. Each execution partition retains the 90-minute ceiling.
+[PR #72](pr72-postgres-partitions.md) originally replaced sequential PostgreSQL execution with four
+independent partitions and an unchanged logical PostgreSQL check. The current workflow uses five
+partitions after the Gold timeout follow-up below. Each execution partition retains the 90-minute ceiling.
 
 ## Acceptance criteria and workflow graph
 
@@ -31,11 +32,13 @@ flowchart LR
   changes --> pgcore[PostgreSQL core/imports]
   changes --> pgrel[PostgreSQL Reliability/recovery]
   changes --> pgingest[PostgreSQL D1-D3]
-  changes --> pggold[PostgreSQL D4 Gold]
+  changes --> pggold[PostgreSQL Gold/Content publication]
+  changes --> pgrecovery[PostgreSQL Content recovery/RESUME]
   pgcore --> postgres[content_postgres: fan-in]
   pgrel --> postgres
   pgingest --> postgres
   pggold --> postgres
+  pgrecovery --> postgres
   changes --> http[analytics_http: selected or fallback]
   changes --> gate[processing: always evaluates results]
   ingestion --> gate
@@ -54,25 +57,27 @@ flowchart LR
 | content_postgres_core | All Content API units; persistence/import/source/admission integration | 90 minutes |
 | content_postgres_reliability | Reliability processing and recovery integration | 90 minutes |
 | content_postgres_ingestion | Managed Content D1/D2/D3 integration | 90 minutes |
-| content_postgres_gold | Managed Content D4 integration | 90 minutes |
+| content_postgres_gold | Native Gold/Content publication and finalization integration | 90 minutes |
+| content_postgres_content_recovery | Content recovery, explicit RESUME and inherited recovery integration | 90 minutes |
 | content_postgres | Original PostgreSQL check; requires every selected partition to succeed | 5 minutes |
 | analytics_http | Fresh synthetic Gold fixtures, content API unit/component tests and GoldApiIT HTTP/native compatibility | 15 minutes |
 | processing | Existing required backend context; classification and five-suite aggregate | 5 minutes |
 | documentation | Existing Markdown/link/hygiene checks plus focused CI policy tests | 5 minutes |
 | frontend | Existing typecheck, lint, component tests and production build | 10 minutes |
 
-The four PostgreSQL callers use the same logical `content_postgres` classification output.
+The five PostgreSQL callers use the same logical `content_postgres` classification output.
 They depend only on classification and invoke the [reusable partition workflow](../../.github/workflows/postgres-partition.yml)
 on independently provisioned Ubuntu 24.04 runners, each with its own pinned PostgreSQL service,
-workspace, fixture roots and full pinned Python/Spark/DuckDB/JDK environment. Only the two managed
-Content partitions build the ingestion adapter and start/clean up pinned SeaweedFS. Core/import
+workspace, fixture roots and full pinned Python/Spark/DuckDB/JDK environment. The three managed
+Content partitions (`ingestion`, `gold`, `content_recovery`) build the ingestion adapter and
+start pinned SeaweedFS, with cleanup guarded by `always()`. Core/import
 fixtures supply their own synthetic Bronze HTTP server and need no SeaweedFS service. Unit tests
 run once in core; other PostgreSQL partitions skip only Surefire units, never Failsafe integration.
 The analytics HTTP job retains its existing unit/integration command.
 
 The original `content_postgres` name is now a small fail-closed fan-in job. A selected missing,
 failed, cancelled, skipped or timed-out partition cannot produce PostgreSQL success. If PostgreSQL
-is intentionally unselected, all four callers and that fan-in are skipped, preserving the existing
+is intentionally unselected, all five callers and that fan-in are skipped, preserving the existing
 five-suite aggregate's exact safe-skip rule. Classification and the top-level aggregate retain
 all five logical outputs, trust/fallback behavior and original required-check names. Only fan-ins
 wait for partition completion; no execution partition waits for another execution partition.
@@ -86,13 +91,22 @@ with positive test counts and no failures, errors or skips. This guards selectio
 well as test success. [PR #72 evidence](pr72-postgres-partitions.md) records all class assignments,
 hosted timing inputs, local measurements, commands and remaining hosted acceptance requirements.
 
-The [D5b-2b inherited recovery increment](d5b2b-inherited-recovery-validation.md) adds
-`ContentInheritedRecoveryIT` to Gold. The inventory is now core=10, reliability=7,
-ingestion=3 and gold=6 classes (26 total). Its native cases retain separate original/resumed
-worker processes, real storage and PostgreSQL restart coverage. The 90-minute ceiling,
-change-aware classification and both aggregate gates are unchanged. Measure the expanded
-Gold partition on hosted Ubuntu before acceptance; local incremental timings do not establish
-a hosted budget guarantee. Do not drop these cases or increase the timeout to hide an overrun.
+The current inventory is **core=10, reliability=7, ingestion=3, gold=3,
+content_recovery=3 (26 total)**. Gold contains `RssGoldIT`, `RssContentIT` and
+`ContentFinalizationIT`. Content recovery contains `ContentRecoveryIT`, `ContentResumeIT` and
+`ContentInheritedRecoveryIT`; their native cases retain separate original/resumed worker processes,
+real storage and PostgreSQL restart coverage. No integration class or case is removed or weakened.
+
+**Gold timeout follow-up:** [run 41317309717](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/41317309717)
+cancelled `content_postgres_gold` at its configured 90-minute ceiling; the unchanged base commit
+timed out identically in [run 41282407982](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/41282407982).
+Neither run reported a test assertion or application exception; aggregate failures were downstream
+fail-closed behavior. These measured cancellations motivate moving the three Content recovery/RESUME
+classes out of Gold into their own independent caller. They are censored runtimes, not completed
+partition timings or evidence that the split now fits. PR #72's four-partition measurements remain
+historical. The timeout ceiling, logical classification output, `content_postgres` check name and
+final required processing gate are unchanged. Hosted acceptance must independently complete and
+report-verify both new three-class partitions within 90 minutes; local static checks do not prove headroom.
 
 ## Change categories and dependency rules
 

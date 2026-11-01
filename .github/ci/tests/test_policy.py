@@ -361,13 +361,26 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("--env S3_BUCKET=ddip-d2", body)
         self.assertIn("-s3.autoCreateBucket=false", body)
         self.assertIn('docker rm --force --volumes "ddip-ci-bronze-${POSTGRES_PARTITION}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"', body)
-        self.assertIn("always() && (inputs.partition == 'ingestion' || inputs.partition == 'gold')", body)
+        self.assertIn("always() && (inputs.partition == 'ingestion' || inputs.partition == 'gold' || inputs.partition == 'content_recovery')", body)
         pom = (ROOT / "services/content-api/pom.xml").read_text(encoding="utf-8")
         self.assertIn("**/*IT.java", pom)
         self.assertIn("**/GoldApiIT.java", pom)
 
+    def test_all_managed_content_partitions_build_provision_and_always_cleanup(self):
+        managed = "inputs.partition == 'ingestion' || inputs.partition == 'gold' || inputs.partition == 'content_recovery'"
+        for name, condition, command in (
+            ("Build prebuilt Java RSS and Bronze adapters for managed acceptance", managed,
+             "mvn -B -ntp -f ingestion/pom.xml package -DskipTests"),
+            ("Start isolated Bronze acceptance storage", managed, "docker run --detach"),
+            ("Remove isolated Bronze acceptance storage", "always() && (" + managed + ")", "docker rm --force --volumes"),
+        ):
+            with self.subTest(step=name):
+                step = POSTGRES_WORKFLOW.split("      - name: " + name + "\n", 1)[1].split("\n      - name:", 1)[0]
+                self.assertIn("if: ${{ " + condition + " }}", step)
+                self.assertIn(command, step)
+
     def test_graph_filters_and_required_contexts(self):
-        for job in (*[j for j in JOBS if j != "content_postgres"], "content_postgres_core", "content_postgres_reliability", "content_postgres_ingestion", "content_postgres_gold"):
+        for job in (*[j for j in JOBS if j != "content_postgres"], "content_postgres_core", "content_postgres_reliability", "content_postgres_ingestion", "content_postgres_gold", "content_postgres_content_recovery"):
             body = block(job)
             key = "content_postgres" if job.startswith("content_postgres_") else job
             self.assertIn("    needs: changes", body)
