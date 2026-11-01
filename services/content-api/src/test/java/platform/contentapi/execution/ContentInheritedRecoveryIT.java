@@ -13,6 +13,7 @@ import static org.assertj.core.api.Assertions.*;
 /** Production native adapters and C3c recovery, with actual original and resumed worker JVMs. */
 class ContentInheritedRecoveryIT extends ContentRecoveryFixture {
     String stop;
+    @Test void boundedInheritedGoldFinalResult()throws Exception{boundedEvidence=true;stop="PUBLISH_CONTENT";recover("GOLD");}
     @Test void inheritedGoldFinalResultAndSafetyVetoes()throws Exception{stop="PUBLISH_CONTENT";recover("GOLD");}
     @Test void inheritedContentInputsFinalResult()throws Exception{stop="PUBLISH_CONTENT";recover("CHECK_INPUTS");}
     @Test void inheritedGoldBeforeNewStagesPauses()throws Exception{stop="RESUME";recover("GOLD");}
@@ -54,7 +55,7 @@ class ContentInheritedRecoveryIT extends ContentRecoveryFixture {
                 var contentRuntime=RssContentRuntime.load(j,tx,fresh,run,frozen,runtime);
                 for(var state:List.of(RecoveryQuiescence.State.LIVE,RecoveryQuiescence.State.UNAVAILABLE)){var ancestry=new ContentRecoveryAncestry(j,tx,id->state,Clock.systemUTC());assertThatThrownBy(()->ancestry.inspect(fresh,run,interrupted,contentRuntime,review)).hasMessage("EVIDENCE_UNAVAILABLE");}
                 Path retained=binding.root().resolve(plan.get("verificationAddress").stringValue());byte[] saved=Files.readAllBytes(retained);Files.write(retained,new byte[]{1});assertThatThrownBy(()->h.qualify(fresh,target,review,runtime)).hasMessage("EVIDENCE_CHANGED");Files.write(retained,saved);
-                Path missing=retained.resolveSibling("held-evidence.json");Files.move(retained,missing);try{assertThatThrownBy(()->h.qualify(fresh,target,review,runtime)).hasMessage("EVIDENCE_UNAVAILABLE");}finally{Files.move(missing,retained);}
+                Path missing=temp.resolve("held-evidence.json");Files.move(retained,missing);try{assertThatThrownBy(()->h.qualify(fresh,target,review,runtime)).hasMessage("EVIDENCE_UNAVAILABLE");}finally{Files.move(missing,retained);}
                 if(!mode.equals("BEFORE_FETCH")){
                     Path commandFile=binding.root().resolve(j.queryForObject("SELECT command_address FROM ddip_management.stage_invocations WHERE attempt_id=? AND stage='FETCH_SOURCE' AND item_ordinal=0",String.class,original));byte[] bytes=Files.readAllBytes(commandFile);var modified=Files.getLastModifiedTime(commandFile);
                     Files.write(commandFile,new byte[]{1});try{assertThatThrownBy(()->h.qualify(fresh,target,review,runtime)).hasMessage("EVIDENCE_CHANGED");}finally{Files.write(commandFile,bytes);Files.setLastModifiedTime(commandFile,modified);}

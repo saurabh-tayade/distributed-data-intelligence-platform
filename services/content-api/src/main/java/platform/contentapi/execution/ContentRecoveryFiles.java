@@ -8,14 +8,19 @@ import tools.jackson.databind.JsonNode;
 import static platform.contentapi.execution.RecoveryFailure.*;
 import static platform.contentapi.execution.RecoveryFailure.Code.*;
 
-/** Bounded capture of the exact original private attempt, including launch-gap child sidecars. */
+/** Bounded capture of an exact private attempt/control tree, including launch-gap child sidecars. */
 final class ContentRecoveryFiles {
     static RecoveryFiles.Capture capture(InstallationHostGuard guard,UUID run,UUID attempt,List<Map<String,Object>> stages){
+        return capture(guard,run,attempt,stages,false);
+    }
+    static RecoveryFiles.Capture capture(InstallationHostGuard guard,UUID run,UUID attempt,List<Map<String,Object>> stages,boolean bounded){
         var n=SourceJson.object();var files=n.putArray("files");var hints=new HashSet<Long>();
         Path root=guard.binding().root().resolve("runs/"+run+"/attempts/"+attempt);
         try{
             // An intent may precede creation of its private directory.
             try{Files.readAttributes(root,BasicFileAttributes.class,LinkOption.NOFOLLOW_LINKS);}catch(NoSuchFileException ex){need(stages.stream().noneMatch(s->s.get("command_address")!=null || s.get("result_address")!=null),EVIDENCE_UNAVAILABLE);return new RecoveryFiles.Capture(n,Set.of());}
+            if(bounded)ContentEvidenceBudget.require(guard,run,attempt);
+            else if(ContentEvidenceBudget.enabled(root))ContentEvidenceBudget.inspect(root);
             try(var walk=Files.walk(root,4)){
                 var paths=walk.limit(4097).sorted().toList();need(paths.size()<=4096,EVIDENCE_UNAVAILABLE);
                 long total=0;
@@ -29,6 +34,7 @@ final class ContentRecoveryFiles {
                     byte[] raw=PreflightFiles.read(p,p.getFileName().toString().equals("payload.xml")?RssJournalFiles.PAYLOAD:PreflightFiles.LARGE,true);
                     var after=Files.readAttributes(p,BasicFileAttributes.class,LinkOption.NOFOLLOW_LINKS);need(a.fileKey().equals(after.fileKey()) && a.size()==after.size() && a.lastModifiedTime().equals(after.lastModifiedTime()),EVIDENCE_CHANGED);
                     f.put("length",Long.toString(raw.length)).put("sha256",SourceJson.sha(raw));
+                    if(Set.of("child.json.preparing","result.json.preparing").contains(p.getFileName().toString()))n.put("processEvidenceIncomplete",true);
                     if(Set.of("child.json","evidence.json","result.json").contains(p.getFileName().toString())){
                         try{var e=SourceJson.parse(raw,PreflightFiles.LARGE);if(p.getFileName().toString().equals("child.json"))hints.add(Long.parseLong(e.get("pid").stringValue()));else if(e.has("cleanup") && e.get("cleanup").has("pid"))hints.add(Long.parseLong(e.get("cleanup").get("pid").stringValue()));}catch(RuntimeException ex){need(p.getFileName().toString().equals("evidence.json"),EVIDENCE_CHANGED);}
                     }

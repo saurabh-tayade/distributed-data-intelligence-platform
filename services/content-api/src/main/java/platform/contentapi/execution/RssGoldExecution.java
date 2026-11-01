@@ -27,6 +27,7 @@ final class RssGoldExecution {
         boolean inherited=exactAttempt!=null || ContentResumeLineage.plan(jdbc,run,attempt)!=null;
         attempt=exactAttempt!=null?exactAttempt:ContentResumeLineage.dataAttempt(jdbc,run,attempt);
         need(frozen.get("pipeline").stringValue().equals("CONTENT_RSS_V1") && attempt!=null,RUNTIME_MISMATCH);
+        if(ContentEvidenceProfile.bounded(frozen))ContentEvidenceBudget.require(guard,run,attempt);
         var runtime=RssGoldRuntime.load(jdbc,tx,guard,run,frozen,runtimeId);
         UUID inputAttempt=attempt;JsonNode ids=tx.required(()->RssGoldInputs.ids(jdbc,run,inputAttempt,frozen));var inputs=SourceJson.object().putArray("items");var reader=new RssSilverExecution(jdbc,tx,workers);
         for(var id:ids){var proof=inherited?reader.committedMetadata(guard,UUID.fromString(id.get("originRunId").stringValue()),id.get("sourceId").stringValue(),runtime.config.get("silverRuntimeId").stringValue()):reader.committed(guard,UUID.fromString(id.get("originRunId").stringValue()),id.get("sourceId").stringValue(),runtime.config.get("silverRuntimeId").stringValue());need(proof.get("artifactId").equals(id.get("artifactId")),INPUT_CHANGED);inputs.add(proof);if(owner!=null)owner=workers.heartbeat(guard,owner);}
@@ -36,9 +37,9 @@ final class RssGoldExecution {
     private static final class Current {WorkerRepository.PublicationStage stage;}
     Prepared prepare(InstallationHostGuard guard,WorkerRepository.Owner owner,String runtimeId){
         var c=context(guard,owner.runId(),runtimeId,owner);owner=c.owner;var current=new Current();UUID checkpoint=UUID.randomUUID();byte[] command=command(c,checkpoint,owner.worker().epoch(),"PREPARE",null,null);
-        current.stage=workers.beginGold(guard,owner,"PREPARE_GOLD",checkpoint,SourceJson.sha(command),c.inputSha,c.inputSha,c.frozen,c.inputs);fault.at("PREPARE_GOLD",Boundary.INTENT,current.stage.owner());
+        var files=new PreflightFiles(guard,c.run,c.attempt,checkpoint,"PREPARE_GOLD");var sealed=PreparedCommand.prepare(guard,files.directory,command,PreflightFiles.LARGE);
+        current.stage=workers.beginGold(guard,owner,"PREPARE_GOLD",checkpoint,SourceJson.sha(command),c.inputSha,c.inputSha,c.frozen,c.inputs,sealed);fault.at("PREPARE_GOLD",Boundary.INTENT,current.stage.owner());
         try {
-            var files=new PreflightFiles(guard,c.run,c.attempt,checkpoint,"PREPARE_GOLD");files.write("command.json",command,PreflightFiles.LARGE);
             var value=child(guard,c,files,command,current,true);need(value.get("status").stringValue().equals("PREPARED"),RESULT_INVALID);prepared(value.get("prepared"),c);
             fault.at("PREPARE_GOLD",Boundary.VERIFIED,current.stage.owner());
             byte[] evidence=files.read("evidence.json",PreflightFiles.LARGE);byte[] anchor=anchor(files);files.write("verified.json",anchor,65536);
@@ -54,9 +55,9 @@ final class RssGoldExecution {
         var rows=tx.required(()->jdbc.queryForList("SELECT result_sha256 FROM ddip_management.stage_invocations WHERE attempt_id=? AND stage='PREPARE_GOLD' AND checkpoint_id=? AND state='VERIFIED' AND input_evidence_sha256=?",c.attempt,prepared.checkpoint(),c.inputSha));need(rows.size()==1 && SourceJson.sha(before.read("verified.json",65536)).equals(rows.getFirst().get("result_sha256")),INPUT_CHANGED);
         var links=tx.required(()->jdbc.queryForList("SELECT role,ordinal,artifact_id FROM ddip_management.stage_artifacts WHERE attempt_id=? AND stage='PREPARE_GOLD' ORDER BY role,ordinal",c.attempt));need(links.size()==c.inputs.size(),INPUT_CHANGED);for(int i=0;i<links.size();i++)need(links.get(i).get("role").equals("INPUT") && ((Number)links.get(i).get("ordinal")).intValue()==i && links.get(i).get("artifact_id").toString().equals(c.inputs.get(i).get("artifactId").stringValue()),INPUT_CHANGED);
         var nativeInputs=SourceJson.parse(prepared.bytes(),PreflightFiles.LARGE).get("prepared");prepared(nativeInputs,c);var current=new Current();UUID checkpoint=UUID.randomUUID();byte[] command=command(c,checkpoint,owner.worker().epoch(),"PUBLISH",nativeInputs,null);
-        current.stage=workers.beginGold(guard,owner,"PUBLISH_GOLD",checkpoint,SourceJson.sha(command),c.inputSha,nativeInputs.get("inputSetFingerprint").stringValue(),c.frozen,c.inputs);fault.at("PUBLISH_GOLD",Boundary.INTENT,current.stage.owner());
+        var files=new PreflightFiles(guard,c.run,c.attempt,checkpoint,"PUBLISH_GOLD");var sealed=PreparedCommand.prepare(guard,files.directory,command,PreflightFiles.LARGE);
+        current.stage=workers.beginGold(guard,owner,"PUBLISH_GOLD",checkpoint,SourceJson.sha(command),c.inputSha,nativeInputs.get("inputSetFingerprint").stringValue(),c.frozen,c.inputs,sealed);fault.at("PUBLISH_GOLD",Boundary.INTENT,current.stage.owner());
         try {
-            var files=new PreflightFiles(guard,c.run,c.attempt,checkpoint,"PUBLISH_GOLD");files.write("command.json",command,PreflightFiles.LARGE);
             var published=child(guard,c,files,command,current,true);need(Set.of("PROCESSED","SKIPPED").contains(published.get("status").stringValue()) && published.get("prepared").equals(nativeInputs),RESULT_INVALID);
             var verifiedFiles=new PreflightFiles(guard,c.run,c.attempt,checkpoint,"VERIFY_RESULT");byte[] verify=command(c,checkpoint,current.stage.owner().worker().epoch(),"VERIFY",nativeInputs,null);verifiedFiles.write("command.json",verify,PreflightFiles.LARGE);
             var verified=child(guard,c,verifiedFiles,verify,current,false);need(verified.get("status").stringValue().equals("VERIFIED") && verified.get("prepared").equals(nativeInputs) && verified.get("completion").get("input_set_fingerprint").equals(nativeInputs.get("inputSetFingerprint")),RESULT_INVALID);

@@ -23,6 +23,7 @@ final class RssFetchExecution {
     Journaled fetch(InstallationHostGuard guard,WorkerRepository.Owner owner,int ordinal,String runtimeId) {
         var frozen=workers.frozenContent(guard,owner);need(ordinal>=0 && ordinal<frozen.get("sources").size(),INPUT_INVALID);
         var selected=frozen.get("sources").get(ordinal);var runtime=RssFetchRuntime.load(jdbc,tx,guard,owner,runtimeId,frozen);runtime.endpoint(selected);
+        ContentEvidenceProfile.prepare(jdbc,tx,guard,owner,frozen,runtimeId);
         UUID checkpoint=UUID.randomUUID();
         var c=SourceJson.object().put("protocolVersion",1).put("runId",owner.runId().toString()).put("attemptId",owner.attemptId().toString())
                 .put("ownerEpoch",owner.worker().epoch()).put("stage","FETCH_SOURCE").put("itemOrdinal",ordinal).put("checkpointId",checkpoint.toString())
@@ -31,11 +32,13 @@ final class RssFetchExecution {
                 .put("feedUri",selected.get("endpoint").get("uri").stringValue()).put("runtimeSha256",runtime.digest())
                 .put("javaRuntime",runtime.javaRuntime()).put("testEndpoint",runtime.testEndpoint()).put("httpTimeoutMillis",runtime.timeoutMillis());
         byte[] command=SourceJson.canonical(c);need(command.length<=65536,RESOURCE_LIMIT);
-        var current=new Current();current.stage=workers.beginFetch(guard,owner,ordinal,checkpoint,selected.get("sourceId").stringValue(),selected.get("configurationSha256").stringValue(),SourceJson.sha(command));
+        String namespace="runs/"+owner.runId()+"/attempts/"+owner.attemptId()+"/fetch-source/"+selected.get("sourceId").stringValue()+"/"+checkpoint;
+        var files=new RssJournalFiles(guard,owner.runId(),owner.attemptId(),checkpoint,selected.get("sourceId").stringValue(),namespace,true);
+        var prepared=PreparedCommand.prepare(guard,files.directory,command,65536);
+        var current=new Current();current.stage=workers.beginFetch(guard,owner,ordinal,checkpoint,selected.get("sourceId").stringValue(),selected.get("configurationSha256").stringValue(),SourceJson.sha(command),prepared);
         // A fault/unknown acknowledgment after this commit may NEVER cause a second fetch.
         fault.at(Boundary.INTENT,current.stage);
         try {
-            var files=new RssJournalFiles(guard,current.stage,true);files.write("command.json",command);
             var result=process.run(runtime.command(files.directory.resolve("command.json")),runtime.environment(),files.directory,Duration.ofSeconds(45),new ReadOnlyVerifierProcess.Observer(){
                 public void beforeStart(){fault.at(Boundary.BEFORE_AUTHORIZATION,current.stage);runtime.check();runtime.endpoint(selected);need(Arrays.equals(command,files.read("command.json")),INPUT_CHANGED);current.stage=workers.authorizeFetch(guard,current.stage);}
                 public void started(InstallationHostGuard.ProcessIdentity child){current.stage=workers.recordFetchChild(guard,current.stage,child);}

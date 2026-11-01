@@ -69,3 +69,8 @@ three supported original checkpoints. [ADR 0020](0020-inherited-content-reconcil
 extends recovery to interrupted continuations and records the evidence envelope blocking
 ordinary Content dispatch. Both are implementation records pending owner acceptance.
 Earlier entries describe their historical checkpoint status.
+
+[ADR 0021](0021-content-evidence-producer-reservations.md) proposes a fixed versioned
+Content evidence producer/reservation protocol following the Gate B0 completion investigation.
+It is **Proposed**, not implemented or owner accepted. Content dispatch remains disabled;
+no approved recoverable operational profile has been established.

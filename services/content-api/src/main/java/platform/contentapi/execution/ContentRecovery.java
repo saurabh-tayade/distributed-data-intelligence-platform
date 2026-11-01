@@ -17,8 +17,9 @@ final class ContentRecovery {
     record Receipt(UUID run,String state,String code,UUID artifact,boolean retryEligible){}
     static final class Qualified {
         final RecoveryHandoff.Bootstrap bootstrap; final JsonNode pack,observation,privateSeal; final RecoveryHandoff.Owner owner;
-        final List<InstallationHostGuard.ProcessIdentity> children; final Instant at;final String observationAddress;final RecoveryFiles.Retained observationFile;
-        Qualified(RecoveryHandoff.Bootstrap b,JsonNode p,JsonNode e,RecoveryHandoff.Owner o,List<InstallationHostGuard.ProcessIdentity> c,Instant at,JsonNode seal,String address,RecoveryFiles.Retained retained){observationFile=retained;observationAddress=address;privateSeal=seal.deepCopy();bootstrap=b;pack=p.deepCopy();observation=e.deepCopy();owner=o;children=List.copyOf(c);this.at=at;}
+        final List<InstallationHostGuard.ProcessIdentity> children;final List<UUID> followup; final Instant at;final String observationAddress;final RecoveryFiles.Retained observationFile;
+        Qualified(RecoveryHandoff.Bootstrap b,JsonNode p,JsonNode e,RecoveryHandoff.Owner o,List<InstallationHostGuard.ProcessIdentity> c,Instant at,JsonNode seal,String address,RecoveryFiles.Retained retained){this(b,p,e,o,c,at,seal,address,retained,null);}
+        Qualified(RecoveryHandoff.Bootstrap b,JsonNode p,JsonNode e,RecoveryHandoff.Owner o,List<InstallationHostGuard.ProcessIdentity> c,Instant at,JsonNode seal,String address,RecoveryFiles.Retained retained,List<UUID> followup){this.followup=followup==null?null:List.copyOf(followup);observationFile=retained;observationAddress=address;privateSeal=seal.deepCopy();bootstrap=b;pack=p.deepCopy();observation=e.deepCopy();owner=o;children=List.copyOf(c);this.at=at;}
     }
     private final JdbcTemplate j;private final ManagementTransactions tx;private final RecoveryHandoff handoffs;
     ContentRecovery(JdbcTemplate j,ManagementTransactions tx,RecoveryHandoff h){this.j=j;this.tx=tx;handoffs=h;}
@@ -29,10 +30,19 @@ final class ContentRecovery {
         handoffs.verificationReview(guard,b,review,cursor.owner);children.forEach(handoffs::verificationChild);
         JsonNode second=first; // Finalization performs the second full observation after a fresh operator review.
         handoffs.verificationReview(guard,b,review,cursor.owner);children.forEach(handoffs::verificationChild);
-        String address=RecoveryFiles.write(guard,cursor.owner.controlId(),UUID.randomUUID(),SourceJson.canonical(second));
-        return new Qualified(b,pack,second,cursor.owner,children,handoffs.verificationNow(),captureRecovery(guard,cursor.owner),address,RecoveryFiles.retained(guard,address));
+        List<UUID> followup=null;
+        if(ContentEvidenceProfile.bounded(pack.get("frozen"))){
+            followup=new ArrayList<>();
+            // The second independent observation must not mutate a ledger already covered by this seal.
+            for(int item=0;item<cursor.ordinal;item++){
+                UUID checkpoint=UUID.randomUUID();followup.add(checkpoint);
+                ContentEvidenceBudget.reserve(guard.binding().root().resolve("runs/"+owner.runId()+"/attempts/"+owner.controlId()+"/verify-result/"+checkpoint),ContentEvidenceBudget.slots("VERIFY_RESULT"));
+            }
+        }
+        String address=ContentEvidenceProfile.bounded(pack.get("frozen"))?RecoveryFiles.writeBounded(guard,cursor.owner.runId(),cursor.owner.controlId(),UUID.randomUUID(),SourceJson.canonical(second)):RecoveryFiles.write(guard,cursor.owner.controlId(),UUID.randomUUID(),SourceJson.canonical(second));
+        return new Qualified(b,pack,second,cursor.owner,children,handoffs.verificationNow(),captureRecovery(guard,cursor.owner),address,RecoveryFiles.retained(guard,address),followup);
     }
-    private static final class Cursor{RecoveryHandoff.Owner owner;int ordinal;Cursor(RecoveryHandoff.Owner o){owner=o;}}
+    private static final class Cursor{RecoveryHandoff.Owner owner;int ordinal;final Deque<UUID> prepared;Cursor(RecoveryHandoff.Owner o){this(o,null);}Cursor(RecoveryHandoff.Owner o,List<UUID> checkpoints){owner=o;prepared=checkpoints==null?null:new ArrayDeque<>(checkpoints);}UUID checkpoint(){if(prepared==null)return UUID.randomUUID();need(!prepared.isEmpty(),EVIDENCE_CHANGED);return prepared.removeFirst();}}
     private JsonNode observe(InstallationHostGuard g,RecoveryHandoff.Bootstrap b,JsonNode pack,RecoveryQuiescence.Review review,Cursor cursor,List<InstallationHostGuard.ProcessIdentity> children){
         var runtime=handoffs.contentRuntime(b).content;runtime.check();
         UUID run=UUID.fromString(pack.get("runId").stringValue()),original=UUID.fromString(pack.get("attemptId").stringValue());
@@ -117,12 +127,13 @@ final class ContentRecovery {
     }
     private static UUID recordedAttempt(JsonNode pack,JsonNode stage){return UUID.fromString((stage.has("recordedAttemptId")?stage.get("recordedAttemptId"):pack.get("attemptId")).stringValue());}
     private JsonNode nativeRead(InstallationHostGuard g,RecoveryHandoff.Bootstrap b,RecoveryQuiescence.Review review,Cursor cursor,List<InstallationHostGuard.ProcessIdentity> children,JsonNode original,List<String> invocation,Map<String,String> env,boolean spark,String kind){
-        int item=cursor.ordinal++;UUID checkpoint=UUID.randomUUID();var files=new PreflightFiles(g,cursor.owner.runId(),cursor.owner.controlId(),checkpoint,"VERIFY_RESULT");
+        if(handoffs.contentRuntime(b).content.config.get("contentRuntimeVersion").intValue()==2)ContentEvidenceBudget.initialize(g,cursor.owner.runId(),cursor.owner.controlId());
+        int item=cursor.ordinal++;UUID checkpoint=cursor.checkpoint();var files=new PreflightFiles(g,cursor.owner.runId(),cursor.owner.controlId(),checkpoint,"VERIFY_RESULT");
         JsonNode command=original;var call=new ArrayList<>(invocation);
         if(!kind.equals("BRONZE")){
             command=SourceJson.object().put("kind",kind).set("original",original);
             var runtime=handoffs.contentRuntime(b).content;
-            call=new ArrayList<>(List.of(runtime.gold.config.get("python").stringValue(),"-I","-B","-X","utf8",Path.of(runtime.gold.silver.config.get("processingRoot").stringValue()).resolve("content_recovery_verifier.py").toString(),"COMMAND"));
+            call=new ArrayList<>(runtime.config.get("contentRuntimeVersion").intValue()==2?ContentEvidenceProfile.command(runtime.gold.silver.config,"RECOVERY",Path.of("COMMAND")):List.of(runtime.gold.config.get("python").stringValue(),"-I","-B","-X","utf8",Path.of(runtime.gold.silver.config.get("processingRoot").stringValue()).resolve("content_recovery_verifier.py").toString(),"COMMAND"));
         }
         byte[] bytes=SourceJson.canonical(command);files.write("command.json",bytes,PreflightFiles.LARGE);String sha=SourceJson.sha(bytes);
         var old=cursor.owner;
@@ -167,8 +178,8 @@ final class ContentRecovery {
         var retained=RecoveryFiles.retained(g,q.observationAddress);
         need(retained.identity().equals(q.observationFile.identity()) && retained.modifiedAt().equals(q.observationFile.modifiedAt()) && Arrays.equals(retained.bytes(),SourceJson.canonical(q.observation)),EVIDENCE_CHANGED);
         // A new final independent observation uses the current explicit review and exact owner.
-        var cursor=new Cursor(q.owner);cursor.ordinal=handoffs.fenced(g,q.owner,()->j.queryForObject("SELECT count(*) FROM ddip_management.stage_invocations WHERE attempt_id=?",Integer.class,q.owner.controlId()));
-        var children=new ArrayList<>(q.children);var fresh=observe(g,q.bootstrap,q.pack,review,cursor,children);need(fresh.equals(q.observation),EVIDENCE_CHANGED);
+        var cursor=new Cursor(q.owner,q.followup);cursor.ordinal=handoffs.fenced(g,q.owner,()->j.queryForObject("SELECT count(*) FROM ddip_management.stage_invocations WHERE attempt_id=?",Integer.class,q.owner.controlId()));
+        var children=new ArrayList<>(q.children);var fresh=observe(g,q.bootstrap,q.pack,review,cursor,children);need(fresh.equals(q.observation) && (cursor.prepared==null || cursor.prepared.isEmpty()),EVIDENCE_CHANGED);
         handoffs.verificationReview(g,q.bootstrap,review,cursor.owner);children.forEach(handoffs::verificationChild);
         var finalSeal=captureRecovery(g,cursor.owner);preserved(q.privateSeal,finalSeal);
         need(finalSeal.equals(captureRecovery(g,cursor.owner)),EVIDENCE_CHANGED);
@@ -177,7 +188,8 @@ final class ContentRecovery {
     private JsonNode captureRecovery(InstallationHostGuard g,RecoveryHandoff.Owner o){
         var rows=handoffs.fenced(g,o,()->j.queryForList("SELECT * FROM ddip_management.stage_invocations WHERE attempt_id=? ORDER BY item_ordinal",o.controlId()));
         for(var row:rows)if(row.get("child_pid")!=null)handoffs.verificationChild(new InstallationHostGuard.ProcessIdentity((UUID)row.get("child_instance_id"),((Number)row.get("child_pid")).longValue(),((Timestamp)row.get("child_started_at")).toInstant()));
-        return ContentRecoveryFiles.capture(g,o.runId(),o.controlId(),rows).inventory();
+        var frozen=tx.required(()->j.queryForObject("SELECT captured_selection FROM ddip_management.runs WHERE run_id=?",byte[].class,o.runId()));
+        return ContentRecoveryFiles.capture(g,o.runId(),o.controlId(),rows,ContentEvidenceProfile.bounded(SourceJson.parse(frozen,PreflightFiles.LARGE))).inventory();
     }
     private static void preserved(JsonNode before,JsonNode after){
         var current=new HashMap<String,JsonNode>();for(var f:after.get("files"))current.put(f.get("address").stringValue(),f);

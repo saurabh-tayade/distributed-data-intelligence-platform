@@ -29,7 +29,7 @@ abstract class RssFetchFixtures extends RunApiFixtures {
     byte[] feedPayload(){return payload;}
     HttpServer http;java.util.concurrent.ExecutorService httpExecutor;String endpoint,behavior;InstallationHostGuard guard;WorkerRepository workers;
     WorkerRepository.Session session;WorkerRepository.Owner owner;JsonNode manifest;
-    String runtime="rss-fetch-test";int timeout=1000;
+    String runtime="rss-fetch-test";int timeout=1000;boolean boundedEvidence;
     final AtomicBoolean loseAck=new AtomicBoolean();
     @Override void storage(String id,String product,String role){
         try {
@@ -40,8 +40,8 @@ abstract class RssFetchFixtures extends RunApiFixtures {
         }catch(Exception ex){throw new IllegalStateException(ex);}
     }
     @Override void profile(String id,boolean content,String source){
-        try {if(manifest==null)manifest=RssFetchTestSupport.manifest();}catch(Exception ex){throw new IllegalStateException(ex);}
-        var p=RunFixtures.profile(content,source);if(content)((tools.jackson.databind.node.ObjectNode)p.get("runtime")).put("deploymentSha256",SourceJson.sha(SourceJson.canonical(manifest)));
+        try {if(manifest==null)manifest=RssFetchTestSupport.manifest(boundedEvidence);}catch(Exception ex){throw new IllegalStateException(ex);}
+        var p=RunFixtures.profile(content,source);if(content && boundedEvidence)p.put("runProfileVersion",2).put("contentRuntimeId","content-d5a");if(content)((tools.jackson.databind.node.ObjectNode)p.get("runtime")).put("deploymentSha256",SourceJson.sha(SourceJson.canonical(manifest)));
         byte[] raw=SourceJson.canonical(p);jdbc.update("INSERT INTO ddip_management.execution_profiles(profile_id,configuration_bytes,configuration_sha256) VALUES (?,?,?)",id,raw,SourceJson.sha(raw));jdbc.update("INSERT INTO ddip_management.execution_profile_storage SELECT ?,binding_id FROM ddip_management.storage_bindings WHERE product=?",id,content?CONTENT:RELIABILITY);
     }
     @BeforeEach @Override void setup(){
@@ -75,7 +75,7 @@ abstract class RssFetchFixtures extends RunApiFixtures {
         var binding=controls.get("content-CONTROL");guard=InstallationHostGuard.acquire(binding);workers=WorkerTestSupport.enabled(jdbc,tx,INSTALL);
         String digest=jdbc.queryForObject("SELECT configuration_sha256 FROM ddip_management.execution_profiles WHERE profile_id=?",String.class,CONTENT_PROFILE);
         String deployment=SourceJson.sha(SourceJson.canonical(manifest));session=workers.register(guard,CONTENT_PROFILE,digest,deployment);owner=workers.claim(guard,session,UUID.randomUUID()).owner();
-        var c=SourceJson.object().put("rssFetchRuntimeVersion",1).put("pipeline","CONTENT_RSS_V1").put("runProfileId",CONTENT_PROFILE).put("runProfileSha256",digest).put("deploymentSha256",deployment).put("javaHome",Path.of(System.getProperty("java.home")).toString()).put("controlBindingId",binding.id()).put("testEndpoint",true).put("httpTimeoutMillis",timeout);c.set("manifest",manifest);
+        var c=SourceJson.object().put("rssFetchRuntimeVersion",boundedEvidence?2:1).put("pipeline","CONTENT_RSS_V1").put("runProfileId",CONTENT_PROFILE).put("runProfileSha256",digest).put("deploymentSha256",deployment).put("javaHome",Path.of(System.getProperty("java.home")).toString()).put("controlBindingId",binding.id()).put("testEndpoint",true).put("httpTimeoutMillis",timeout);c.set("manifest",manifest);
         byte[] raw=SourceJson.canonical(c);jdbc.update("INSERT INTO ddip_management.execution_profiles VALUES (?,?,?,clock_timestamp())",runtime,raw,SourceJson.sha(raw));jdbc.update("INSERT INTO ddip_management.execution_profile_storage VALUES (?,?)",runtime,binding.id());
     }
     RssFetchTestSupport.Observed fetch(){return fetch((p,s)->{});}

@@ -34,6 +34,7 @@ final class RssBronzeContext {
             need(((Number)row.get("revision")).intValue()==d.get("revision").intValue() && ((Number)row.get("payload_length")).longValue()==d.get("payloadByteLength").longValue() && row.get("payload_sha256").equals(d.get("payloadSha256").stringValue()),INPUT_CHANGED);
             if(row.get("state").equals("BRONZE_VERIFIED"))need(d.get("expected").get("metadataSha256").stringValue().equals(row.get("metadata_sha256")) && row.get("receipt_bytes")!=null,INPUT_CHANGED);
             else need(row.get("metadata_sha256")==null && row.get("receipt_bytes")==null,INPUT_CHANGED);
+            if(ContentEvidenceProfile.bounded(frozen))ContentEvidenceBudget.require(guard,run,(UUID)row.get("owning_attempt_id"));
             var journal=new RssJournalFiles(guard,run,(UUID)row.get("owning_attempt_id"),(UUID)row.get("checkpoint_id"),source,(String)row.get("journal_address"),false);
             byte[] original=journal.read("command.json");need(SourceJson.sha(original).equals(row.get("command_sha256")),INPUT_CHANGED);
             var fetchCommand=SourceJson.parse(original);need(fetchCommand.get("endpointSha256").equals(selected.get("endpointSha256")) && fetchCommand.get("feedUri").equals(selected.get("endpoint").get("uri")),INPUT_CHANGED);
@@ -41,7 +42,8 @@ final class RssBronzeContext {
             var profiles=tx.required(()->jdbc.queryForList("SELECT configuration_bytes,configuration_sha256 FROM ddip_management.execution_profiles WHERE profile_id=?",runtimeId));need(profiles.size()==1,RUNTIME_MISMATCH);
             String digest=(String)profiles.getFirst().get("configuration_sha256");var c=FrozenRunSelection.canonical((byte[])profiles.getFirst().get("configuration_bytes"),digest,65536);
             SourceJson.fields(c,"bronzeRuntimeVersion","adapter","fetchRuntimeId","fetchRuntimeSha256","runProfileId","runProfileSha256","deploymentSha256","controlBindingId","storageBindingId","storageBindingSha256");
-            need(c.get("bronzeRuntimeVersion").isIntegralNumber() && c.get("bronzeRuntimeVersion").canConvertToInt() && c.get("bronzeRuntimeVersion").intValue()==1 && c.get("adapter").stringValue().equals("platform.ingestion.managed.ManagedBronze") && c.get("controlBindingId").stringValue().equals(guard.binding().id()),RUNTIME_MISMATCH);
+            need(c.get("bronzeRuntimeVersion").isIntegralNumber() && c.get("bronzeRuntimeVersion").canConvertToInt() && Set.of(1,2).contains(c.get("bronzeRuntimeVersion").intValue()) && c.get("adapter").stringValue().equals(c.get("bronzeRuntimeVersion").intValue()==2?"platform.ingestion.managed.BoundedManagedBronze":"platform.ingestion.managed.ManagedBronze") && c.get("controlBindingId").stringValue().equals(guard.binding().id()),RUNTIME_MISMATCH);
+            ContentEvidenceProfile.runtime(jdbc,tx,frozen,"BRONZE",runtimeId,c.get("bronzeRuntimeVersion").intValue());
             var ep=frozen.get("executionProfile");String profile=ep.get("profileId").stringValue(),profileSha=ep.get("configurationSha256").stringValue(),deployment=ep.get("configuration").get("runtime").get("deploymentSha256").stringValue();
             need(profile.equals(c.get("runProfileId").stringValue()) && profileSha.equals(c.get("runProfileSha256").stringValue()) && deployment.equals(c.get("deploymentSha256").stringValue()),RUNTIME_MISMATCH);
             var runtime=RssFetchRuntime.load(jdbc,tx,guard,profile,profileSha,deployment,c.get("fetchRuntimeId").stringValue(),frozen);

@@ -11,8 +11,9 @@ import tools.jackson.databind.JsonNode;
 public final class RssFetchTestSupport {
     private RssFetchTestSupport() { }
     public record Observed(WorkerRepository.FetchStage stage,String completionSha,byte[] descriptor,JsonNode completionStamp) { }
-    public static JsonNode manifest() throws Exception {
-        Path root=Path.of("../../ingestion/target").toRealPath();var n=SourceJson.object().put("adapter",RssFetchRuntime.MAIN).put("javaRuntime",Runtime.version().toString());var cp=n.putArray("classpath");
+    public static JsonNode manifest() throws Exception {return manifest(false);}
+    public static JsonNode manifest(boolean bounded) throws Exception {
+        Path root=Path.of("../../ingestion/target").toRealPath();var n=SourceJson.object().put("adapter",bounded?"platform.ingestion.managed.BoundedManagedRssFetch":RssFetchRuntime.MAIN).put("javaRuntime",Runtime.version().toString());var cp=n.putArray("classpath");
         var paths=new ArrayList<Path>();paths.add(root.resolve("ingestion-0.1.0-SNAPSHOT.jar"));try(var jars=Files.list(root.resolve("dependency"))){paths.addAll(jars.filter(p->p.toString().endsWith(".jar")).sorted().toList());}
         for(Path path:paths)cp.addObject().put("path",path.toString()).put("sha256",SourceJson.sha(Files.readAllBytes(path)));return n;
     }

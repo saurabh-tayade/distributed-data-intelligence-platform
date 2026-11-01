@@ -40,6 +40,20 @@ def equivalent(command,output):
     return 'EQUIVALENT'
 
 
+def bounded_values(command):
+    import content_analytics
+    c=json.loads(Path(command).read_bytes())
+    args=dict(gold_root=c['goldProof']['command']['gold']['root'],reference_root=c['referenceBinding']['root'])
+    with content_analytics.open_publication(c['content']['root'],c['prepared']['fingerprint'],**args) as reader:
+        rows=reader.report('catalog')['rows'];daily=reader.report('source_discovery_daily')['rows']
+        assert len(rows)==len(daily)==1
+        fields=('source_id','title','observation_count','distinct_ingestion_count','publisher_name','reference_status','reference_id','reference_revision')
+        result=dict(article={key:rows[0][key] for key in fields},daily={key:daily[0][key] for key in ('source_id','discovered_article_count','articles_missing_reference_count')})
+        assert rows[0]['reference_fingerprint']==c['reference']['qualification']['selection']['fingerprint']
+        return result
+
+
 if __name__=='__main__':
     if sys.argv[1]=='reference':sys.stdout.buffer.write(canonical_bytes(reference(*sys.argv[2:])))
+    elif sys.argv[1]=='bounded-values':sys.stdout.buffer.write(canonical_bytes(bounded_values(sys.argv[2])))
     else:print(equivalent(*sys.argv[2:]))

@@ -35,10 +35,11 @@ final class RssSilverExecution {
     private static final class Current {WorkerRepository.SilverStage stage;}
     Stored execute(InstallationHostGuard guard,WorkerRepository.Owner owner,String source,String runtimeId){
         workers.frozenContent(guard,owner);var c=context(guard,owner.runId(),source,runtimeId);c.check();UUID checkpoint=UUID.randomUUID();
-        byte[] command=command(c,checkpoint,owner.worker().epoch(),"PUBLISH");var current=new Current();current.stage=workers.beginSilver(guard,owner,c.bronze,checkpoint,SourceJson.sha(command),SourceJson.sha(SourceJson.canonical(c.artifact)));
+        byte[] command=command(c,checkpoint,owner.worker().epoch(),"PUBLISH");
+        var files=new PreflightFiles(guard,owner.runId(),owner.attemptId(),checkpoint,"SILVER");var prepared=PreparedCommand.prepare(guard,files.directory,command,65536);
+        var current=new Current();current.stage=workers.beginSilver(guard,owner,c.bronze,checkpoint,SourceJson.sha(command),SourceJson.sha(SourceJson.canonical(c.artifact)),prepared);
         fault.at(Boundary.INTENT,current.stage);
         try {
-            var files=new PreflightFiles(guard,owner.runId(),owner.attemptId(),checkpoint,"SILVER");files.write("command.json",command,65536);
             var writer=new ReadOnlyVerifierProcess(true).run(c.runtime.command(files.directory.resolve("command.json")),c.runtime.environment(),files.directory,Duration.ofSeconds(c.runtime.config.get("seconds").intValue()),new ReadOnlyVerifierProcess.Observer(){
                 public void beforeStart(){if(ContentResumeLineage.plan(jdbc,owner.runId(),owner.attemptId())!=null){ContentResumeLineage.requireUnregistered(jdbc,"SILVER",c.runtime.config.get("outputBindingId").stringValue(),c.artifact.get("relativeAddress").stringValue());ContentResumeLineage.requireAbsent(Path.of(c.runtime.binding().get("root").stringValue()),Path.of(c.artifact.get("relativeAddress").stringValue()).getParent().toString());}fault.at(Boundary.BEFORE_AUTHORIZATION,current.stage);c.check();need(Arrays.equals(command,files.read("command.json",65536)),INPUT_CHANGED);current.stage=workers.authorizeSilver(guard,current.stage);fault.at(Boundary.AUTHORIZED,current.stage);}
                 public void started(InstallationHostGuard.ProcessIdentity child){recordChild(files,child);current.stage=workers.recordSilverChild(guard,current.stage,child);fault.at(Boundary.CHILD_STARTED,current.stage);}

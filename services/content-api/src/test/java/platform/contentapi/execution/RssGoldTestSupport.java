@@ -20,5 +20,6 @@ public final class RssGoldTestSupport {
     public static Published publish(JdbcTemplate j,ManagementTransactions t,WorkerRepository w,InstallationHostGuard g,Prepared p,String runtime,Fault f){var r=new RssGoldExecution(j,t,w,(phase,point,owner)->f.at(phase,point.name(),owner)).publish(g,(RssGoldExecution.Prepared)p.token(),runtime);return new Published(r.owner(),r.artifact(),r.evidence());}
     public static UUID inspect(JdbcTemplate j,ManagementTransactions t,WorkerRepository w,InstallationHostGuard g,UUID run,String runtime){return new RssGoldExecution(j,t,w).inspect(g,run,runtime);}
     public static Prepared withOwner(Prepared p,WorkerRepository.Owner owner){var original=(RssGoldExecution.Prepared)p.token();return new Prepared(owner,new RssGoldExecution.Prepared(owner,original.checkpoint(),original.inputSha(),original.bytes()),p.bytes());}
-    public static JsonNode modules(Path root)throws Exception {var n=SourceJson.object();for(String m:RssGoldRuntime.MODULES)n.put(m,SourceJson.sha(Files.readAllBytes(root.resolve(m))));return n;}
+    public static JsonNode modules(Path root)throws Exception{return modules(root,false);}
+    public static JsonNode modules(Path root,boolean bounded)throws Exception{var n=SourceJson.object();for(String m:ContentEvidenceProfile.modules(RssGoldRuntime.MODULES,bounded?2:1))n.put(m,SourceJson.sha(Files.readAllBytes(root.resolve(m))));return n;}
 }

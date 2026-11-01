@@ -11,5 +11,6 @@ public final class RssSilverTestSupport {
     public record Stored(WorkerRepository.Owner owner,UUID artifact,byte[] evidence){}
     public static Stored execute(JdbcTemplate jdbc,ManagementTransactions tx,WorkerRepository workers,InstallationHostGuard guard,WorkerRepository.Owner owner,String runtime,BiConsumer<String,WorkerRepository.Owner> fault){var r=new RssSilverExecution(jdbc,tx,workers,(p,s)->fault.accept(p.name(),s.owner())).execute(guard,owner,"demo-feed",runtime);return new Stored(r.owner(),r.artifact(),r.evidence());}
     public static UUID inspect(JdbcTemplate jdbc,ManagementTransactions tx,WorkerRepository workers,InstallationHostGuard guard,UUID run,String runtime){return new RssSilverExecution(jdbc,tx,workers).inspect(guard,run,"demo-feed",runtime);}
-    public static JsonNode modules(java.nio.file.Path processing)throws Exception {var n=SourceJson.object();for(String module:RssSilverRuntime.MODULES)n.put(module,SourceJson.sha(java.nio.file.Files.readAllBytes(processing.resolve(module))));return n;}
+    public static JsonNode modules(java.nio.file.Path processing)throws Exception{return modules(processing,false);}
+    public static JsonNode modules(java.nio.file.Path processing,boolean bounded)throws Exception{var n=SourceJson.object();for(String module:ContentEvidenceProfile.modules(RssSilverRuntime.MODULES,bounded?2:1))n.put(module,SourceJson.sha(java.nio.file.Files.readAllBytes(processing.resolve(module))));return n;}
 }

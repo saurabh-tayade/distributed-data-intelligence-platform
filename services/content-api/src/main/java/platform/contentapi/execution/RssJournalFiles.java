@@ -32,6 +32,7 @@ final class RssJournalFiles {
     RssJournalFiles(InstallationHostGuard guard,UUID run,UUID attempt,UUID checkpoint,String source,String namespace,boolean create) {
         this.guard=guard;address=namespace;directory=guard.binding().root().resolve(address);
         need(source!=null && source.matches("[a-z0-9][a-z0-9_-]{0,127}") && address.equals("runs/"+run+"/attempts/"+attempt+"/fetch-source/"+source+"/"+checkpoint),INPUT_INVALID);
+        if(create)ContentEvidenceBudget.reserve(directory,Map.of("command.json",SMALL,"payload.xml",PAYLOAD,"metadata.json",SMALL,"descriptor.json",SMALL,"result.json",SMALL,"complete.json",SMALL));
         try {
             checkGuard();Path path=guard.binding().root();String[] parts=address.split("/");
             for(int i=0;i<parts.length;i++){
@@ -46,6 +47,7 @@ final class RssJournalFiles {
     void checkGuard(){guard.checkHeld(guard.binding().installationId());}
     void write(String name,byte[] bytes) {
         need(Set.of("command.json","complete.json").contains(name) && bytes.length<=SMALL,INPUT_INVALID);checkGuard();privateEntry(directory,true);
+        if(ContentEvidenceBudget.enabled(directory)){PreparedCommand.writeOnce(directory,name,bytes,SMALL);return;}
         try(var file=FileChannel.open(directory.resolve(name),Set.of(StandardOpenOption.WRITE,StandardOpenOption.CREATE_NEW,LinkOption.NOFOLLOW_LINKS),PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))){
             var buffer=ByteBuffer.wrap(bytes);while(buffer.hasRemaining())file.write(buffer);file.force(true);
         }catch(FileAlreadyExistsException ex){throw new PreflightFailure(INPUT_CHANGED);}catch(IOException ex){throw new PreflightFailure(INPUT_UNAVAILABLE);}

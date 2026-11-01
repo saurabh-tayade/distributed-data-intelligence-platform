@@ -21,6 +21,25 @@ import static platform.contentapi.management.SourceFixtures.*;
 /** Real PostgreSQL plus synthetic loopback HTTP and the actual prebuilt ingestion child. No Spark/S3. */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class RssFetchIT extends RssFetchFixtures {
+    @Test void preparedCommandSurvivesRolledBackIntentWithoutAuthorization()throws Exception{
+        ready();jdbc.execute("CREATE FUNCTION ddip_management.fail_intent() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION USING MESSAGE='PRIVATE',ERRCODE='23514'; END $$");
+        jdbc.execute("CREATE TRIGGER fail_intent BEFORE INSERT ON ddip_management.stage_invocations FOR EACH ROW EXECUTE FUNCTION ddip_management.fail_intent()");
+        assertThatThrownBy(this::fetch).isInstanceOf(RuntimeException.class);
+        assertThat(count("stage_invocations")).isZero();assertThat(count("rss_deliveries")).isZero();assertThat(requests.get()).isZero();
+        Path root=guard.binding().root().resolve("runs/"+owner.runId()+"/attempts/"+owner.attemptId());
+        try(var walk=Files.walk(root)){var commands=walk.filter(p->p.getFileName().toString().equals("command.json")).toList();assertThat(commands).hasSize(1);var c=SourceJson.parse(Files.readAllBytes(commands.getFirst()));assertThat(c.get("runId").stringValue()).isEqualTo(owner.runId().toString());assertThat(c.get("attemptId").stringValue()).isEqualTo(owner.attemptId().toString());assertThat(Files.exists(commands.getFirst().resolveSibling("result.json"))).isFalse();}
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.audit_events WHERE action='STAGE_LAUNCH_AUTHORIZED'",Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isEqualTo(owner.attemptId());
+    }
+    @Test void preparedCommandLinkCannotStandInForLaunchAuthorization(){
+        ready();assertThatThrownBy(()->fetch((point,stage)->{if(point.equals("INTENT")){
+            assertThat(jdbc.queryForObject("SELECT command_address FROM ddip_management.stage_invocations",String.class)).isEqualTo(stage.namespace()+"/command.json");
+            var forged=new WorkerRepository.FetchStage(stage.owner(),stage.checkpoint(),stage.ordinal(),stage.source(),stage.configSha(),stage.commandSha(),stage.namespace(),stage.version(),stage.state(),true);
+            assertThatThrownBy(()->workers.checkFetch(guard,forged)).hasMessage("OWNERSHIP_LOST");
+            throw new AssertionError("crash before authorization");
+        }})).isInstanceOf(AssertionError.class);
+        assertThat(requests.get()).isZero();assertThat(jdbc.queryForObject("SELECT row_version FROM ddip_management.stage_invocations",Long.class)).isZero();assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.audit_events WHERE action='STAGE_LAUNCH_AUTHORIZED'",Integer.class)).isZero();
+    }
     @Test void exactPayloadMetadataProvenanceAndImmutableReadOnlyReplay()throws Exception {
         ready();var before=nativeSnapshot();var observed=fetch();var stage=observed.stage();Path directory=directory(stage);
         assertThat(requests.get()).isEqualTo(1);assertThat(Files.readAllBytes(directory.resolve("payload.xml"))).isEqualTo(payload);
