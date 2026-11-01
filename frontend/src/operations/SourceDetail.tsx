@@ -1,7 +1,9 @@
 import { Timestamp } from '../components/Timestamp';
+import { ManagementErrorDetails } from './ManagementErrorDetails';
 import type { ManagementError, SourceConfig, SourceIdentity } from '../managementApi';
 import { productLabel } from './SourceList';
 import { useSource } from './useSource';
+import { executionsHref } from '../navigation';
 
 function ReadError({ error, title, retry, restart }: {
   error: ManagementError; title: string; retry: () => void; restart?: (() => void) | undefined;
@@ -10,10 +12,7 @@ function ReadError({ error, title, retry, restart }: {
     <h3>{error.kind === 'not-found' ? 'Source not found' : title}</h3>
     <p>{error.kind === 'not-found' ? 'No source was found for this product and source ID. Check the identity and API-mode service.'
       : error.kind === 'invalid-response' ? 'The API returned data that does not match the source contract. No data from this response is displayed.' : error.message}</p>
-    {error.code && <p><code>{error.code}</code></p>}
-    {error.correlationId && <p>Reference: <code>{error.correlationId}</code></p>}
-    {error.retryable !== null && <p>Retry guidance: {error.retryable
-      ? 'The service marked this read as retryable.' : 'Resolve the reported condition before trying again.'}</p>}
+    <ManagementErrorDetails error={error} />
     <button className="primary-button" type="button" onClick={retry}>Try again</button>
     {restart && error.kind === 'invalid-request' && <button className="secondary-button" type="button" onClick={restart}>Start from first revision page</button>}
   </div>;
@@ -45,6 +44,7 @@ export function SourceDetail({ identity }: { identity: SourceIdentity }) {
       <h1>Source detail<span className="title-period">.</span></h1>
       <p className="page-description">{productLabel(identity.productId)} <span aria-hidden="true">/</span> <code>{identity.sourceId}</code></p>
     </div><button className="secondary-button" type="button" onClick={model.refresh}>Refresh source and revisions</button></div>
+    <p className="related-executions"><a href={executionsHref(identity)}>View executions for this source</a></p>
     <p className="scope-notice">Enabled is an admission gate, not health or revision approval. A registered source does not imply ingestion or processing. Content dispatch is not activated here.</p>
 
     <section className="panel source-detail-panel" aria-labelledby="current-source-title" aria-busy={model.detail === null}>

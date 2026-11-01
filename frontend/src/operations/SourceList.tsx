@@ -1,5 +1,6 @@
 import type { ProductId } from '../managementApi';
 import { Timestamp } from '../components/Timestamp';
+import { ManagementErrorDetails } from './ManagementErrorDetails';
 import { useSources } from './useSources';
 import { sourceHref } from '../navigation';
 
@@ -35,10 +36,7 @@ export function SourceList({ active }: { active: boolean }) {
       </section>}
       {error && <section className="state-panel error-state" role="alert">
         <h2>Unable to load sources</h2><p>{error.message}</p>
-        {error.code && <p><code>{error.code}</code></p>}
-        {error.correlationId && <p>Reference: <code>{error.correlationId}</code></p>}
-        {error.retryable !== null && <p>Retry guidance: {error.retryable
-          ? 'The service marked this read as retryable.' : 'Resolve the reported condition before trying again.'}</p>}
+        <ManagementErrorDetails error={error} />
         <button className="primary-button" type="button" onClick={() => model.refresh()}>Try again</button>
         {model.hasCursor && error.kind === 'invalid-request' && <button className="secondary-button" type="button" onClick={() => model.refresh(true)}>Start from first page</button>}
       </section>}

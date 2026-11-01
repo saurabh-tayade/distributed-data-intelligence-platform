@@ -23,6 +23,30 @@ export interface SourceResponse extends ManagementEnvelope<SourceRecord> { etag:
 export type RevisionsPage = ManagementPage<SourceRevision>;
 export type SourcesPage = ManagementPage<SourceSummary>;
 export const SOURCE_PAGE_LIMIT = 20;
+export const RUN_STATES = ['QUEUED', 'RUNNING', 'PAUSED', 'RECOVERY_REQUIRED', 'SUCCEEDED', 'FAILED', 'CANCEL_REQUESTED', 'CANCELLED'] as const;
+export type RunState = typeof RUN_STATES[number];
+export const RUN_STAGES = ['CHECK_INPUTS', 'FETCH_SOURCE', 'STORE_BRONZE', 'SILVER', 'PREPARE_GOLD', 'PUBLISH_GOLD', 'PUBLISH_CONTENT', 'PUBLISH_RELIABILITY', 'VERIFY_RESULT'] as const;
+// RunInspectionValues.CODES: public classifications, never arbitrary private diagnostics.
+export const RUN_OUTCOMES = ['RESUME_QUEUED', 'RESUME_CHECKPOINT_UNSUPPORTED', 'RESUME_EVIDENCE_INVALID', 'RESUME_EVIDENCE_UNAVAILABLE', 'RESUME_NAMESPACE_UNSAFE',
+  'ACCEPTED', 'CLAIMED', 'STARTED', 'VERIFIED', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'INTERRUPTED', 'UNKNOWN', 'UPDATED', 'UNCHANGED',
+  'INPUT_UNAVAILABLE', 'INPUT_INVALID', 'INPUT_CHANGED', 'PUBLICATION_UNAVAILABLE', 'PUBLICATION_INVALID', 'PUBLICATION_CHANGED', 'INCOMPLETE_OUTPUT',
+  'FETCH_FAILED', 'FETCH_EVIDENCE_LOST', 'BRONZE_CONFLICT', 'BRONZE_ABSENT', 'BRONZE_PAYLOAD_ONLY', 'STAGE_TIMEOUT', 'STAGE_OUTPUT_LIMIT',
+  'PROCESS_START_FAILED', 'TERMINATION_UNCONFIRMED', 'RUNTIME_MISMATCH', 'RESOURCE_LIMIT', 'SOURCE_DISABLED', 'RETRY_NOT_SAFE', 'TOO_LATE',
+  'RECOVERY_REQUIRED', 'RECOVERY_HANDOFF', 'RECOVERY_CLOSED', 'STATE_CONFLICT', 'RECOVERED_PUBLICATION', 'PUBLICATION_ABSENT', 'DEPENDENCY_CHANGED',
+  'DEPENDENCY_INVALID', 'RECONCILED_SUCCEEDED', 'RECONCILED_FAILED', 'RECONCILED_PAUSED', 'RECONCILED_CANCELLED', 'RECOVERED_CHECKPOINT',
+  'VERIFIED_PUBLICATION', 'OUTPUT_ABSENT', 'OUTPUT_INCOMPLETE', 'OUTPUT_CHANGED', 'OUTPUT_INVALID', 'OUTPUT_UNAVAILABLE', 'DEPENDENCY_UNAVAILABLE',
+  'RUNTIME_INCOMPATIBLE', 'EVIDENCE_INVALID', 'EVIDENCE_UNAVAILABLE'] as const;
+export interface RunResult {
+  artifactId: string; nativeFingerprint: string; productContractVersion: 1 | 2; processorRevision: 1 | 2;
+  verificationStatus: 'VERIFIED_AT_EXECUTION'; verifiedAt: string;
+}
+export interface RunSummary {
+  runId: string; productId: ProductId; pipeline: 'CONTENT_RSS_V1' | 'RELIABILITY_V2'; state: RunState;
+  currentStage: typeof RUN_STAGES[number] | null; rowVersion: string; requestedAt: string; finishedAt: string | null;
+  outcomeCode: typeof RUN_OUTCOMES[number] | null; retryEligibility: boolean; result: RunResult | null; dataOrigin?: 'synthetic';
+}
+export interface RunsQuery { productId?: ProductId; sourceId?: string; state?: RunState; limit?: number; cursor?: string }
+export type RunsPage = ManagementPage<RunSummary>;
 
 export type ManagementErrorKind = 'invalid-request' | 'local-boundary' | 'not-found' | 'capacity'
   | 'unavailable' | 'server' | 'network' | 'invalid-response';
@@ -47,8 +71,10 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const cursorPattern = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/;
 const isProduct = (value: unknown): value is ProductId => value === 'content-intelligence' || value === 'application-reliability';
 export function isSourceIdentity(value: { productId: unknown; sourceId: unknown }): value is SourceIdentity {
-  return isProduct(value.productId) && typeof value.sourceId === 'string' && /^[a-z0-9][a-z0-9_-]{0,127}$/.test(value.sourceId);
+  return isProduct(value.productId) && isSourceId(value.sourceId);
 }
+export function isSourceId(value: unknown): value is string { return typeof value === 'string' && /^[a-z0-9][a-z0-9_-]{0,127}$/.test(value); }
+function member<T extends string>(values: readonly T[], value: unknown): value is T { return typeof value === 'string' && values.includes(value as T); }
 function need(value: unknown): asserts value { if (!value) throw new ManagementError('invalid-response'); }
 function object(value: unknown): Record<string, unknown> {
   need(value !== null && typeof value === 'object' && !Array.isArray(value));
@@ -89,6 +115,20 @@ function parameters(query: SourcesQuery): URLSearchParams {
   if (query.productId !== undefined) result.set('productId', query.productId);
   if (query.enabled !== undefined) result.set('enabled', String(query.enabled));
   if (query.cursor !== undefined) result.set('cursor', query.cursor);
+  return result;
+}
+
+export function runsParameters(query: RunsQuery): URLSearchParams {
+  // Reuse page/product validation; no source admission-status filter belongs on runs.
+  const page: SourcesQuery = {};
+  if (query.limit !== undefined) page.limit = query.limit;
+  if (query.cursor !== undefined) page.cursor = query.cursor;
+  if (query.productId !== undefined) page.productId = query.productId;
+  const result = parameters(page);
+  if ((query.sourceId !== undefined && !isSourceId(query.sourceId))
+    || (query.state !== undefined && !member(RUN_STATES, query.state))) throw new ManagementError('invalid-request');
+  if (query.sourceId !== undefined) result.set('sourceId', query.sourceId);
+  if (query.state !== undefined) result.set('state', query.state);
   return result;
 }
 
@@ -175,6 +215,42 @@ export function parseRevisions(value: unknown, identity: SourceIdentity, query: 
   });
 }
 
+export function parseRuns(value: unknown, query: RunsQuery = {}): RunsPage {
+  runsParameters(query);
+  const ids = new Set<string>();
+  return parsePage(value, query, (item) => {
+    const row = object(item);
+    const reliability = row.pipeline === 'RELIABILITY_V2';
+    fields(row, ['runId', 'productId', 'pipeline', 'state', 'currentStage', 'rowVersion', 'requestedAt', 'finishedAt',
+      'outcomeCode', 'retryEligibility', 'result', ...(reliability ? ['dataOrigin'] : [])]);
+    need(typeof row.runId === 'string' && uuid.test(row.runId) && !ids.has(row.runId)); ids.add(row.runId);
+    need(isProduct(row.productId) && (query.productId === undefined || row.productId === query.productId));
+    need(reliability ? row.productId === 'application-reliability' && row.dataOrigin === 'synthetic'
+      : row.pipeline === 'CONTENT_RSS_V1' && row.productId === 'content-intelligence');
+    need(member(RUN_STATES, row.state) && (query.state === undefined || row.state === query.state));
+    need(row.currentStage === null || member(RUN_STAGES, row.currentStage));
+    need(row.outcomeCode === null || member(RUN_OUTCOMES, row.outcomeCode));
+    need(typeof row.retryEligibility === 'boolean');
+    let result: RunResult | null = null;
+    if (row.result !== null) {
+      const record = object(row.result); fields(record, ['artifactId', 'nativeFingerprint', 'productContractVersion', 'processorRevision', 'verificationStatus', 'verifiedAt']);
+      const revision = reliability ? 2 : 1;
+      need(row.state === 'SUCCEEDED' && typeof record.artifactId === 'string' && uuid.test(record.artifactId));
+      need(typeof record.nativeFingerprint === 'string' && /^[0-9a-f]{64}$/.test(record.nativeFingerprint));
+      need(record.productContractVersion === revision && record.processorRevision === revision && record.verificationStatus === 'VERIFIED_AT_EXECUTION');
+      result = { artifactId: record.artifactId, nativeFingerprint: record.nativeFingerprint, productContractVersion: revision,
+        processorRevision: revision, verificationStatus: record.verificationStatus, verifiedAt: timestamp(record.verifiedAt) };
+    }
+    // Persisted run constraints require terminal timestamps and a verified result for SUCCEEDED.
+    need(row.state !== 'SUCCEEDED' || result !== null);
+    need(!['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(row.state) || row.finishedAt !== null);
+    return { runId: row.runId, productId: row.productId, pipeline: reliability ? 'RELIABILITY_V2' : 'CONTENT_RSS_V1', state: row.state,
+      currentStage: row.currentStage, rowVersion: version(row.rowVersion), requestedAt: timestamp(row.requestedAt),
+      finishedAt: row.finishedAt === null ? null : timestamp(row.finishedAt), outcomeCode: row.outcomeCode, retryEligibility: row.retryEligibility,
+      result, ...(reliability ? { dataOrigin: 'synthetic' as const } : {}) };
+  });
+}
+
 const failures: Record<number, { kind: ManagementErrorKind; code: string }> = {
   400: { kind: 'invalid-request', code: 'INVALID_ARGUMENT' },
   403: { kind: 'local-boundary', code: 'LOCAL_BOUNDARY_REJECTED' },
@@ -228,4 +304,7 @@ export async function fetchSource(identity: SourceIdentity, signal: AbortSignal)
 }
 export async function fetchRevisions(identity: SourceIdentity, query: RevisionQuery, signal: AbortSignal): Promise<RevisionsPage> {
   return read(`${sourcePath(identity)}/revisions?${parameters(query)}`, signal, (body) => parseRevisions(body, identity, query));
+}
+export async function fetchRuns(query: RunsQuery, signal: AbortSignal): Promise<RunsPage> {
+  return read(`/api/management/v1/runs?${runsParameters(query)}`, signal, (body) => parseRuns(body, query));
 }

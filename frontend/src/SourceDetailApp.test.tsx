@@ -43,7 +43,8 @@ describe('source detail navigation', () => {
     expect(detail().getByText('2026-11-01').closest('time')).toHaveAttribute('datetime', '2026-11-01T12:34:56.654321Z');
     expect(screen.getByText(/Enabled is an admission gate, not health or revision approval/)).toBeVisible();
     expect(screen.queryByRole('button', { name: /enable|approve|ingest|submit|recover|cancel|resume/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: /executions|artifacts/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'View executions for this source' })).toHaveAttribute('href', '#/operations/executions?productId=content-intelligence&sourceId=alpha');
+    expect(screen.queryByRole('link', { name: /artifacts|run detail/i })).not.toBeInTheDocument();
     expect(history().getByText('Current in displayed source record')).toBeVisible();
     expect(history().getByText('Historical revision')).toBeVisible();
   });
