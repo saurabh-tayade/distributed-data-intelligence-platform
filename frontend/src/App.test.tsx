@@ -187,6 +187,10 @@ describe('publisher dashboard', () => {
     await user.tab();
     expect(screen.getByRole('link', { name: 'Skip to analytics' })).toHaveFocus();
     await user.tab();
+    expect(screen.getByRole('link', { name: 'Analytics' })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole('link', { name: 'Operations' })).toHaveFocus();
+    await user.tab();
     expect(screen.getByRole('combobox', { name: 'Publisher scope' })).toHaveFocus();
     expect(screen.getByRole('region', { name: /Publisher analytics table/ })).toHaveAttribute('tabindex', '0');
     expect(screen.getAllByRole('columnheader')).toHaveLength(6);

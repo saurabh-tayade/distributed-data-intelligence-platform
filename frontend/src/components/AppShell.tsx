@@ -1,8 +1,11 @@
 import type { ReactNode } from 'react';
 
-export function AppShell({ children, section = 'Publisher analytics' }: { children: ReactNode; section?: string }) {
+export function AppShell({ children, section = 'Publisher analytics', area = 'analytics' }:
+  { children: ReactNode; section?: string; area?: 'analytics' | 'operations' | 'none' }) {
   return <>
-    <a className="skip-link" href="#main">Skip to analytics</a>
+    <a className="skip-link" href="#main" onClick={(event) => {
+      event.preventDefault(); document.getElementById('main')?.focus();
+    }}>Skip to {area === 'none' ? 'content' : area}</a>
     <header className="site-header">
       <div className="header-inner">
         <div className="brand">
@@ -15,8 +18,12 @@ export function AppShell({ children, section = 'Publisher analytics' }: { childr
         <span className="header-section"><span className="header-dot" />{section}</span>
       </div>
     </header>
+    <nav className="workspace-navigation" aria-label="Workspaces">
+      <a href="#/analytics" aria-current={area === 'analytics' ? 'page' : undefined}>Analytics</a>
+      <a href="#/operations/sources" aria-current={area === 'operations' ? 'page' : undefined}>Operations</a>
+    </nav>
     <main id="main" tabIndex={-1}>{children}</main>
-    <footer className="site-footer"><span>Content Intelligence <span aria-hidden="true">/</span> Analytics workspace</span>
-      <span>One publication. A consistent view.</span></footer>
+    <footer className="site-footer"><span>Content Intelligence <span aria-hidden="true">/</span> {area === 'analytics' ? 'Analytics' : area === 'operations' ? 'Operations' : 'DDIP'} workspace</span>
+      <span>{area === 'analytics' ? 'One publication. A consistent view.' : area === 'operations' ? 'Registered sources. Read-only inspection.' : 'Analytics and Operations.'}</span></footer>
   </>;
 }

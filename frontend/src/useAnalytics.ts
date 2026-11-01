@@ -8,7 +8,7 @@ type Result = { key: string } & ((Success & { status: 'ready' }) | { status: 'er
 type Catalog = { sources: string[]; bounded: boolean; fromPublishers: boolean };
 
 /** One mounted app owns one pin, one active request, and a fail-closed publication-change latch. */
-export function useAnalytics() {
+export function useAnalytics(enabled = true) {
   const [view, setView] = useState<View>('publishers');
   const [sourceId, updateSource] = useState('');
   const [dates, setDates] = useState<DateFilters>(EMPTY_DATES);
@@ -25,7 +25,7 @@ export function useAnalytics() {
   const key = JSON.stringify([view, sourceId, from, to, pageOffset, attempt]);
 
   useEffect(() => {
-    if (blocked) return;
+    if (!enabled || blocked) return;
     const controller = new AbortController();
     let active = true;
     async function load(): Promise<Success> {
@@ -60,7 +60,7 @@ export function useAnalytics() {
       setResult({ key, status: 'error', error: error instanceof DashboardError ? error : new DashboardError('network', view) });
     });
     return () => { active = false; controller.abort(); };
-  }, [view, sourceId, from, to, pageOffset, key, blocked]);
+  }, [view, sourceId, from, to, pageOffset, key, blocked, enabled]);
 
   // Request keys hide old results synchronously, before effect cleanup. A changed pin blocks every view until reload.
   const current = blocked ? { status: 'error' as const, error: new DashboardError('publication-changed') }
