@@ -20,6 +20,9 @@ public class ManagementConfiguration {
         return new SourceRepository(jdbc,tx,settings.installationId(),catalog,cursor);
     }
     @Bean RunHistoryRepository runHistoryRepository(JdbcTemplate jdbc,ManagementTransactions tx,SourceCursor signer) {return new RunHistoryRepository(jdbc,tx,signer);}
+    @Bean DiscoveryRepository discoveryRepository(JdbcTemplate jdbc,ManagementTransactions tx,DatabaseSettings settings,ReviewedSourceCatalog catalog,SourceCursor signer) {
+        return new DiscoveryRepository(jdbc,tx,settings.installationId(),catalog,signer);
+    }
     @Bean RunRepository runRepository(JdbcTemplate jdbc,ManagementTransactions tx,DatabaseSettings settings,ReviewedSourceCatalog catalog,RunHistoryRepository history) {
         return new RunRepository(jdbc,tx,settings.installationId(),catalog,history);
     }
