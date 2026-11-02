@@ -769,6 +769,11 @@ Current executed counts and failure-injection evidence are recorded in the [B2b-
 
 ## Bounded run history and inspection (B2b-2B)
 
+The later [E5-G2a stage inspection contract](../../docs/operations/e5-g2a-stage-inspection.md)
+adds `GET /api/management/v1/runs/{runId}/attempts/{attemptId}/stages` for bounded,
+read-only named stage metadata. It preserves each stage's actual attempt ownership;
+the original B2b-2B contracts below remain unchanged.
+
 The API role now supplies read-only history over the existing PostgreSQL records. These GETs do not fetch feeds, open native artifacts, requalify inputs, acquire ownership, create attempts or append audit events. Existing submission remains available; newly accepted runs still stay QUEUED. Worker dispatch and run controls remain unavailable.
 
 ### Routes and filters
