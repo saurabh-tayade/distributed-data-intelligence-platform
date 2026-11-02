@@ -135,6 +135,80 @@ describe('source forms and persisted confirmation', () => {
   });
 });
 
+describe('source intent notice ownership', () => {
+  const success = 'Source change confirmed. The persisted current record has been refreshed.';
+
+  it('does not attach a resolved success to a new unsubmitted review or resurrect it after cancellation', async () => {
+    const { fetch } = service(); const user = userEvent.setup();
+    reviewSourceCommand(command('revise')); render(<SourceCommandPanel visible />);
+    await user.click(screen.getByRole('button', { name: 'Confirm create immutable revision' }));
+    await screen.findByText(success); expect(readSourceIntent()).toBeNull();
+    act(() => reviewSourceCommand({ ...command('enabled'), ifMatch: '"9007199254740994"' }));
+    const next = readSourceIntent()!;
+    expect(screen.queryByText(success)).not.toBeInTheDocument();
+    expect(next.phase).toBe('review'); expect(mutations(fetch)).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: 'Cancel review' }));
+    expect(screen.queryByText(success)).not.toBeInTheDocument(); expect(readSourceIntent()).toBeNull();
+    expect(mutations(fetch)).toHaveLength(1);
+  });
+
+  it.each([
+    ['registration then revision', 'create', 'revise', 'register source', 'create immutable revision'],
+    ['revision then disable', 'revise', 'enabled', 'create immutable revision', 'disable admission'],
+    ['disable then enable', 'enabled', 'enabled', 'disable admission', 'enable admission'],
+  ] as const)('confirms only the submitted intent for two consecutive successes: %s', async (_, firstAction, secondAction, firstLabel, secondLabel) => {
+    const { fetch } = service(); const base = fetch.getMockImplementation()!;
+    const pending = deferred<void>(); let writes = 0;
+    fetch.mockImplementation((path: string, init: RequestInit) => {
+      if (['POST', 'PUT'].includes(init.method ?? 'GET') && ++writes === 2) return pending.promise.then(() => base(path, init));
+      return base(path, init);
+    });
+    reviewSourceCommand(command(firstAction)); const first = readSourceIntent()!.command;
+    const user = userEvent.setup(); const mounted = render(<SourceCommandPanel visible />);
+    await user.click(screen.getByRole('button', { name: `Confirm ${firstLabel}` }));
+    await screen.findByText(success); expect(readSourceIntent()).toBeNull();
+    const second = { ...command(secondAction), ifMatch: firstAction === 'create' ? '"1"' : '"9007199254740994"',
+      body: secondAction === 'revise' ? JSON.stringify({ displayName: 'Second revision', config: sourceRecord().config })
+        : JSON.stringify({ enabled: secondLabel === 'enable admission' }) };
+    act(() => reviewSourceCommand(second)); const retained = readSourceIntent()!.command;
+    expect(retained.key).not.toBe(first.key); expect(retained.body).toBe(second.body); expect(retained.ifMatch).toBe(second.ifMatch);
+    expect(screen.queryByText(success)).not.toBeInTheDocument(); expect(mutations(fetch)).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: `Confirm ${secondLabel}` }));
+    mounted.rerender(<SourceCommandPanel visible />);
+    expect(readSourceIntent()).toMatchObject({ phase: 'pending', command: retained });
+    expect(screen.queryByText(success)).not.toBeInTheDocument(); expect(mutations(fetch)).toHaveLength(2);
+    await act(async () => pending.resolve()); await screen.findByText(success);
+    expect(readSourceIntent()).toBeNull(); expect(mutations(fetch)).toHaveLength(2);
+    expect(mutations(fetch)[1]![1]).toMatchObject({ body: retained.body, headers: { 'If-Match': retained.ifMatch, 'Idempotency-Key': retained.key } });
+  });
+
+  it('keeps registration confirmation out of the next revision review through real application navigation', async () => {
+    const { fetch } = service(); const user = userEvent.setup(); render(<App />); await fillRegistration(user);
+    await user.click(screen.getByRole('button', { name: 'Review registration' }));
+    await user.click(screen.getByRole('button', { name: 'Confirm register source' }));
+    await within(await screen.findByRole('region', { name: 'Current source record' })).findByRole('heading', { name: 'Registered fixture' });
+    await user.click(screen.getByText('Source management actions')); await user.click(screen.getByRole('button', { name: 'Create revision' }));
+    await screen.findByRole('option', { name: ENDPOINT }); await user.click(screen.getByRole('button', { name: 'Review revision' }));
+    expect(readSourceIntent()).toMatchObject({ phase: 'review', command: { action: 'revise', ifMatch: '"1"' } });
+    expect(screen.queryByText(success)).not.toBeInTheDocument(); expect(mutations(fetch)).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: 'Confirm create immutable revision' }));
+    await screen.findByText(success); expect(mutations(fetch)).toHaveLength(2);
+  });
+
+  it.each([true, false])('does not label an unsubmitted admission action after a revision as confirmed (enabled=%s)', async (enabled) => {
+    window.history.replaceState(null, '', '/' + detailRoute); const { fetch } = service({ ...sourceRecord(), enabled });
+    const user = userEvent.setup(); render(<App />); await openActions(user);
+    await user.click(screen.getByRole('button', { name: 'Create revision' })); await screen.findByRole('option', { name: ENDPOINT });
+    await user.click(screen.getByRole('button', { name: 'Review revision' }));
+    await user.click(screen.getByRole('button', { name: 'Confirm create immutable revision' })); await screen.findByText(success);
+    await within(screen.getByRole('region', { name: 'Current source record' })).findByRole('heading', { name: 'Source alpha' });
+    await user.click(screen.getByText('Source management actions'));
+    await user.click(screen.getByRole('button', { name: enabled ? 'Disable admission' : 'Enable admission' }));
+    expect(screen.queryByText(success)).not.toBeInTheDocument(); expect(mutations(fetch)).toHaveLength(1);
+    expect(readSourceIntent()).toMatchObject({ phase: 'review', command: { action: 'enabled', body: JSON.stringify({ enabled: !enabled }), ifMatch: '"9007199254740994"' } });
+  });
+});
+
 describe('source request ambiguity, preconditions and lifecycle', () => {
   function review(action: SourceCommand['action'] = 'enabled') { const value = command(action); reviewSourceCommand(value); return readSourceIntent()!; }
   it('retains an ambiguous intent across reload, replays the exact body/key/ETag, then GETs the current record', async () => {
@@ -149,6 +223,8 @@ describe('source request ambiguity, preconditions and lifecycle', () => {
     await screen.findByRole('button', { name: 'Resolve same request' });
     expect(readSourceIntent()).toMatchObject({ phase: 'uncertain', command: intent.command });
     expect(screen.queryByRole('button', { name: /Cancel review|Return to deliberate review/ })).not.toBeInTheDocument();
+    mounted.rerender(<SourceCommandPanel visible />);
+    expect(readSourceIntent()).toMatchObject({ phase: 'uncertain', command: intent.command }); expect(mutations(fetch)).toHaveLength(1);
     mounted.unmount(); render(<SourceCommandPanel visible />);
     expect(mutations(fetch)).toHaveLength(1); // no automatic replay on mount
     await user.click(screen.getByRole('button', { name: 'Resolve same request' }));
@@ -170,6 +246,8 @@ describe('source request ambiguity, preconditions and lifecycle', () => {
     await user.click(screen.getByRole('button', { name: 'Return to deliberate review' })); expect(readSourceIntent()).toBeNull();
     act(() => reviewSourceCommand({ ...command('enabled'), ifMatch: '"9007199254740994"' }));
     expect(readSourceIntent()!.command.key).not.toBe(old.command.key); expect(mutations(fetch)).toHaveLength(1);
+    expect(readSourceIntent()).toMatchObject({ phase: 'review', command: { ifMatch: '"9007199254740994"' } });
+    expect(screen.queryByText(/Current source refreshed|Current record refreshed|PRECONDITION_FAILED|PRECONDITION_REQUIRED/)).not.toBeInTheDocument();
   });
   it('keeps a failed precondition blocked until the current record can be read', async () => {
     const fetch = vi.fn().mockResolvedValueOnce(jsonResponse(managementFailure('PRECONDITION_FAILED'), 412))
