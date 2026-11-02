@@ -80,6 +80,30 @@ export interface RunDetail extends RunSummary {
 }
 export interface RunDetailResponse extends ManagementEnvelope<RunDetail> { etag: string }
 export interface ControlResponse extends ManagementEnvelope<ControlReceipt> { etag: string }
+export interface ReliabilityProfile {
+  executionProfileId: string; productId: 'application-reliability'; pipeline: 'RELIABILITY_V2';
+  runProfileVersion: 1; pipelineVersion: 1; sourceProfile: 'request-jsonl-v2' | 'request-parquet-v1';
+  inputFormat: 'JSONL' | 'PARQUET'; configurationSha256: string; createdAt: string;
+}
+interface RegisteredArtifact {
+  artifactId: string; productId: 'application-reliability'; storageBindingId: string; nativeFingerprint: string; verifiedAt: string;
+}
+export interface ReliabilityBatch extends RegisteredArtifact {
+  kind: 'RELIABILITY_BATCH_V2'; role: 'RELIABILITY_BATCH'; contractVersion: 2; processorRevision: 2; nativeFormat: 'JSONL' | 'PARQUET';
+  identity: { sourceId: string; sourceRevision: number; batchId: string; inputFormat: 'JSONL' | 'PARQUET'; registeredProfileSha256: string };
+}
+export interface ServiceReference extends RegisteredArtifact {
+  kind: 'SERVICE_REFERENCE'; role: 'SERVICE_REFERENCE'; contractVersion: 1; processorRevision: 1; nativeFormat: null;
+  identity: { referenceId: string; revision: string };
+}
+export type ReliabilityArtifact = ReliabilityBatch | ServiceReference;
+export interface ArtifactsQuery extends RevisionQuery { executionProfileId: string; role: ReliabilityArtifact['role']; sourceId?: string }
+export interface ReliabilityRequest {
+  pipeline: 'RELIABILITY_V2'; executionProfileId: string; sources: { sourceId: string; revision: number }[];
+  batchArtifactIds: string[]; serviceReferenceArtifactId: string;
+}
+export interface RunSubmissionCommand { key: string; body: string }
+export interface RunSubmissionResponse extends RunDetailResponse { location: string }
 export interface RunAttempt {
   attemptId: string; attemptNo: number; kind: 'EXECUTE' | 'RECONCILE'; state: typeof ATTEMPT_STATES[number];
   startedAt: string; finishedAt: string | null; outcomeCode: typeof RUN_OUTCOMES[number] | null; stageCount: string;
@@ -188,6 +212,77 @@ function parsePage<T>(value: unknown, query: RevisionQuery, parseRow: (value: un
   need(Array.isArray(root.data) && root.data.length <= limit && (!meta.hasMore || root.data.length === limit));
   const data = root.data.map(parseRow);
   return { apiVersion: 1, data, meta: { correlationId: meta.correlationId, limit, hasMore: meta.hasMore, nextCursor: meta.nextCursor } };
+}
+
+const hash = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+const token = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+function revisionNumber(value: unknown): value is number { return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 1000; }
+export function parseReliabilityProfiles(value: unknown, query: RevisionQuery = {}): ManagementPage<ReliabilityProfile> {
+  let previous = '';
+  return parsePage(value, query, (item) => {
+    const row = object(item);
+    fields(row, ['executionProfileId', 'productId', 'pipeline', 'runProfileVersion', 'pipelineVersion', 'sourceProfile', 'inputFormat', 'configurationSha256', 'createdAt']);
+    need(isManagementId(row.executionProfileId) && previous < row.executionProfileId); previous = row.executionProfileId;
+    need(row.productId === 'application-reliability' && row.pipeline === 'RELIABILITY_V2' && row.runProfileVersion === 1 && row.pipelineVersion === 1);
+    need(row.sourceProfile === 'request-jsonl-v2' || row.sourceProfile === 'request-parquet-v1');
+    const inputFormat = row.sourceProfile === 'request-jsonl-v2' ? 'JSONL' : 'PARQUET';
+    need(row.inputFormat === inputFormat && hash(row.configurationSha256));
+    return { executionProfileId: row.executionProfileId, productId: row.productId, pipeline: row.pipeline, runProfileVersion: 1, pipelineVersion: 1,
+      sourceProfile: row.sourceProfile, inputFormat, configurationSha256: row.configurationSha256, createdAt: timestamp(row.createdAt) };
+  });
+}
+function artifactParameters(query: ArtifactsQuery): URLSearchParams {
+  if (!isManagementId(query.executionProfileId) || !['RELIABILITY_BATCH', 'SERVICE_REFERENCE'].includes(query.role)
+    || query.sourceId !== undefined && (query.role !== 'RELIABILITY_BATCH' || !isSourceId(query.sourceId))) throw new ManagementError('invalid-request');
+  const search = parameters(query); search.set('executionProfileId', query.executionProfileId); search.set('role', query.role);
+  if (query.sourceId !== undefined) search.set('sourceId', query.sourceId);
+  return search;
+}
+export function parseReliabilityArtifacts(value: unknown, query: ArtifactsQuery): ManagementPage<ReliabilityArtifact> {
+  artifactParameters(query); let previous = '';
+  return parsePage(value, query, (item): ReliabilityArtifact => {
+    const row = object(item);
+    fields(row, ['artifactId', 'productId', 'kind', 'role', 'contractVersion', 'processorRevision', 'nativeFormat', 'storageBindingId', 'nativeFingerprint', 'verifiedAt', 'identity']);
+    need(isManagementId(row.artifactId) && previous < row.artifactId); previous = row.artifactId;
+    need(row.productId === 'application-reliability' && row.role === query.role && token(row.storageBindingId) && hash(row.nativeFingerprint));
+    const shared: RegisteredArtifact = { artifactId: row.artifactId, productId: 'application-reliability', storageBindingId: row.storageBindingId,
+      nativeFingerprint: row.nativeFingerprint, verifiedAt: timestamp(row.verifiedAt) };
+    const identity = object(row.identity);
+    if (row.role === 'RELIABILITY_BATCH') {
+      fields(identity, ['sourceId', 'sourceRevision', 'batchId', 'inputFormat', 'registeredProfileSha256']);
+      need(row.kind === 'RELIABILITY_BATCH_V2' && row.contractVersion === 2 && row.processorRevision === 2 && (row.nativeFormat === 'JSONL' || row.nativeFormat === 'PARQUET'));
+      need(isSourceId(identity.sourceId) && (query.sourceId === undefined || identity.sourceId === query.sourceId) && revisionNumber(identity.sourceRevision));
+      need(typeof identity.batchId === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(identity.batchId) && identity.inputFormat === row.nativeFormat && hash(identity.registeredProfileSha256));
+      return { ...shared, kind: row.kind, role: row.role, contractVersion: 2, processorRevision: 2, nativeFormat: row.nativeFormat,
+        identity: { sourceId: identity.sourceId, sourceRevision: identity.sourceRevision, batchId: identity.batchId, inputFormat: row.nativeFormat, registeredProfileSha256: identity.registeredProfileSha256 } };
+    }
+    fields(identity, ['referenceId', 'revision']);
+    need(row.kind === 'SERVICE_REFERENCE' && row.contractVersion === 1 && row.processorRevision === 1 && row.nativeFormat === null);
+    need(typeof identity.referenceId === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(identity.referenceId)
+      && typeof identity.revision === 'string' && /^[a-z0-9][a-z0-9_-]{0,31}$/.test(identity.revision));
+    return { ...shared, kind: row.kind, role: 'SERVICE_REFERENCE', contractVersion: 1, processorRevision: 1, nativeFormat: null,
+      identity: { referenceId: identity.referenceId, revision: identity.revision } };
+  });
+}
+
+/** Validate the exact creation DTO, including identities, disjoint sets and server count bounds. */
+export function parseReliabilityRequest(value: unknown): ReliabilityRequest {
+  const row = object(value); fields(row, ['pipeline', 'executionProfileId', 'sources', 'batchArtifactIds', 'serviceReferenceArtifactId']);
+  need(row.pipeline === 'RELIABILITY_V2' && isManagementId(row.executionProfileId));
+  need(Array.isArray(row.sources) && row.sources.length >= 1 && row.sources.length <= 32);
+  const ids = new Set<string>();
+  const sources = row.sources.map((item) => {
+    const source = object(item); fields(source, ['sourceId', 'revision']);
+    need(isSourceId(source.sourceId) && !ids.has(source.sourceId) && revisionNumber(source.revision)); ids.add(source.sourceId);
+    return { sourceId: source.sourceId, revision: source.revision };
+  });
+  need(Array.isArray(row.batchArtifactIds) && row.batchArtifactIds.length >= 1 && row.batchArtifactIds.length <= 32 && row.batchArtifactIds.every(isManagementId));
+  need(new Set(row.batchArtifactIds).size === row.batchArtifactIds.length && isManagementId(row.serviceReferenceArtifactId) && !row.batchArtifactIds.includes(row.serviceReferenceArtifactId));
+  return { pipeline: row.pipeline, executionProfileId: row.executionProfileId, sources, batchArtifactIds: [...row.batchArtifactIds], serviceReferenceArtifactId: row.serviceReferenceArtifactId };
+}
+export function validateRunSubmission(command: RunSubmissionCommand): ReliabilityRequest {
+  need(command && Object.keys(command).length === 2 && token(command.key) && typeof command.body === 'string' && command.body.length <= 16384);
+  return parseReliabilityRequest(JSON.parse(command.body));
 }
 
 const summaryFields = ['productId', 'sourceId', 'displayName', 'enabled', 'currentRevision', 'rowVersion', 'configSha256', 'createdAt', 'updatedAt'];
@@ -535,4 +630,47 @@ export async function fetchEvents(runId: string, query: RevisionQuery, signal: A
 export async function fetchControl(runId: string, controlId: string, signal: AbortSignal): Promise<ControlResponse> {
   if (!isManagementId(controlId)) throw new ManagementError('invalid-request');
   return read(`${runPath(runId)}/controls/${controlId}`, signal, (body, response) => parseControl(body, runId, controlId, response.headers.get('ETag')));
+}
+
+export async function fetchReliabilityProfiles(query: RevisionQuery, signal: AbortSignal): Promise<ManagementPage<ReliabilityProfile>> {
+  return read(`/api/management/v1/execution-profiles?${parameters(query)}`, signal, (body) => parseReliabilityProfiles(body, query));
+}
+export async function fetchReliabilityArtifacts(query: ArtifactsQuery, signal: AbortSignal): Promise<ManagementPage<ReliabilityArtifact>> {
+  return read(`/api/management/v1/artifacts?${artifactParameters(query)}`, signal, (body) => parseReliabilityArtifacts(body, query));
+}
+export class RunSubmissionError extends Error {
+  constructor(public readonly status: number | null, public readonly code: string | null, public readonly correlationId: string | null,
+    public readonly retryable: boolean | null, public readonly ambiguous: boolean) {
+    super('Run admission was not confirmed.'); this.name = 'RunSubmissionError';
+  }
+}
+const runSubmissionFailures: Record<number, string[]> = {
+  400: ['INVALID_ARGUMENT'], 403: ['LOCAL_BOUNDARY_REJECTED'], 404: ['NOT_FOUND'],
+  409: ['STATE_CONFLICT', 'SOURCE_DISABLED', 'IDEMPOTENCY_CONFLICT'], 429: ['MANAGEMENT_CAPACITY_EXCEEDED'],
+  500: ['INTERNAL_FAILURE'], 503: ['MANAGEMENT_UNAVAILABLE', 'COORDINATOR_RECOVERY_REQUIRED'],
+};
+export async function sendRunSubmission(command: RunSubmissionCommand, signal: AbortSignal): Promise<RunSubmissionResponse> {
+  const request = validateRunSubmission(command);
+  let response: Response;
+  try {
+    response = await managementFetch('/api/management/v1/runs', signal, { method: 'POST', body: command.body,
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'Idempotency-Key': command.key, 'X-DDIP-Local-Request': '1' } });
+  } catch { throw new RunSubmissionError(null, null, null, null, true); }
+  if (response.status !== 202) {
+    const meta = await failureMetadata(response, runSubmissionFailures[response.status] ?? []);
+    throw new RunSubmissionError(response.status, meta.code, meta.correlationId, meta.retryable, meta.code === null || response.status >= 500);
+  }
+  try {
+    need(response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() === 'application/json');
+    const body: unknown = await response.json(), { row } = recordEnvelope(body); need(isManagementId(row.runId));
+    const receipt = parseRunDetail(body, row.runId, response.headers.get('ETag'));
+    need(receipt.data.pipeline === 'RELIABILITY_V2' && receipt.data.productId === 'application-reliability');
+    const sortSources = (sources: ReliabilityRequest['sources']) => [...sources].sort((a, b) => a.sourceId < b.sourceId ? -1 : a.sourceId > b.sourceId ? 1 : 0);
+    need(JSON.stringify(receipt.data.sourceRevisions) === JSON.stringify(sortSources(request.sources)));
+    need(JSON.stringify([...receipt.data.inputArtifactIds].sort()) === JSON.stringify([...request.batchArtifactIds, request.serviceReferenceArtifactId].sort()));
+    const expected = `/api/management/v1/runs/${receipt.data.runId}`, location = response.headers.get('Location'); need(location !== null);
+    const url = new URL(location, window.location.origin);
+    need(url.origin === window.location.origin && url.pathname === expected && !url.search && !url.hash && !url.username && !url.password);
+    return { ...receipt, location: expected };
+  } catch { throw new RunSubmissionError(202, null, null, null, true); }
 }

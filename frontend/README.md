@@ -388,6 +388,71 @@ change and confirm that refresh requires deliberate review. Inspect network traf
 keys/original preconditions on explicit ambiguous replay. Do not seed records with direct SQL or
 start a worker to populate execution history. Tear down only the disposable resources.
 
+## E5-F3.2b — Guarded Reliability run submission
+
+Choose **Submit Reliability Run** in Operations, or open `#/operations/submit` directly.
+This form uses the existing [Reliability discovery contracts](../docs/operations/reliability-submission-discovery.md)
+and `POST /api/management/v1/runs`. Content submission remains unavailable.
+
+1. Select a registered `RELIABILITY_V2` execution profile and its input format.
+2. Select 1–32 enabled `application-reliability` sources. The UI checks each current
+   source configuration against the selected profile; enabled is an admission gate, not health.
+3. Select 1–32 compatible batch UUIDs, including at least one for each source, and exactly
+   one service-reference UUID. Batches must match the selected source revisions, registered
+   profile digests, storage references and format. The optional batch source filter is exact.
+4. Review the complete frozen request, then explicitly confirm submission.
+5. Inspect the persisted receipt and choose **Open admitted run** for existing Run Detail,
+   attempts and audit events. The receipt retains the returned run ETag and state at receipt.
+
+Profile, enabled-source and artifact discovery have independent loading/error/empty states.
+Each request fetches one 20-row page; Next follows only returned signed cursors. Previous
+retains the latest 20 cursor positions. Refresh/restart begins a new traversal, with no totals
+or automatic catalog download. Selections survive page changes. Changing profiles clears
+downstream selections; removing sources removes their batches. **Refresh selections** clears
+source/artifact choices for deliberate rediscovery. Source revisions and gate versions are
+re-read before review; a changed source requires refreshed selection rather than silent revision
+replacement. Final admission remains authoritative after any discovery or review race.
+
+Empty artifact discovery can mean that compatible bindings, current sources or successful
+operator-import receipts are missing. Registrations without matching receipts are intentionally
+omitted. Fingerprints and verification timestamps describe historical registration, not current
+file readability, approval or worker readiness. This form neither imports nor registers artifacts.
+
+The exact POST body contains only `pipeline`, `executionProfileId`, `sources` (IDs and integer
+revisions), `batchArtifactIds` and `serviceReferenceArtifactId`. Run creation sends JSON,
+`X-DDIP-Local-Request: 1` and one stable `Idempotency-Key`; it never sends `If-Match`.
+The browser uses the existing relative `/api/` Vite proxy, API role and exact approved Host/Origin
+allowlists described above. No CORS, authentication or backend admission changes are introduced.
+
+One versioned run intent is retained under `ddip.reliability-run-intent.v1` in session storage,
+separate from source intents. It stores safe identifiers, the exact request and public receipt/error
+metadata. A pending or ambiguous request survives same-tab reload and cannot be edited or
+discarded as though it failed. **Resolve same run request** explicitly replays its original body
+and key. There is no automatic POST/replay. New keys require cancellation of an unsubmitted
+review, deliberate review after definitive rejection, or dismissal of a confirmed receipt.
+Unavailable/invalid tab storage blocks new submissions. Preserve unresolved tab data for operator
+inspection rather than clearing it to bypass the guard.
+
+Navigating away cancels discovery GETs while pending mutation outcomes remain tracked. Completion
+does not redirect another route. Malformed successful receipts, lost responses and server errors
+remain ambiguous. Public codes, correlation IDs and retryability guidance use safe local copy.
+The 202 receipt must match the submitted source/artifact identities, run ETag and an expected
+same-origin Location before the UI confirms admission or offers its canonical Run Detail link.
+An exact replay can return a run that already advanced or finished.
+
+**202 / QUEUED means accepted admission, not active or completed processing.** Subsequent
+processing requires the separately configured Reliability worker. No worker launch, recovery,
+Content dispatch or Analytics activation is performed by this form.
+
+Automated tests use mocked HTTP responses. Live HTTP/Chrome acceptance requires an existing
+disposable API installation, matching reviewed sources/storage bindings, registered execution
+profile and receipt-linked compatible native imports. No suitable API/Vite service was listening
+on the documented local ports during F3.2b validation; live admission and worker execution remain
+pending. Do not manufacture readiness, modify retained databases or launch native processing to
+populate this form. The next bounded acceptance should cover real discovery, exact POST/replay,
+source-revision rejection and navigation to the persisted run before separately assessing worker
+execution and populated polling.
+
 ## Acceptance and design
 
 M6.5 acceptance, recorded before implementation: preserve all publisher tests and functionality; load only the active analytical view; pin one publication across views and permanently block results after a current-response identity mismatch until explicit reload. Daily/quality must use exact source and inclusive UTC ingestion-date filters. Article pages must come from the server, preserve order, reset on source changes and obey `hasMore` and offset bounds. Counters remain exact, distinct daily counts are never aggregated as global identities, and quality rates are never presented as percentages. Untrusted article metadata is rendered as text with explicit HTTP(S)-only navigation. Synthetic automated coverage and retained-data/browser evidence are recorded separately; M6 closeout remains a separate review.

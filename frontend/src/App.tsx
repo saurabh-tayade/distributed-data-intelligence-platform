@@ -9,6 +9,8 @@ import { RunList } from './operations/RunList';
 import { useAnalytics } from './useAnalytics';
 import { SourceRegistration } from './operations/SourceEditor';
 import { SourceCommandPanel } from './operations/SourceCommandPanel';
+import { ReliabilitySubmission } from './operations/ReliabilitySubmission';
+import { RunSubmissionPanel } from './operations/RunSubmissionPanel';
 
 export function App() {
   const route = useWorkspaceRoute();
@@ -17,10 +19,12 @@ export function App() {
   const inspection = typeof route === 'object' && route.kind === 'run-detail' ? route : null;
   const executionContext = executions ?? inspection;
   const sourceArea = route === 'sources' || route === 'source-new' || !!source;
+  const submission = route === 'run-submit';
+  const operations = !!(sourceArea || executionContext || submission);
   const model = useAnalytics(route === 'analytics');
   const previousRoute = useRef(route);
   const section = route === 'analytics' ? analyticsViews.find((item) => item.id === model.view)!.label
-    : source ? 'Source detail' : route === 'source-new' ? 'Register source' : inspection ? 'Run detail' : executions ? 'Executions' : route === 'sources' ? 'Sources' : 'Page not found';
+    : source ? 'Source detail' : route === 'source-new' ? 'Register source' : submission ? 'Submit Reliability Run' : inspection ? 'Run detail' : executions ? 'Executions' : route === 'sources' ? 'Sources' : 'Page not found';
   useEffect(() => {
     document.title = `${section} | DDIP`;
   }, [section]);
@@ -29,16 +33,19 @@ export function App() {
     previousRoute.current = route;
   }, [route]);
 
-  return <AppShell section={section} area={route === 'analytics' ? 'analytics' : sourceArea || executionContext ? 'operations' : 'none'}>
-    {(sourceArea || executionContext) && <nav className="operations-navigation" aria-label="Operations views">
+  return <AppShell section={section} area={route === 'analytics' ? 'analytics' : operations ? 'operations' : 'none'}>
+    {operations && <nav className="operations-navigation" aria-label="Operations views">
       <a href="#/operations/sources" aria-current={sourceArea ? 'page' : undefined}>Sources</a>
       <a href="#/operations/executions" aria-current={executionContext ? 'page' : undefined}>Executions</a>
+      <a href="#/operations/submit" aria-current={submission ? 'page' : undefined}>Submit Reliability Run</a>
     </nav>}
-    <SourceCommandPanel key={JSON.stringify(route)} visible={!!(sourceArea || executionContext)} />
+    <SourceCommandPanel key={JSON.stringify(route)} visible={operations} />
+    <RunSubmissionPanel visible={operations} />
     {/* Keep the Analytics model and publication pin across workspace navigation. */}
     <div hidden={route !== 'analytics'}><AnalyticsWorkspace model={model} /></div>
     <div hidden={route !== 'sources'}><SourceList active={route === 'sources'} /></div>
     {route === 'source-new' && <SourceRegistration />}
+    {submission && <ReliabilitySubmission />}
     {source && <SourceDetail key={`${source.productId}:${source.sourceId}`} identity={source} />}
     {executionContext && <div hidden={!executions}><RunList key={JSON.stringify(executionContext.query)} query={executionContext.query} active={!!executions} /></div>}
     {inspection && <RunDetail key={inspection.runId} runId={inspection.runId} returnQuery={inspection.query} />}
