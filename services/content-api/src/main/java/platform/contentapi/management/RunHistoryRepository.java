@@ -21,8 +21,9 @@ public final class RunHistoryRepository {
     private final JdbcTemplate jdbc;
     private final ManagementTransactions tx;
     private final RunPageCursor cursors;
+    private final StagePageCursor stageCursors;
     public RunHistoryRepository(JdbcTemplate jdbc,ManagementTransactions tx,SourceCursor signer){this(jdbc,tx,signer,Clock.systemUTC());}
-    RunHistoryRepository(JdbcTemplate jdbc,ManagementTransactions tx,SourceCursor signer,Clock clock){this.jdbc=jdbc;this.tx=tx;this.cursors=new RunPageCursor(signer,clock);}
+    RunHistoryRepository(JdbcTemplate jdbc,ManagementTransactions tx,SourceCursor signer,Clock clock){this.jdbc=jdbc;this.tx=tx;this.cursors=new RunPageCursor(signer,clock);this.stageCursors=new StagePageCursor(signer,clock);}
     private static String time(ResultSet r,String key)throws SQLException{var t=r.getObject(key,OffsetDateTime.class);return t==null?null:UTC.format(t.toInstant());}
     private ObjectNode summary(ResultSet r,int ignored)throws SQLException {
         var n=SourceJson.object().put("runId",r.getObject("run_id",UUID.class).toString()).put("productId",r.getString("product_id")).put("pipeline",r.getString("pipeline")).put("state",r.getString("state"))
@@ -76,6 +77,32 @@ public final class RunHistoryRepository {
             var rows=jdbc.query("SELECT t.attempt_id,t.attempt_no,t.kind,t.state,t.started_at,t.finished_at,t.outcome_code,(SELECT count(*) FROM ddip_management.stage_invocations s WHERE s.attempt_id=t.attempt_id) AS stage_count FROM ddip_management.attempts t WHERE t.run_id=? AND t.attempt_no>? AND t.attempt_no<=? ORDER BY t.attempt_no LIMIT ?",(r,i)->{
                 return SourceJson.object().put("attemptId",r.getObject("attempt_id",UUID.class).toString()).put("attemptNo",r.getInt("attempt_no")).put("kind",r.getString("kind")).put("state",r.getString("state")).put("startedAt",time(r,"started_at")).put("finishedAt",time(r,"finished_at")).put("outcomeCode",RunInspectionValues.code(r.getString("outcome_code"))).put("stageCount",Long.toString(r.getLong("stage_count"))).put("_sequence",Long.toString(r.getInt("attempt_no")));
             },run,p.after(),p.high(),limit+1);return page(rows,limit,"attempts",scope,p,"_sequence");
+        });
+    }
+    public SourceRepository.Page stages(String id,String attemptId,int limit,String cursor) {
+        UUID run=id(id),attempt=id(attemptId);limit(limit);
+        String scope=SourceJson.sha(SourceJson.canonical(SourceJson.object().put("endpoint","stages").put("runId",run.toString()).put("attemptId",attempt.toString()).put("order","stage_c_item_ordinal_asc")));
+        return tx.required(()->{
+            if(!Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.attempts WHERE run_id=? AND attempt_id=?)",Boolean.class,run,attempt)))throw new SourceFailure(SourceFailure.Code.NOT_FOUND);
+            StagePageCursor.Position p;
+            if(cursor==null) {
+                var high=jdbc.query("SELECT stage,item_ordinal FROM ddip_management.stage_invocations WHERE attempt_id=? ORDER BY stage COLLATE \"C\" DESC,item_ordinal DESC LIMIT 1",(r,i)->new StagePageCursor.Key(r.getString(1),r.getInt(2)),attempt);
+                if(high.isEmpty())return new SourceRepository.Page(SourceJson.object().putArray("unused"),limit,null);
+                p=stageCursors.first(high.getFirst());
+            } else p=stageCursors.decode(cursor,scope);
+            String where=" WHERE s.attempt_id=? AND (s.stage COLLATE \"C\",s.item_ordinal)<=(?,?)";
+            var args=new ArrayList<Object>(List.of(attempt,p.high().stage(),p.high().ordinal()));
+            if(p.after()!=null){where+=" AND (s.stage COLLATE \"C\",s.item_ordinal)>(?,?)";args.add(p.after().stage());args.add(p.after().ordinal());}
+            args.add(limit+1);
+            var rows=jdbc.query("SELECT s.stage,s.item_ordinal,s.checkpoint_id,s.state,s.started_at,s.finished_at,s.outcome_code,s.counts_bytes FROM ddip_management.stage_invocations s"+where+" ORDER BY s.stage COLLATE \"C\",s.item_ordinal LIMIT ?",(r,i)->{
+                var n=SourceJson.object().put("attemptId",attempt.toString()).put("stage",RunInspectionValues.stage(r.getString("stage"))).put("itemOrdinal",r.getInt("item_ordinal")).put("checkpointId",r.getObject("checkpoint_id",UUID.class).toString())
+                        .put("state",RunInspectionValues.stageState(r.getString("state"))).put("startedAt",time(r,"started_at")).put("finishedAt",time(r,"finished_at")).put("outcomeCode",RunInspectionValues.code(r.getString("outcome_code")));
+                n.set("counts",RunInspectionValues.stageCounts(r.getBytes("counts_bytes")));return n;
+            },args.toArray());
+            boolean more=rows.size()>limit;var data=SourceJson.object().putArray("unused");data.addAll(rows.subList(0,Math.min(limit,rows.size())));
+            var last=more?rows.get(limit-1):null;
+            String next=more?stageCursors.next(scope,p,new StagePageCursor.Key(last.get("stage").stringValue(),last.get("itemOrdinal").intValue())):null;
+            return new SourceRepository.Page(data,limit,next);
         });
     }
     public SourceRepository.Page events(String id,int limit,String cursor) {

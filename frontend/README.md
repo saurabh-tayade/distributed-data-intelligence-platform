@@ -453,6 +453,87 @@ populate this form. The next bounded acceptance should cover real discovery, exa
 source-revision rejection and navigation to the persisted run before separately assessing worker
 execution and populated polling.
 
+## E5-G2b — Attempt-scoped Stage Records
+
+Open **Execution History → Run Detail → Attempts**, then choose **Inspect stages** on
+an attempt row. The dedicated **Stage Records** panel appears below Attempts and shows
+the selected attempt number, kind and UUID. Selection stays separate from the current
+run attempt: original EXECUTE, resumed EXECUTE and RECONCILE records retain their actual
+owners. Selecting another visible attempt replaces the panel and starts at page 1.
+Selection is local to Run Inspection and is cleared when navigating to another run or
+leaving that view. No new route or execution control is introduced.
+
+Only the selected attempt is read through
+`GET /api/management/v1/runs/{runId}/attempts/{attemptId}/stages`. The existing
+[G2a contract](../docs/operations/e5-g2a-stage-inspection.md) remains authoritative and
+unchanged. `StageRecord`, `parseStages` and `fetchStages` in
+[managementApi.ts](src/managementApi.ts) validate the standard envelopes, exact DTO
+fields, all nine stage names, five stage states, nullable public outcomes/timestamps,
+canonical checkpoint/attempt UUIDs, exact attempt ownership and pagination metadata.
+The endpoint does not repeat the run ID in each row; run ownership is enforced by
+the backend's exact run/attempt lookup. The client validates both requested IDs and
+rejects foreign-attempt rows, duplicate identities/checkpoints and regressing order.
+Safe counters remain validated decimal strings, including values beyond JavaScript's
+safe integer range. No counter is converted to Number. Raw backend diagnostics and
+private or unexpected response fields are never displayed.
+
+The panel displays stage name, item ordinal, stage state, recorded UTC start/finish
+times, public outcome, available safe counts and checkpoint UUID. Stage states are
+`INTENT`, `RUNNING`, `VERIFIED`, `FAILED` and `UNKNOWN`, separate from run and attempt
+states. `VERIFIED` describes historical verification, not a fresh native integrity
+check, and does not override a separately recorded outcome such as `PUBLICATION_INVALID`.
+Missing timestamps display **Not available**; absent or empty counters display **No
+counts recorded**. Missing outcomes display **Not recorded**, rather than a guessed
+success or zero.
+
+Rows retain server order: **stage name in binary order, then item ordinal**. This is
+identity ordering, not a chronological timeline. Timestamps never reorder rows.
+No duration, performance, progress, per-stage creation sequence or inherited/reuse
+relationship is synthesized. Commands, native addresses, process/host identities,
+proof packets and private evidence remain unavailable.
+
+Stage pagination reuses [HistoryPanel](src/operations/HistoryPanel.tsx) and
+[useRunHistory](src/operations/useRunHistory.ts): default 20 rows, choices
+5/10/20/50/100, Next/Previous, one result page and at most 20 retained cursor positions.
+Cursors remain opaque, expire after 24 hours and are scoped by the backend to the
+exact run/attempt. Rejected/expired cursors offer **Start from first page**.
+**Refresh stages** and page-size changes start a new traversal; refresh also cancels
+a pending page request. No pages are fetched automatically and no totals are invented.
+Active attempts can acquire new records; pagination is not snapshot isolation.
+Refresh explicitly to begin a traversal that includes newly persisted work.
+
+Stage loading, empty and error states are independent of Run Detail, Attempts, Audit
+Events and the latest control receipt. A failed refresh removes the old stage page,
+leaving the selected identity and safe error/reference visible. Run polling and run
+refresh do not refresh stages. There is **no stage polling timer**. Hidden documents
+cancel stage transports and hide obsolete rows; returning rereads only the selected
+page. Leaving Run Inspection unmounts the stage panel and aborts its transport.
+Late successes and failures after selection, refresh, navigation or unmount cannot
+replace the current selection's rows. Attempts remain selectable while stages load.
+
+Local validation on Node.js **24.22.1** passed TypeScript typecheck, full ESLint,
+production build and **866 tests in 28 files**, including all existing Analytics,
+Sources/actions, Reliability submission safety, Execution History, Run Inspection
+and polling regressions. The addition contributes 90 cases: 70 API contract/transport,
+17 Run Inspection UI/concurrency and 3 stage keyset-history cases. Markdown/relative
+links, repository hygiene and `git diff --check` also passed. The existing 500 kB
+chunk warning remains; the main chunk is **731.13 kB minified / 210.63 kB gzip**.
+
+The default local API at `127.0.0.1:8080` refused the read-only probe. Live browser/API,
+responsive visual and screen-reader acceptance therefore remain pending. No fixture
+infrastructure or browser automation was created or repaired. No backend endpoints,
+dependencies, migrations, processing/recovery semantics or G2a contract documentation
+changed; Spark, Content recovery and PostgreSQL matrices were not rerun.
+
+```sh
+npm --prefix frontend run typecheck
+npm --prefix frontend test
+npm --prefix frontend run lint
+npm --prefix frontend run build
+npm run check
+git diff --check
+```
+
 ## Acceptance and design
 
 M6.5 acceptance, recorded before implementation: preserve all publisher tests and functionality; load only the active analytical view; pin one publication across views and permanently block results after a current-response identity mismatch until explicit reload. Daily/quality must use exact source and inclusive UTC ingestion-date filters. Article pages must come from the server, preserve order, reset on source changes and obey `hasMore` and offset bounds. Counters remain exact, distinct daily counts are never aggregated as global identities, and quality rates are never presented as percentages. Untrusted article metadata is rendered as text with explicit HTTP(S)-only navigation. Synthetic automated coverage and retained-data/browser evidence are recorded separately; M6 closeout remains a separate review.

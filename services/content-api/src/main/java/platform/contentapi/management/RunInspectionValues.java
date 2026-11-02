@@ -8,6 +8,8 @@ import static platform.contentapi.management.SourceFailure.Code.INTERNAL_FAILURE
 final class RunInspectionValues {
     private RunInspectionValues() { }
     static final Set<String> STATES=Set.of("PAUSED","QUEUED","RUNNING","CANCEL_REQUESTED","SUCCEEDED","FAILED","CANCELLED","RECOVERY_REQUIRED");
+    static final Set<String> STAGES=Set.of("CHECK_INPUTS","FETCH_SOURCE","STORE_BRONZE","SILVER","PREPARE_GOLD","PUBLISH_GOLD","PUBLISH_CONTENT","PUBLISH_RELIABILITY","VERIFY_RESULT");
+    private static final Set<String> STAGE_STATES=Set.of("INTENT","RUNNING","VERIFIED","FAILED","UNKNOWN");
     private static final Set<String> CODES=Set.of("RESUME_QUEUED","RESUME_CHECKPOINT_UNSUPPORTED","RESUME_EVIDENCE_INVALID","RESUME_EVIDENCE_UNAVAILABLE","RESUME_NAMESPACE_UNSAFE","ACCEPTED","CLAIMED","STARTED","VERIFIED","SUCCEEDED","FAILED","CANCELLED","INTERRUPTED","UNKNOWN","UPDATED","UNCHANGED",
             "INPUT_UNAVAILABLE","INPUT_INVALID","INPUT_CHANGED","PUBLICATION_UNAVAILABLE","PUBLICATION_INVALID","PUBLICATION_CHANGED","INCOMPLETE_OUTPUT","FETCH_FAILED","FETCH_EVIDENCE_LOST","BRONZE_CONFLICT","BRONZE_ABSENT","BRONZE_PAYLOAD_ONLY",
             "STAGE_TIMEOUT","STAGE_OUTPUT_LIMIT","PROCESS_START_FAILED","TERMINATION_UNCONFIRMED","RUNTIME_MISMATCH","RESOURCE_LIMIT","SOURCE_DISABLED","RETRY_NOT_SAFE","TOO_LATE","RECOVERY_REQUIRED","RECOVERY_HANDOFF","RECOVERY_CLOSED","STATE_CONFLICT",
@@ -25,6 +27,20 @@ final class RunInspectionValues {
     static String code(String s){check(s==null || CODES.contains(s));return s;}
     static String action(String s){check(ACTIONS.contains(s));return s;}
     static String state(String s){check(s==null || AUDIT_STATES.contains(s));return s;}
+    static String stage(String s){check(STAGES.contains(s));return s;}
+    static String stageState(String s){check(STAGE_STATES.contains(s));return s;}
+    /** Native stage counters may be integers or decimal strings. Copy only reviewed counter keys. */
+    static JsonNode stageCounts(byte[] bytes) {
+        if(bytes==null)return null;
+        try {
+            JsonNode n=SourceJson.parse(bytes);check(n.isObject());var out=SourceJson.object();
+            for(String k:n.propertyNames())if(COUNTS.contains(k) || k.equals("gold_articles") || k.equals("gold_source_daily")) {
+                JsonNode value=n.get(k);String text=value.isIntegralNumber()?value.toString():SourceJson.text(value);
+                check(text.matches("0|[1-9][0-9]{0,18}"));long count=Long.parseLong(text);out.put(k,Long.toString(count));
+            }
+            return out;
+        } catch(RuntimeException ex){throw new SourceFailure(INTERNAL_FAILURE);}
+    }
     static JsonNode counts(byte[] bytes) {
         if(bytes==null)return null;
         try {

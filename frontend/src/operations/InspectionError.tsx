@@ -4,7 +4,7 @@ import { ManagementErrorDetails } from './ManagementErrorDetails';
 const messages: Record<ManagementErrorKind, string> = {
   'invalid-request': 'This read or page cursor was rejected. History cursors expire after 24 hours; restart the panel traversal if needed.',
   'local-boundary': 'Local access was rejected. Check the approved UI origin and API host.',
-  'not-found': 'The requested record was not found. Check the run or control identity and the API-mode service.',
+  'not-found': 'The requested record was not found. Check the run, attempt or control identity and the API-mode service.',
   capacity: 'Management capacity is unavailable. Read again when capacity is available.',
   unavailable: 'Management data is unavailable. Check the local service before trying again.',
   server: 'The management service could not complete this read.',
