@@ -25,7 +25,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 import platform.contentapi.ContentApiApplication;
 import platform.contentapi.execution.*;
-import platform.contentapi.importing.RegisteredImportEvidence;
+import platform.contentapi.importing.*;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
 import static platform.contentapi.management.SourceFixtures.*;
@@ -132,4 +132,181 @@ class RunSubmissionIT extends RunApiFixtures {
         var before=jdbc.queryForList("SELECT artifact_id,native_identity,evidence_sha256,verified_at FROM ddip_management.artifacts ORDER BY artifact_id");var bytesBefore=jdbc.queryForList("SELECT encode(evidence_bytes,'hex') AS bytes FROM ddip_management.artifacts ORDER BY artifact_id");submit(content(),"content");submit(reliability(false),"jsonl");submit(reliability(true),"parquet");assertThat(jdbc.queryForList("SELECT artifact_id,native_identity,evidence_sha256,verified_at FROM ddip_management.artifacts ORDER BY artifact_id")).isEqualTo(before);assertThat(jdbc.queryForList("SELECT encode(evidence_bytes,'hex') AS bytes FROM ddip_management.artifacts ORDER BY artifact_id")).isEqualTo(bytesBefore);
     }
     @Test void controlsRejectSubmissionShapeWithoutExecutionSideEffects()throws Exception{assertThat(http(get(RUNS)).getResponse().getStatus()).isEqualTo(200);code(http(postRun(content(),"x").with(r->{r.setRequestURI(RUNS+"/"+UUID.randomUUID()+"/controls");return r;})),400,"INVALID_ARGUMENT");code(http(get(RUNS+"/"+UUID.randomUUID())),404,"NOT_FOUND");assertThat(count("controls")).isZero();assertThat(count("attempts")).isZero();}
+
+    private InstallationHostGuard.Binding discoveryHost;
+    @BeforeEach void resetDiscoveryFixture(){discoveryHost=null;}
+    /** Uses the existing metadata fixture and real fenced registration finalization, not native verification. */
+    void discoveryReceipt(String... ids)throws Exception {
+        if(discoveryHost==null){discoveryHost=OwnershipFixtures.host(Files.createTempDirectory(temp,"discovery-"));OwnershipFixtures.provision(jdbc,discoveryHost);}
+        var repository=new ImportOwnershipRepository(jdbc,tx,INSTALL);
+        try(var guard=InstallationHostGuard.acquire(discoveryHost)) {
+            for(int offset=0;offset<ids.length;offset+=16) {
+                UUID operation=UUID.randomUUID();var n=SourceJson.object().put("catalogVersion",1).put("operationId",operation.toString()).put("executionProfileId","import-test").put("controlBindingId",discoveryHost.id());
+                var selected=n.putArray("artifacts");var qualifications=new HashMap<String,byte[]>();
+                for(int i=offset;i<Math.min(offset+16,ids.length);i++) {
+                    byte[] raw=jdbc.queryForObject("SELECT evidence_bytes FROM ddip_management.artifacts WHERE artifact_id=?",byte[].class,UUID.fromString(ids[i]));
+                    var q=RegisteredImportEvidence.validate(raw,SourceJson.sha(raw));selected.add(q.selection().json());qualifications.put(q.selection().digest(),raw);
+                }
+                var request=ImportCatalog.parse(SourceJson.canonical(n));
+                var token=repository.reserve(guard,new ImportOwnershipRepository.Reservation(operation,"import-test",OwnershipFixtures.HASH,request.requestBytes()));
+                var qualified=request.entries().stream().map(e->RegisteredImportFixture.qualified(operation,qualifications.get(e.digest()))).toList();
+                repository.finishVerified(guard,token,qualified);
+            }
+        }
+    }
+    String artifactQuery(String profile,String role){return "/api/management/v1/artifacts?executionProfileId="+profile+"&role="+role;}
+    JsonNode discovery(String path)throws Exception {
+        var response=http(get(path));assertThat(response.getResponse().getStatus()).isEqualTo(200);
+        assertThat(response.getResponse().getHeader("Cache-Control")).isEqualTo("no-store");
+        var n=body(response);assertThat(n.get("apiVersion").intValue()).isEqualTo(1);assertThat(UUID.fromString(n.get("meta").get("correlationId").stringValue())).isNotNull();return n;
+    }
+    @Test void discoveryProfilesExposeOnlySelectableReliabilityRunMetadata()throws Exception {
+        var rows=discovery("/api/management/v1/execution-profiles").get("data");assertThat(rows.size()).isEqualTo(2);
+        assertThat(rows.get(0).get("executionProfileId").stringValue()).isEqualTo(JSON_PROFILE);assertThat(rows.get(1).get("executionProfileId").stringValue()).isEqualTo(PARQUET_PROFILE);
+        var first=rows.get(0);SourceJson.fields(first,"executionProfileId","productId","pipeline","runProfileVersion","pipelineVersion","sourceProfile","inputFormat","configurationSha256","createdAt");
+        assertThat(first.get("productId").stringValue()).isEqualTo(RELIABILITY);assertThat(first.get("pipeline").stringValue()).isEqualTo("RELIABILITY_V2");
+        assertThat(first.get("runProfileVersion").intValue()).isEqualTo(1);assertThat(first.get("pipelineVersion").intValue()).isEqualTo(1);
+        assertThat(first.get("inputFormat").stringValue()).isEqualTo("JSONL");assertThat(rows.get(1).get("inputFormat").stringValue()).isEqualTo("PARQUET");
+        assertThat(first.get("configurationSha256").stringValue()).isEqualTo(SourceJson.sha(SourceJson.canonical(RunFixtures.profile(false,"request-jsonl-v2"))));
+        assertThat(first.get("createdAt").stringValue()).matches(".*\\.[0-9]{6}Z");
+        assertThat(rows.toString()).doesNotContain("runtime","python","deploymentSha256","root","credential","ready","approved","configuration_bytes");
+    }
+    @Test void discoveryExcludesRuntimeContentMissingStorageAndWrongInstallationProfiles()throws Exception {
+        byte[] runtime=SourceJson.canonical(SourceJson.object().put("executionRuntimeVersion",1).put("root","/private/runtime"));
+        jdbc.update("INSERT INTO ddip_management.execution_profiles(profile_id,configuration_bytes,configuration_sha256) VALUES ('runtime-only',?,?)",runtime,SourceJson.sha(runtime));
+        var config=RunFixtures.profile(false,"request-jsonl-v2");byte[] raw=SourceJson.canonical(config);String missing=UUID.randomUUID().toString();
+        jdbc.update("INSERT INTO ddip_management.execution_profiles(profile_id,configuration_bytes,configuration_sha256) VALUES (?,?,?)",missing,raw,SourceJson.sha(raw));
+        String unsupported=UUID.randomUUID().toString();byte[] wrong=SourceJson.canonical(config.deepCopy().put("runProfileVersion",2));
+        jdbc.update("INSERT INTO ddip_management.execution_profiles(profile_id,configuration_bytes,configuration_sha256) VALUES (?,?,?)",unsupported,wrong,SourceJson.sha(wrong));
+        String product=UUID.randomUUID().toString();profile(product,false,"request-jsonl-v2");jdbc.update("INSERT INTO ddip_management.execution_profile_storage VALUES (?,?)",product,BRONZE);
+        String foreign=UUID.randomUUID().toString();profile(foreign,false,"request-jsonl-v2");
+        jdbc.update("INSERT INTO ddip_management.storage_bindings(binding_id,product,role,configuration_bytes,configuration_sha256,installation_id) VALUES ('foreign-batch',?,'BATCH',?,?,?)",RELIABILITY,OwnershipFixtures.OBJECT,OwnershipFixtures.HASH,UUID.randomUUID());
+        jdbc.update("INSERT INTO ddip_management.execution_profile_storage VALUES (?,'foreign-batch')",foreign);
+        var rows=discovery("/api/management/v1/execution-profiles").get("data");assertThat(rows.size()).isEqualTo(2);
+        assertThat(rows.toString()).contains(JSON_PROFILE,PARQUET_PROFILE).doesNotContain(missing,unsupported,product,foreign,"runtime-only",CONTENT_PROFILE,"/private/runtime");
+    }
+    @Test void discoveryRegisteredBatchesAndReferencesUseSafeImportMetadata()throws Exception {
+        discoveryReceipt(JSON_BATCH,PARQUET_BATCH,SERVICE,PUB);
+        var batch=discovery(artifactQuery(JSON_PROFILE,"RELIABILITY_BATCH")).get("data");assertThat(batch.size()).isEqualTo(1);
+        var row=batch.get(0);SourceJson.fields(row,"artifactId","productId","kind","role","contractVersion","processorRevision","nativeFormat","storageBindingId","nativeFingerprint","verifiedAt","identity");
+        assertThat(row.get("artifactId").stringValue()).isEqualTo(JSON_BATCH);assertThat(row.get("productId").stringValue()).isEqualTo(RELIABILITY);
+        assertThat(row.get("kind").stringValue()).isEqualTo("RELIABILITY_BATCH_V2");assertThat(row.get("role").stringValue()).isEqualTo("RELIABILITY_BATCH");
+        assertThat(row.get("nativeFormat").stringValue()).isEqualTo("JSONL");assertThat(row.get("contractVersion").intValue()).isEqualTo(2);assertThat(row.get("processorRevision").intValue()).isEqualTo(2);
+        assertThat(row.get("identity").get("sourceRevision").isIntegralNumber()).isTrue();assertThat(row.get("identity").get("sourceRevision").intValue()).isEqualTo(1);
+        assertThat(row.get("identity").get("sourceId").stringValue()).isEqualTo("demo-requests");assertThat(row.get("identity").get("registeredProfileSha256").stringValue()).isEqualTo(RunFixtures.HASH);
+        assertThat(row.get("nativeFingerprint").stringValue()).matches("[0-9a-f]{64}");assertThat(row.get("verifiedAt").stringValue()).matches(".*\\.[0-9]{6}Z");
+        assertThat(discovery(artifactQuery(PARQUET_PROFILE,"RELIABILITY_BATCH")).get("data").get(0).get("artifactId").stringValue()).isEqualTo(PARQUET_BATCH);
+        var reference=discovery(artifactQuery(JSON_PROFILE,"SERVICE_REFERENCE")).get("data");assertThat(reference.size()).isEqualTo(1);
+        assertThat(reference.get(0).get("artifactId").stringValue()).isEqualTo(SERVICE);assertThat(reference.get(0).get("nativeFormat").isNull()).isTrue();
+        assertThat(reference.get(0).get("contractVersion").intValue()).isEqualTo(1);SourceJson.fields(reference.get(0).get("identity"),"referenceId","revision");
+        String response=batch.toString()+reference;
+        assertThat(response).doesNotContain("\"relativeAddress\"","\"verification\"","\"capture\"","\"evidence\"","\"request\"","host.guard","/private/","\"credentials\"","\"file\"","\"command\"");
+        assertThat(response.contains(password)).isFalse();assertThat(response.contains(url)).isFalse();
+        assertThat(discovery(artifactQuery(JSON_PROFILE,"RELIABILITY_BATCH")+"&sourceId=absent").get("data").isEmpty()).isTrue();
+        assertThat(discovery(artifactQuery(JSON_PROFILE,"RELIABILITY_BATCH")+"&sourceId=demo-requests").get("data").size()).isEqualTo(1);
+    }
+    @Test void discoveryEmptyAndUnlinkedRegistrationsAreExplicitlyEmpty()throws Exception {
+        assertThat(discovery(artifactQuery(JSON_PROFILE,"RELIABILITY_BATCH")).get("data").isEmpty()).isTrue();
+        assertThat(discovery(artifactQuery(CONTENT_PROFILE,"SERVICE_REFERENCE")).get("data").isEmpty()).isTrue();
+        assertThat(discovery(artifactQuery(UUID.randomUUID().toString(),"RELIABILITY_BATCH")).get("data").isEmpty()).isTrue();
+        jdbc.execute("DROP SCHEMA ddip_management CASCADE");var flyway=Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();
+        new SchemaLifecycle(flyway,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(true);
+        var empty=discovery("/api/management/v1/execution-profiles");assertThat(empty.get("data").isEmpty()).isTrue();assertThat(empty.get("meta").get("hasMore").booleanValue()).isFalse();assertThat(empty.get("meta").get("nextCursor").isNull()).isTrue();
+        assertThat(discovery(artifactQuery(JSON_PROFILE,"SERVICE_REFERENCE")).get("data").isEmpty()).isTrue();
+    }
+    @Test void discoveryProfileCursorsAreScopedAndUuidOrdered()throws Exception {
+        var first=discovery("/api/management/v1/execution-profiles?limit=1");assertThat(first.get("data").get(0).get("executionProfileId").stringValue()).isEqualTo(JSON_PROFILE);
+        String cursor=first.get("meta").get("nextCursor").stringValue();assertThat(first.get("meta").get("hasMore").booleanValue()).isTrue();
+        var second=discovery("/api/management/v1/execution-profiles?limit=1&cursor="+cursor);assertThat(second.get("data").get(0).get("executionProfileId").stringValue()).isEqualTo(PARQUET_PROFILE);
+        assertThat(second.get("meta").get("nextCursor").isNull()).isTrue();
+        code(http(get(artifactQuery(JSON_PROFILE,"SERVICE_REFERENCE")+"&cursor="+cursor)),400,"INVALID_ARGUMENT");
+        String tampered=cursor.substring(0,cursor.length()-1)+(cursor.endsWith("A")?"B":"A");
+        code(http(get("/api/management/v1/execution-profiles?cursor="+tampered)),400,"INVALID_ARGUMENT");
+    }
+    @Test void discoveryArtifactPaginationIsBoundedStableAndFilterScoped()throws Exception {
+        var ids=new ArrayList<String>();
+        for(int i=0;i<105;i++) {
+            String id=String.format("60000000-0000-4000-8000-%012d",i),batch="page-b"+i;var evidence=RunFixtures.evidence("RELIABILITY_BATCH_V2",BATCH,"demo-requests","JSONL");
+            var selection=(ObjectNode)evidence.get("selection");((ObjectNode)selection.get("identity")).put("batchId",batch);
+            String address="v2/format=jsonl/source_id=demo-requests/batch_id="+batch;selection.put("relativeAddress",address);RunFixtures.guards((ObjectNode)evidence.get("verification").get("capture"),address);
+            artifact(id,evidence);ids.add(id);
+        }
+        discoveryReceipt(ids.toArray(String[]::new));String query=artifactQuery(JSON_PROFILE,"RELIABILITY_BATCH");
+        var first=discovery(query+"&limit=100");assertThat(first.get("data").size()).isEqualTo(100);assertThat(first.get("meta").get("limit").intValue()).isEqualTo(100);
+        for(int i=0;i<100;i++)assertThat(first.get("data").get(i).get("artifactId").stringValue()).isEqualTo(ids.get(i));
+        assertThat(SourceJson.canonical(first).length).isLessThan(256*1024);String cursor=first.get("meta").get("nextCursor").stringValue();
+        var last=discovery(query+"&limit=100&cursor="+cursor);assertThat(last.get("data").size()).isEqualTo(5);assertThat(last.get("meta").get("hasMore").booleanValue()).isFalse();
+        assertThat(last.get("data").get(0).get("artifactId").stringValue()).isEqualTo(ids.get(100));
+        code(http(get(artifactQuery(PARQUET_PROFILE,"RELIABILITY_BATCH")+"&cursor="+cursor)),400,"INVALID_ARGUMENT");
+        code(http(get(artifactQuery(JSON_PROFILE,"SERVICE_REFERENCE")+"&cursor="+cursor)),400,"INVALID_ARGUMENT");
+        code(http(get(query+"&sourceId=demo-requests&cursor="+cursor)),400,"INVALID_ARGUMENT");
+    }
+    @Test void discoveryProfilePageLimitUsesOneLookaheadWithoutTruncation()throws Exception {
+        for(int i=0;i<101;i++)profile(String.format("70000000-0000-4000-8000-%012d",i),false,"request-jsonl-v2");
+        var first=discovery("/api/management/v1/execution-profiles?limit=100");assertThat(first.get("data").size()).isEqualTo(100);
+        assertThat(first.get("data").get(0).get("executionProfileId").stringValue()).isEqualTo(JSON_PROFILE);assertThat(first.get("meta").get("hasMore").booleanValue()).isTrue();
+        String cursor=first.get("meta").get("nextCursor").stringValue();var last=discovery("/api/management/v1/execution-profiles?limit=100&cursor="+cursor);
+        assertThat(last.get("data").size()).isEqualTo(3);assertThat(last.get("meta").get("nextCursor").isNull()).isTrue();assertThat(SourceJson.canonical(first).length).isLessThan(128*1024);
+    }
+    @Test void discoveryMaximumPublicIdentifiersStayBounded()throws Exception {
+        String source="s".repeat(128),batch="b".repeat(64),reference="r".repeat(64),revision="v".repeat(32),binding="r".repeat(128);
+        var configured=catalog();configured.withArray("reliabilityProfiles").addObject().put("sourceId",source).put("profile","request-jsonl-v2").put("dataOrigin","synthetic").put("registeredProfileSha256",RunFixtures.HASH);
+        Files.write(catalogFile,SourceJson.canonical(configured));catalog=ReviewedSourceCatalog.from(configured);sources=new SourceRepository(jdbc,tx,INSTALL,catalog,new SourceCursor(KEY));
+        sources.execute(SourceCommands.command(SourceCommands.Action.CREATE,null,null,create(RELIABILITY,source,requests("request-jsonl-v2")),"discovery-max-source",null),"test");
+        storage(binding,RELIABILITY,"REFERENCE");jdbc.update("INSERT INTO ddip_management.execution_profile_storage VALUES (?,?)",JSON_PROFILE,binding);
+        var batchEvidence=RunFixtures.evidence("RELIABILITY_BATCH_V2",BATCH,source,"JSONL");var bs=(ObjectNode)batchEvidence.get("selection");((ObjectNode)bs.get("identity")).put("batchId",batch);
+        String ba="v2/format=jsonl/source_id="+source+"/batch_id="+batch;bs.put("relativeAddress",ba);RunFixtures.guards((ObjectNode)batchEvidence.get("verification").get("capture"),ba);
+        var refEvidence=RunFixtures.evidence("SERVICE_REFERENCE",binding,source,null);var rs=(ObjectNode)refEvidence.get("selection");((ObjectNode)rs.get("identity")).put("referenceId",reference).put("revision",revision);
+        String ra="reference_id="+reference+"/revision="+revision;rs.put("relativeAddress",ra);RunFixtures.guards((ObjectNode)refEvidence.get("verification").get("capture"),ra);
+        String batchId="80000000-0000-4000-8000-000000000001",refId="80000000-0000-4000-8000-000000000002";artifact(batchId,batchEvidence);artifact(refId,refEvidence);discoveryReceipt(batchId,refId);
+        var b=discovery(artifactQuery(JSON_PROFILE,"RELIABILITY_BATCH")+"&sourceId="+source).get("data").get(0);assertThat(b.get("identity").get("sourceId").stringValue()).isEqualTo(source);assertThat(b.get("identity").get("batchId").stringValue()).isEqualTo(batch);
+        var r=discovery(artifactQuery(JSON_PROFILE,"SERVICE_REFERENCE")).get("data").get(0);assertThat(r.get("storageBindingId").stringValue()).isEqualTo(binding);assertThat(r.get("identity").get("referenceId").stringValue()).isEqualTo(reference);
+        assertThat(SourceJson.canonical(b).length).isLessThan(2048);assertThat(SourceJson.canonical(r).length).isLessThan(2048);
+    }
+    @Test void discoveryOmitsWrongRoleAndProfileDigestRegistrations()throws Exception {
+        String wrongRole="90000000-0000-4000-8000-000000000001",wrongDigest="90000000-0000-4000-8000-000000000002";
+        var misplaced=RunFixtures.evidence("SERVICE_REFERENCE",BATCH,"demo-requests",null);var misplacedSelection=(ObjectNode)misplaced.get("selection");
+        ((ObjectNode)misplacedSelection.get("identity")).put("referenceId","wrong-role");String misplacedAddress="reference_id=wrong-role/revision=r1";
+        misplacedSelection.put("relativeAddress",misplacedAddress);RunFixtures.guards((ObjectNode)misplaced.get("verification").get("capture"),misplacedAddress);artifact(wrongRole,misplaced);
+        var evidence=RunFixtures.evidence("RELIABILITY_BATCH_V2",BATCH,"demo-requests","JSONL");var selection=(ObjectNode)evidence.get("selection");
+        ((ObjectNode)selection.get("identity")).put("registeredProfileSha256","b".repeat(64)).put("batchId","wrong-profile");((ObjectNode)evidence.get("verification").get("native")).put("profileSha256","b".repeat(64));
+        String address="v2/format=jsonl/source_id=demo-requests/batch_id=wrong-profile";selection.put("relativeAddress",address);RunFixtures.guards((ObjectNode)evidence.get("verification").get("capture"),address);
+        artifact(wrongDigest,evidence);discoveryReceipt(wrongRole,wrongDigest,JSON_BATCH,SERVICE);
+        var refs=discovery(artifactQuery(JSON_PROFILE,"SERVICE_REFERENCE")).get("data");assertThat(refs.size()).isEqualTo(1);assertThat(refs.get(0).get("artifactId").stringValue()).isEqualTo(SERVICE);
+        var batches=discovery(artifactQuery(JSON_PROFILE,"RELIABILITY_BATCH")).get("data");assertThat(batches.size()).isEqualTo(1);assertThat(batches.get(0).get("artifactId").stringValue()).isEqualTo(JSON_BATCH);
+    }
+    @Test void discoveryMalformedPurportedRunProfileHasSafeFailure()throws Exception {
+        var config=RunFixtures.profile(false,"request-jsonl-v2").put("privateField","/private/never-display");byte[] raw=SourceJson.canonical(config);String id=UUID.randomUUID().toString();
+        jdbc.update("INSERT INTO ddip_management.execution_profiles(profile_id,configuration_bytes,configuration_sha256) VALUES (?,?,?)",id,raw,SourceJson.sha(raw));jdbc.update("INSERT INTO ddip_management.execution_profile_storage SELECT ?,binding_id FROM ddip_management.execution_profile_storage WHERE profile_id=?",id,JSON_PROFILE);
+        code(http(get("/api/management/v1/execution-profiles")),500,"INTERNAL_FAILURE");
+    }
+    @ParameterizedTest @ValueSource(strings={"disable","revision","dependency"})
+    void discoveredChoicesDoNotAuthorizeLaterSubmission(String change)throws Exception {
+        discoveryReceipt(JSON_BATCH,SERVICE);assertThat(discovery(artifactQuery(JSON_PROFILE,"RELIABILITY_BATCH")).get("data").size()).isEqualTo(1);
+        if(change.equals("disable"))sources.execute(SourceCommands.command(SourceCommands.Action.ENABLE,RELIABILITY,"demo-requests",SourceJson.object().put("enabled",false),"disable","\"0\""),"test");
+        else if(change.equals("revision"))sources.execute(SourceCommands.command(SourceCommands.Action.REVISE,RELIABILITY,"demo-requests",revise("new",requests("request-jsonl-v2")),"revision","\"0\""),"test");
+        else jdbc.update("INSERT INTO ddip_management.artifact_dependencies VALUES (?,'unexpected',0,?)",UUID.fromString(JSON_BATCH),UUID.fromString(SERVICE));
+        assertThat(discovery(artifactQuery(JSON_PROFILE,"RELIABILITY_BATCH")).get("data").isEmpty()).isTrue();
+        assertThatThrownBy(()->submit(reliability(false),"after-discovery")).hasMessage(change.equals("disable")?"SOURCE_DISABLED":change.equals("revision")?"STATE_CONFLICT":"INVALID_ARGUMENT");assertThat(count("runs")).isZero();
+    }
+    @Test void discoveryDoesNotReadArtifactProofOrMutateInstallation()throws Exception {
+        discoveryReceipt(JSON_BATCH,SERVICE);var before=jdbc.queryForList("SELECT * FROM ddip_management.coordinator");long sources=count("sources"),artifacts=count("artifacts"),events=count("audit_events"),runs=count("runs");
+        var queries=new ArrayList<String>();JdbcTemplate traced=wrapped((c,m,args,value)->{if(m.getName().equals("prepareStatement"))queries.add(args[0].toString());});
+        var discovery=new DiscoveryRepository(traced,transactions(traced),INSTALL,catalog,new SourceCursor(KEY));discovery.profiles(20,null);discovery.artifacts(JSON_PROFILE,"RELIABILITY_BATCH",null,20,null);discovery.artifacts(JSON_PROFILE,"SERVICE_REFERENCE",null,20,null);
+        assertThat(queries).allMatch(sql->sql.stripLeading().startsWith("SELECT"));assertThat(queries).noneMatch(sql->sql.matches("(?s).*\\bevidence_bytes\\b.*") || sql.contains("FOR UPDATE") || sql.contains("b.configuration_bytes"));
+        assertThat(jdbc.queryForList("SELECT * FROM ddip_management.coordinator")).isEqualTo(before);assertThat(count("sources")).isEqualTo(sources);assertThat(count("artifacts")).isEqualTo(artifacts);assertThat(count("audit_events")).isEqualTo(events);assertThat(count("runs")).isEqualTo(runs);assertThat(count("attempts")).isZero();assertThat(count("controls")).isZero();
+    }
+    @ParameterizedTest @ValueSource(strings={"limit=0","limit=101","limit=-1","limit=1.5","limit=01","limit=20&limit=20","offset=0","productId=content-intelligence","cursor=invalid"})
+    void discoveryProfileQueryValidation(String query)throws Exception {code(http(get("/api/management/v1/execution-profiles?"+query)),400,"INVALID_ARGUMENT");}
+    @ParameterizedTest @ValueSource(strings={"","executionProfileId=x&role=RELIABILITY_BATCH","executionProfileId=10000000-0000-4000-8000-000000000002","role=SERVICE_REFERENCE","executionProfileId=10000000-0000-4000-8000-000000000002&role=OTHER","executionProfileId=10000000-0000-4000-8000-000000000002&role=SERVICE_REFERENCE&sourceId=demo-requests","executionProfileId=10000000-0000-4000-8000-000000000002&role=RELIABILITY_BATCH&sourceId=Upper","executionProfileId=10000000-0000-4000-8000-000000000002&executionProfileId=10000000-0000-4000-8000-000000000002&role=RELIABILITY_BATCH","executionProfileId=10000000-0000-4000-8000-000000000002&role=RELIABILITY_BATCH&role=SERVICE_REFERENCE"})
+    void discoveryArtifactQueryValidation(String query)throws Exception {code(http(get("/api/management/v1/artifacts?"+query)),400,"INVALID_ARGUMENT");}
+    @Test void discoveryRetainsExactLocalGetBoundaryAndSafeDatabaseErrors()throws Exception {
+        for(String path:List.of("/api/management/v1/execution-profiles",artifactQuery(JSON_PROFILE,"SERVICE_REFERENCE"))) {
+            start();code(mvc.perform(get(path).header("Host","evil.example")).andReturn(),403,"LOCAL_BOUNDARY_REJECTED");
+            code(http(get(path).header("Origin","http://127.0.0.1:9999")),403,"LOCAL_BOUNDARY_REJECTED");
+        }
+        admin.execute("ALTER DATABASE "+database+" ALLOW_CONNECTIONS false");admin.queryForList("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=? AND pid<>pg_backend_pid()",database);
+        try{code(http(get("/api/management/v1/execution-profiles")),503,"MANAGEMENT_UNAVAILABLE");}finally{admin.execute("ALTER DATABASE "+database+" ALLOW_CONNECTIONS true");}
+        assertThat(count("runs")).isZero();assertThat(count("attempts")).isZero();
+    }
 }

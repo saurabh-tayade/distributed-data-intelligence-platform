@@ -867,6 +867,21 @@ For an actual dedicated DB restart test, pass `-Dddip.test.history-restart-signa
 
 Current executed evidence is in the [B2b-2B contract](../../docs/architecture/durable-execution.md#stage-b2b-2b-bounded-run-history-and-inspection). The implemented B2 source management, verified import, durable queued submission and requested history/inspection surfaces are ready for owner review. Full capability discovery/HTTP artifact listing is not added by this checkpoint. The queue cannot drain yet. Checkpoint C still needs owner authorization, fixed runnable deployment/adapters, host-guard/fenced claiming, live source gates, native revalidation, bounded supervision, atomic stage/result/audit writes and failure/recovery qualification. Later run controls, Operations UI and E5 completion remain deferred.
 
+## E5-F3.2a Reliability selection discovery
+
+API mode now exposes bounded, read-only `GET /api/management/v1/execution-profiles` and
+`GET /api/management/v1/artifacts` for Reliability submission choices. Artifacts require an
+`executionProfileId` and `role=RELIABILITY_BATCH|SERVICE_REFERENCE`; batches optionally accept
+an exact `sourceId`. Both lists default to 20, allow 1–100 and use signed endpoint/filter-scoped
+24-hour cursors. See the [exact contracts and F3.2b consumption rules](../../docs/operations/reliability-submission-discovery.md).
+
+The projections use existing profile/storage associations and successful operator-import
+catalog/receipt metadata. They never read artifact proof bodies or native storage. Unlinked
+registrations are omitted; registration timestamps/fingerprints are historical, and profile
+membership does not imply worker availability. `POST /runs` admission, native verification,
+source-management capabilities, migration versions and operational write contracts are unchanged.
+No React submission workflow or profile/artifact management mutations are added.
+
 ## C1 passive worker and durable claim foundation
 
 **C1 does not execute processing runs. Production dispatch remains disabled until the

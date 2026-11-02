@@ -85,6 +85,7 @@ class SourceValidationTest {
         try(var context=new org.springframework.boot.builder.SpringApplicationBuilder(platform.contentapi.ContentApiApplication.class)
                 .web(org.springframework.boot.WebApplicationType.NONE).run("--ddip.role=analytics","--ddip.management.catalog=/nonexistent/private-catalog","--ddip.management.cursor-key=invalid","--logging.level.root=OFF","--spring.main.banner-mode=off")) {
             assertThat(context.getBeansOfType(SourceRepository.class)).isEmpty();assertThat(context.getBeansOfType(SourceController.class)).isEmpty();
+            assertThat(context.getBeansOfType(DiscoveryRepository.class)).isEmpty();assertThat(context.getBeansOfType(DiscoveryController.class)).isEmpty();
         }
     }
     @ParameterizedTest @ValueSource(strings={"http://example.org:8080","http://127.0.0.1:8080/path","http://127.0.0.1:0","http://127.0.0.1:8080?x=1"})

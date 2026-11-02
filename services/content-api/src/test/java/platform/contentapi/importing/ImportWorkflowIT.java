@@ -67,6 +67,37 @@ class ImportWorkflowIT {
     ImportOwnershipRepository.Token reserve(InstallationHostGuard guard,ImportCatalog c){return ownership.reserve(guard,new ImportOwnershipRepository.Reservation(c.operationId(),runtime.id(),runtime.digest(),c.requestBytes()));}
     List<QualifiedArtifact> qualify(ImportCatalog c){var v=new NativeImportVerifier(new NativeImportProcess());return c.entries().stream().map(e->v.verify(c.operationId(),e,bindings.storage(e,c.profileId()),runtime)).toList();}
     Path selected(int index,String name){var a=fixture.get("artifacts").get(index);return Path.of(fixture.get("roots").get(a.get("storageBindingId").stringValue()).stringValue()).resolve(a.get("relativeAddress").stringValue()).resolve(name);}
+    @Test void successfulNativeImportSupportsSafeReliabilityDiscovery()throws Exception {
+        var imported=execute(catalog);assertThat(imported.get("status").stringValue()).isEqualTo("VERIFIED");
+        var sourceCatalog=SourceJson.object().put("catalogVersion",1);sourceCatalog.putArray("endpoints");var approved=sourceCatalog.putArray("reliabilityProfiles");var storageIds=sourceCatalog.putArray("storageProfiles");
+        for(var entry:fixture.get("artifacts"))if(entry.get("kind").stringValue().equals("RELIABILITY_BATCH_V2")) {
+            var identity=entry.get("identity");String profile=identity.get("inputFormat").stringValue().equals("JSONL")?"request-jsonl-v2":"request-parquet-v1";
+            approved.addObject().put("sourceId",identity.get("sourceId").stringValue()).put("profile",profile).put("dataOrigin","synthetic").put("registeredProfileSha256",identity.get("registeredProfileSha256").stringValue());
+            storageIds.addObject().put("profileId",entry.get("storageBindingId").stringValue()).put("productId","application-reliability").put("role","BATCH");
+        }
+        var reviewed=platform.contentapi.management.PreflightCatalogFixture.from(sourceCatalog);
+        var sources=new platform.contentapi.management.SourceRepository(jdbc,tx,INSTALL,reviewed,platform.contentapi.management.PreflightCatalogFixture.cursor());
+        for(var entry:approved)sources.execute(platform.contentapi.management.SourceCommands.command(platform.contentapi.management.SourceCommands.Action.ENABLE,"application-reliability",entry.get("sourceId").stringValue(),SourceJson.object().put("enabled",true),"discovery-enable-"+entry.get("sourceId").stringValue(),"\"0\""),"test");
+        String profileId="10000000-0000-4000-8000-000000000002";var config=SourceJson.object().put("runProfileVersion",1).put("pipeline","RELIABILITY_V2").put("pipelineVersion",1).put("sourceProfile","request-jsonl-v2");
+        config.putObject("runtime").put("javaVersion","21").put("pythonVersion","3.12.15").put("pysparkVersion","4.0.2").put("deploymentSha256","a".repeat(64));byte[] bytes=SourceJson.canonical(config);
+        jdbc.update("INSERT INTO ddip_management.execution_profiles(profile_id,configuration_bytes,configuration_sha256) VALUES (?,?,?)",profileId,bytes,SourceJson.sha(bytes));
+        for(String role:List.of("RELIABILITY","STAGING","TEMP"))storage("discovery-"+role,"application-reliability",role,OBJECT);
+        jdbc.update("INSERT INTO ddip_management.execution_profile_storage SELECT ?,binding_id FROM ddip_management.storage_bindings WHERE product='application-reliability' OR role='CONTROL'",profileId);
+        Path sourceFile=Files.write(work.resolve("discovery-source-catalog.json"),SourceJson.canonical(sourceCatalog));
+        int port;try(var socket=new java.net.ServerSocket(0,1,java.net.InetAddress.getLoopbackAddress())){port=socket.getLocalPort();}String origin="http://127.0.0.1:"+port;
+        var before=jdbc.queryForList("SELECT * FROM ddip_management.coordinator");long events=count("audit_events");
+        // Missing native completion does not make historical registration metadata a fresh verification.
+        Files.delete(selected(0,"complete.json"));
+        try(var api=new org.springframework.boot.builder.SpringApplicationBuilder(platform.contentapi.ContentApiApplication.class).run("--ddip.role=api","--server.address=127.0.0.1","--server.port="+port,"--ddip.database.url="+url,"--ddip.database.username="+user,"--ddip.database.password="+password,"--ddip.installation-id="+INSTALL,"--ddip.management.catalog="+sourceFile,"--ddip.management.origins="+origin,"--logging.level.root=OFF","--spring.main.banner-mode=off");var client=java.net.http.HttpClient.newHttpClient()) {
+            for(String path:List.of("/execution-profiles","/artifacts?executionProfileId="+profileId+"&role=RELIABILITY_BATCH","/artifacts?executionProfileId="+profileId+"&role=SERVICE_REFERENCE")) {
+                var response=client.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(origin+"/api/management/v1"+path)).GET().build(),java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+                assertThat(response.statusCode()).isEqualTo(200);assertThat(response.headers().firstValue("Cache-Control")).contains("no-store");var envelope=SourceJson.parse(response.body());assertThat(envelope.get("apiVersion").intValue()).isEqualTo(1);assertThat(envelope.get("data").size()).isEqualTo(1);
+                String text=new String(response.body(),java.nio.charset.StandardCharsets.UTF_8);assertThat(text.contains(work.toString())).isFalse();assertThat(text.contains(password)).isFalse();assertThat(text.contains(url)).isFalse();assertThat(text).doesNotContain("relativeAddress","evidence_bytes","verification","capture","command.json");
+                if(path.contains("role=RELIABILITY_BATCH"))assertThat(envelope.get("data").get(0).get("nativeFingerprint").stringValue()).isEqualTo(fixture.get("artifacts").get(0).get("fingerprint").stringValue());
+            }
+        }
+        assertThat(Files.exists(selected(0,"complete.json"))).isFalse();assertThat(count("artifacts")).isEqualTo(4);assertThat(count("audit_events")).isEqualTo(events);assertThat(count("runs")).isZero();assertThat(count("attempts")).isZero();assertThat(jdbc.queryForList("SELECT * FROM ddip_management.coordinator")).isEqualTo(before);
+    }
     @Test void allFourRegisterAtomicallyAndReimportsReverifyAndReuseIdentity() throws Exception {
         Map<Path,String> before=new HashMap<>();for(JsonNode root:fixture.get("roots")){try(var files=Files.walk(Path.of(root.stringValue()))){for(Path f:files.filter(Files::isRegularFile).toList())before.put(f,SourceJson.sha(Files.readAllBytes(f))+Files.getLastModifiedTime(f));}}
         var first=execute(catalog);assertThat(first.get("status").stringValue()).isEqualTo("VERIFIED");assertThat(count("artifacts")).isEqualTo(4);assertThat(count("artifact_dependencies")).isZero();assertThat(count("audit_events")).isEqualTo(2);
