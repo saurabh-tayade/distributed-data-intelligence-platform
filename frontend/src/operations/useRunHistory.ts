@@ -4,13 +4,14 @@ import type { ManagementPage, RevisionQuery } from '../managementApi';
 import { RUN_CURSOR_HISTORY_LIMIT } from './useRuns';
 
 type Result<T> = { key: string } & ({ status: 'ready'; page: ManagementPage<T> } | { status: 'error'; error: ManagementError });
-export function useRunHistory<T>(runId: string, read: (id: string, query: RevisionQuery, signal: AbortSignal) => Promise<ManagementPage<T>>, sequence: (row: T) => bigint) {
+export function useRunHistory<T>(runId: string, read: (id: string, query: RevisionQuery, signal: AbortSignal) => Promise<ManagementPage<T>>, sequence: (row: T) => bigint, active = true) {
   const [state, setState] = useState<{ positions: { cursor?: string; after: string }[]; firstPage: number; limit: number; refresh: number }>({
     positions: [{ after: '0' }], firstPage: 1, limit: 20, refresh: 0,
   });
   const [result, setResult] = useState<Result<T> | null>(null);
-  const position = state.positions.at(-1)!, key = JSON.stringify([runId, state]);
+  const position = state.positions.at(-1)!, key = JSON.stringify([runId, state, active]);
   useEffect(() => {
+    if (!active) return;
     const controller = new AbortController(); let current = true;
     void read(runId, { limit: state.limit, ...(position.cursor === undefined ? {} : { cursor: position.cursor }) }, controller.signal).then((page) => {
       if (!current || controller.signal.aborted) return;
@@ -21,9 +22,9 @@ export function useRunHistory<T>(runId: string, read: (id: string, query: Revisi
       if (!current || controller.signal.aborted) return;
       setResult({ key, status: 'error', error: error instanceof ManagementError ? error : new ManagementError('network') });
     });
-    return () => { current = false; controller.abort(); };
-  }, [runId, read, sequence, state, position, key]);
-  const current = result?.key === key ? result : null;
+    return () => { current = false; controller.abort(); setResult(null); };
+  }, [runId, read, sequence, state, position, key, active]);
+  const current = active && result?.key === key ? result : null;
   function next() {
     if (current?.status !== 'ready' || current.page.meta.nextCursor === null) return;
     const cursor = current.page.meta.nextCursor, after = sequence(current.page.data.at(-1)!).toString();
@@ -37,7 +38,7 @@ export function useRunHistory<T>(runId: string, read: (id: string, query: Revisi
     if (state.positions.length > 1) setState((old) => old === state ? { ...old, positions: old.positions.slice(0, -1) } : old);
   }
   function refresh(first = true) {
-    if (current === null) return;
+    if (!active) return;
     setState((old) => old === state ? { ...old, positions: first ? [{ after: '0' }] : old.positions, firstPage: first ? 1 : old.firstPage, refresh: old.refresh + 1 } : old);
   }
   function changeLimit(limit: number) {

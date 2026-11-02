@@ -1,4 +1,5 @@
-import type { AuditEvent, ControlReceipt, LatestControl, ManagementPage, RunAttempt, RunDetail } from '../managementApi';
+import type { AuditEvent, ControlReceipt, LatestControl, ManagementPage, RunAttempt, RunDetail, StageRecord } from '../managementApi';
+import { RUN_STAGES } from '../managementApi';
 import { jsonResponse } from './fixtures';
 import { CORRELATION } from './managementFixtures';
 import { run } from './runFixtures';
@@ -36,3 +37,9 @@ export function historyPage<T>(rows: T[], limit = 20, nextCursor: string | null 
 }
 export const attemptsResponse = (rows = [attempt()], limit = 20, cursor: string | null = null) => jsonResponse(historyPage(rows, limit, cursor));
 export const eventsResponse = (rows = [auditEvent()], limit = 20, cursor: string | null = null) => jsonResponse(historyPage(rows, limit, cursor));
+export function stageRecord(itemOrdinal = 0, stage: StageRecord['stage'] = 'CHECK_INPUTS', attemptId = ATTEMPT_ID): StageRecord {
+  return { attemptId, stage, itemOrdinal, checkpointId: `80000000-0000-4000-8000-${(RUN_STAGES.indexOf(stage) * 512 + itemOrdinal + 1).toString(16).padStart(12, '0')}`,
+    state: 'VERIFIED', startedAt: '2026-11-01T12:34:56.654321Z', finishedAt: '2026-11-01T12:40:00.123456Z',
+    outcomeCode: 'VERIFIED', counts: { rows: '9007199254740993' } };
+}
+export const stagesResponse = (rows = [stageRecord()], limit = 20, cursor: string | null = null) => jsonResponse(historyPage(rows, limit, cursor));

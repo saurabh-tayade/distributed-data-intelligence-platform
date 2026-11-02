@@ -108,6 +108,17 @@ export interface RunAttempt {
   attemptId: string; attemptNo: number; kind: 'EXECUTE' | 'RECONCILE'; state: typeof ATTEMPT_STATES[number];
   startedAt: string; finishedAt: string | null; outcomeCode: typeof RUN_OUTCOMES[number] | null; stageCount: string;
 }
+export const STAGE_STATES = ['INTENT', 'RUNNING', 'VERIFIED', 'FAILED', 'UNKNOWN'] as const;
+export const STAGE_COUNT_KEYS = [...RUN_COUNT_KEYS, 'gold_articles', 'gold_source_daily'] as const;
+export interface StageRecord {
+  attemptId: string; stage: typeof RUN_STAGES[number]; itemOrdinal: number; checkpointId: string;
+  state: typeof STAGE_STATES[number]; startedAt: string | null; finishedAt: string | null;
+  outcomeCode: typeof RUN_OUTCOMES[number] | null; counts: Partial<Record<typeof STAGE_COUNT_KEYS[number], string>> | null;
+}
+const stageNamesInIdentityOrder = [...RUN_STAGES].sort();
+/** Internal keyset comparison only; this is not a persisted sequence or execution order. */
+export const stagePosition = (row: Pick<StageRecord, 'stage' | 'itemOrdinal'>): bigint =>
+  BigInt(stageNamesInIdentityOrder.indexOf(row.stage) * 512 + row.itemOrdinal + 1);
 export interface AuditEvent {
   eventSeq: string; timestamp: string; action: typeof AUDIT_ACTIONS[number]; beforeState: typeof AUDIT_STATES[number] | null;
   afterState: typeof AUDIT_STATES[number] | null; code: typeof RUN_OUTCOMES[number] | null; beforeVersion: string | null; afterVersion: string | null;
@@ -509,6 +520,25 @@ export function parseEvents(value: unknown, query: RevisionQuery = {}): Manageme
       context: { attemptId: nullableId(context.attemptId), controlId: nullableId(context.controlId) } };
   });
 }
+export function parseStages(value: unknown, attemptId: string, query: RevisionQuery = {}): ManagementPage<StageRecord> {
+  need(isManagementId(attemptId));
+  let previous = 0n; const checkpoints = new Set<string>();
+  return parsePage(value, query, (item) => {
+    const row = object(item); fields(row, ['attemptId', 'stage', 'itemOrdinal', 'checkpointId', 'state', 'startedAt', 'finishedAt', 'outcomeCode', 'counts']);
+    need(row.attemptId === attemptId && member(RUN_STAGES, row.stage) && member(STAGE_STATES, row.state));
+    need(!['VERIFIED', 'FAILED'].includes(row.state) || row.finishedAt !== null);
+    need(typeof row.itemOrdinal === 'number' && Number.isInteger(row.itemOrdinal) && row.itemOrdinal >= 0 && row.itemOrdinal <= 511);
+    need(isManagementId(row.checkpointId) && !checkpoints.has(row.checkpointId)); checkpoints.add(row.checkpointId);
+    const position = stagePosition({ stage: row.stage, itemOrdinal: row.itemOrdinal }); need(position > previous); previous = position;
+    let counts: StageRecord['counts'] = null;
+    if (row.counts !== null) {
+      const entries = object(row.counts); need(Object.keys(entries).every((key) => member(STAGE_COUNT_KEYS, key)));
+      counts = Object.fromEntries(Object.entries(entries).map(([key, count]) => [key, version(count)]));
+    }
+    return { attemptId, stage: row.stage, itemOrdinal: row.itemOrdinal, checkpointId: row.checkpointId, state: row.state,
+      startedAt: nullableTime(row.startedAt), finishedAt: nullableTime(row.finishedAt), outcomeCode: publicCode(row.outcomeCode), counts };
+  });
+}
 export function parseControl(value: unknown, runId: string, controlId: string, etag: string | null): ControlResponse {
   const { row, meta } = recordEnvelope(value);
   need(Object.hasOwn(row, 'runId') && row.runId === runId && Object.hasOwn(row, 'runVersion'));
@@ -626,6 +656,10 @@ export async function fetchAttempts(runId: string, query: RevisionQuery, signal:
 }
 export async function fetchEvents(runId: string, query: RevisionQuery, signal: AbortSignal): Promise<ManagementPage<AuditEvent>> {
   return read(`${runPath(runId)}/events?${parameters(query)}`, signal, (body) => parseEvents(body, query));
+}
+export async function fetchStages(runId: string, attemptId: string, query: RevisionQuery, signal: AbortSignal): Promise<ManagementPage<StageRecord>> {
+  if (!isManagementId(attemptId)) throw new ManagementError('invalid-request');
+  return read(`${runPath(runId)}/attempts/${attemptId}/stages?${parameters(query)}`, signal, (body) => parseStages(body, attemptId, query));
 }
 export async function fetchControl(runId: string, controlId: string, signal: AbortSignal): Promise<ControlResponse> {
   if (!isManagementId(controlId)) throw new ManagementError('invalid-request');

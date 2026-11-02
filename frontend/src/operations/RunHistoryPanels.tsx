@@ -1,51 +1,33 @@
-import type { ReactNode } from 'react';
+import { useState } from 'react';
 import { fetchAttempts, fetchEvents } from '../managementApi';
 import type { AuditEvent, RunAttempt } from '../managementApi';
 import { Timestamp } from '../components/Timestamp';
-import { InspectionError } from './InspectionError';
+import { HistoryPanel } from './HistoryPanel';
 import { useRunHistory } from './useRunHistory';
+import { StageRecords } from './StageRecords';
 
 const attemptSequence = (row: RunAttempt) => BigInt(row.attemptNo);
 const eventSequence = (row: AuditEvent) => BigInt(row.eventSeq);
-function HistoryPanel<T>({ title, label, model, children }: { title: string; label: string; model: ReturnType<typeof useRunHistory<T>>; children: ReactNode }) {
-  const page = model.current?.status === 'ready' ? model.current.page : null;
-  return <section className="panel source-detail-panel" aria-label={title}>
-    <div className="panel-heading"><h2>{title}</h2><button className="secondary-button" type="button" disabled={model.current === null} onClick={() => model.refresh()}>Refresh {label}</button></div>
-    <p className="inspection-note">One high-water page in server order. Refresh starts a new traversal; run refresh does not merge or refresh this history.</p>
-    <label className="history-limit">{title} per page<select value={model.limit} disabled={model.current === null} onChange={(event) => model.changeLimit(Number(event.target.value))}>
-      {[5, 10, 20, 50, 100].map((limit) => <option key={limit} value={limit}>{limit}</option>)}
-    </select></label>
-    <div aria-busy={model.current === null}>
-      {model.current === null && <p className="inspection-note" role="status">Loading {label}</p>}
-      {model.current?.status === 'error' && <InspectionError title={`Unable to load ${label}`} error={model.current.error}
-        retry={() => model.refresh(false)} restart={model.hasCursor ? () => model.refresh() : undefined} />}
-      {page && page.data.length === 0 && <p className="inspection-note" role="status">No {label} returned on this page.</p>}
-      {page && page.data.length > 0 && children}
-    </div>
-    <nav className="source-pagination" aria-label={`${title} pages`}>
-      <button className="secondary-button" type="button" disabled={model.current === null || !model.canGoBack} onClick={model.back}>Previous {label}</button>
-      <p role="status">Page {model.pageNumber}{page ? ` · ${page.data.length} returned${page.meta.hasMore ? ' · More available' : ' · End of results'}` : ''}</p>
-      <button className="secondary-button" type="button" disabled={page === null || !page.meta.hasMore} onClick={model.next}>Next {label}</button>
-    </nav>
-    {model.historyTruncated && <p className="inspection-note">Only 20 cursor positions are retained. Refresh to restart from the first page.</p>}
-  </section>;
-}
 export function AttemptHistory({ runId }: { runId: string }) {
   const model = useRunHistory(runId, fetchAttempts, attemptSequence);
-  return <HistoryPanel title="Attempts" label="attempts" model={model}>
+  const [selected, setSelected] = useState<RunAttempt | null>(null);
+  return <><HistoryPanel title="Attempts" label="attempts" model={model}>
     <p className="inspection-note">EXECUTE is an execution attempt; RECONCILE is a reconciliation attempt. Each record remains separate. Stage count does not identify stages or inherited work.</p>
     {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Keyboard users must be able to scroll the table. */}
     <div className="table-scroll" role="region" aria-label="Attempt records table" tabIndex={0}><table>
       <caption className="visually-hidden">Attempts in ascending attempt-number order. States belong to attempts, not the current run.</caption>
-      <thead><tr><th scope="col">Attempt</th><th scope="col">Kind / attempt state</th><th scope="col">Started (UTC)</th><th scope="col">Finished (UTC)</th><th scope="col">Outcome / stage count</th></tr></thead>
+      <thead><tr><th scope="col">Attempt</th><th scope="col">Kind / attempt state</th><th scope="col">Started (UTC)</th><th scope="col">Finished (UTC)</th><th scope="col">Outcome / stage count</th><th scope="col">Stage records</th></tr></thead>
       <tbody>{model.current?.status === 'ready' && model.current.page.data.map((attempt) => <tr key={attempt.attemptId}>
         <th scope="row">Attempt {attempt.attemptNo}<code className="inspection-id">{attempt.attemptId}</code></th>
         <td>{attempt.kind}<span className="run-metadata">{attempt.state}</span></td>
         <td><Timestamp value={attempt.startedAt} /></td><td><Timestamp value={attempt.finishedAt} /></td>
         <td><code>{attempt.outcomeCode ?? 'Not recorded'}</code><span className="run-metadata">Stage count: {attempt.stageCount}</span></td>
+        <td><button type="button" className="secondary-button" aria-pressed={selected?.attemptId === attempt.attemptId} aria-label={`Inspect stages for attempt ${attempt.attemptNo}`} onClick={() => setSelected(attempt)}>Inspect stages</button></td>
       </tr>)}</tbody>
     </table></div>
-  </HistoryPanel>;
+  </HistoryPanel>
+    {selected && <StageRecords key={`${runId}:${selected.attemptId}`} runId={runId} attempt={selected} />}
+  </>;
 }
 export function AuditTimeline({ runId }: { runId: string }) {
   const model = useRunHistory(runId, fetchEvents, eventSequence);

@@ -1,10 +1,10 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import { fetchEvents } from '../managementApi';
-import type { AuditEvent } from '../managementApi';
+import { fetchEvents, fetchStages, stagePosition } from '../managementApi';
+import type { AuditEvent, RevisionQuery } from '../managementApi';
 import { deferred, jsonResponse } from '../test/fixtures';
 import { FIRST_CURSOR } from '../test/managementFixtures';
-import { auditEvent, historyPage, runDetail } from '../test/runInspectionFixtures';
+import { ATTEMPT_ID, auditEvent, historyPage, runDetail, stageRecord, stagesResponse } from '../test/runInspectionFixtures';
 import { useRunHistory } from './useRunHistory';
 
 const sequence = (event: AuditEvent) => BigInt(event.eventSeq);
@@ -51,4 +51,33 @@ it('cancels a pending history page on unmount and never publishes late transport
   await waitFor(() => expect(view.result.current.current?.status).toBe('ready')); act(() => view.result.current.next());
   view.unmount(); expect((fetch.mock.calls[1]?.[1] as RequestInit).signal?.aborted).toBe(true);
   await act(async () => late.reject(new DOMException('aborted', 'AbortError'))); expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+const readStages = (runId: string, query: RevisionQuery, signal: AbortSignal) => fetchStages(runId, ATTEMPT_ID, query, signal);
+it('bounds selected-stage cursor history at 20 positions and refreshes a new traversal', async () => {
+  const token = (page: number) => `cGFnZQ${page}.${'s'.repeat(43)}`;
+  const fetch = vi.fn().mockImplementation(async (path: string) => {
+    const cursor = new URL(path, 'http://localhost').searchParams.get('cursor'), page = cursor ? Number(cursor.match(/^cGFnZQ(\d+)/)![1]) : 1;
+    return stagesResponse(Array.from({ length: 20 }, (_, i) => stageRecord((page - 1) * 20 + i, 'VERIFY_RESULT')), 20, token(page + 1));
+  });
+  vi.stubGlobal('fetch', fetch); const view = renderHook(() => useRunHistory(id, readStages, stagePosition));
+  await waitFor(() => expect(view.result.current.current?.status).toBe('ready'));
+  for (let page = 2; page <= 23; page++) {
+    act(() => { view.result.current.next(); view.result.current.next(); }); await waitFor(() => expect(view.result.current.current?.status).toBe('ready'));
+    expect(view.result.current.pageNumber).toBe(page);
+  }
+  expect(view.result.current.historyTruncated).toBe(true);
+  for (let step = 0; step < 19; step++) { act(() => view.result.current.back()); await waitFor(() => expect(view.result.current.current?.status).toBe('ready')); }
+  expect(view.result.current.pageNumber).toBe(4); expect(view.result.current.canGoBack).toBe(false);
+  act(() => view.result.current.refresh()); await waitFor(() => expect(view.result.current.current?.status).toBe('ready'));
+  expect(view.result.current.pageNumber).toBe(1); expect(view.result.current.historyTruncated).toBe(false);
+});
+
+it.each(['regressing identity', 'cursor cycle'])('rejects stage cross-page %s', async (kind) => {
+  const first = Array.from({ length: 20 }, (_, i) => stageRecord(i, 'VERIFY_RESULT'));
+  const fetch = vi.fn().mockResolvedValueOnce(stagesResponse(first, 20, FIRST_CURSOR)).mockResolvedValueOnce(kind === 'cursor cycle'
+    ? stagesResponse(Array.from({ length: 20 }, (_, i) => stageRecord(i + 20, 'VERIFY_RESULT')), 20, FIRST_CURSOR) : stagesResponse([stageRecord(1, 'VERIFY_RESULT')]));
+  vi.stubGlobal('fetch', fetch); const view = renderHook(() => useRunHistory(id, readStages, stagePosition));
+  await waitFor(() => expect(view.result.current.current?.status).toBe('ready')); act(() => view.result.current.next());
+  await waitFor(() => expect(view.result.current.current?.status).toBe('error')); expect(view.result.current.current).toMatchObject({ error: { kind: 'invalid-response' } });
 });
