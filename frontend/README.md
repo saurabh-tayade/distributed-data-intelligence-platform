@@ -336,6 +336,8 @@ Each reviewed intent gets one random Idempotency-Key. Its exact serialized body,
 original If-Match are retained in bounded per-tab session storage before transmission, under
 `ddip.source-intent.v1`. There is at most one unresolved source intent per tab. Duplicate submission
 is disabled. Navigation aborts/invalidates pending work, and reload never automatically sends it.
+Starting a new reviewed intent clears notices from the previous intent. Rerendering the same
+unresolved intent preserves its receipt and exact replay data.
 An unknown outcome offers **Resolve same request**, replaying the original key/body/precondition;
 it does not permit editing or issuing a new key. Keep the tab and its session data until resolved:
 closing the tab or clearing storage loses this client receipt. Invalid/unavailable storage blocks

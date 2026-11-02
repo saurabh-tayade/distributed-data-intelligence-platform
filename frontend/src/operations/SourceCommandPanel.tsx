@@ -28,6 +28,12 @@ export function SourceCommandPanel({ visible }: { visible: boolean }) {
   const controller = useRef<AbortController | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const key = intent?.command.key;
+  const [noticeKey, setNoticeKey] = useState(key);
+  // Keep a resolved receipt until another intent starts; never reset the retained request.
+  // Reset during render so a previous intent's notice is not committed in the new review.
+  if (key !== undefined && key !== noticeKey) {
+    setNoticeKey(key); setNotice('');
+  }
   function retain(value: SourceIntent | null) {
     try { saveSourceIntent(value); return true; }
     catch { setNotice('Tab storage could not be updated. Preserve this tab and its original request; no new intent can be started safely.'); return false; }
