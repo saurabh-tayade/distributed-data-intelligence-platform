@@ -1,5 +1,8 @@
 # Inactive narrow Content expectation reader
 
+This page records the strict-reader slice in isolation; the later
+[tracked admission slice](narrow-content-admission.md) adds its inactive durable binding and lifecycle.
+
 November 4, 2026. **No production admission, runtime, publisher, claim or dispatch path
 uses this reader. Gate B0 remains incomplete.** This follows the
 [narrow profile foundation](narrow-content-profile.md) without changing its ledger format
@@ -110,3 +113,13 @@ PREPARING-to-READY ordering remain undecided. Integration must additionally addr
 transactions, attempt capacity, exact stage allocation, versioned child sinks, precompletion
 native limits, complete nested evidence bounds and original/inherited recovery. This reader
 alone closes none of those operational gates.
+
+## Subsequent tracked admission slice
+
+The owner subsequently approved claimed → preparing → ready ordering.
+[ADR 0023](../adr/0023-tracked-narrow-content-admission.md) and the
+[admission report](narrow-content-admission.md) describe the new inactive SQL enrollment and
+receipt binding that calls this reader. Those additions resolve persistence/ordering for
+original preparation only. The reader's own equality contract is unchanged, and neither it
+nor the new facts lookup authorizes a child, resumes ownership or activates Content dispatch.
+The earlier scope and test results above describe the strict-reader slice in isolation.

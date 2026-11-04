@@ -23,6 +23,28 @@ final class ContentEvidenceBudget {
     private static final Map<Path,Object> LOCAL_LOCKS=new ConcurrentHashMap<>();
     private static final Set<Path> REQUIRED=ConcurrentHashMap.newKeySet();
     record Totals(long actualBytes,int actualEntries,long reservedBytes,int reservedEntries,int inventoryMaximum){}
+    enum StoreBoundary { PREFIX_CREATED, PREFIX_WRITTEN, PREFIX_FORCED, RENAMED, DIRECTORY_FORCED }
+    interface StoreFault { void at(StoreBoundary boundary); }
+    private static final StoreFault NO_STORE_FAULT=boundary->{};
+
+    /** Fresh narrow preparation only. The caller created this root and lock, never an adopted tree. */
+    static void initializeFresh(InstallationHostGuard guard,UUID run,UUID attempt,
+                                InstallationHostGuard.Identity rootIdentity,
+                                InstallationHostGuard.Identity lockIdentity,StoreFault fault){
+        need(guard!=null && run!=null && attempt!=null && rootIdentity!=null && lockIdentity!=null && fault!=null,INPUT_INVALID);
+        guard.checkHeld(guard.binding().installationId());
+        Path root=guard.binding().root().resolve("runs/"+run+"/attempts/"+attempt);
+        locked(root,()->{
+            need(rootIdentity.equals(InstallationHostGuard.identity(root))
+                    && lockIdentity.equals(InstallationHostGuard.identity(root.resolve(LOCK))),INPUT_CHANGED);
+            try(var children=Files.list(root)){
+                need(children.allMatch(child->child.getFileName().toString().equals(LOCK)),INPUT_CHANGED);
+            }catch(java.io.IOException ex){throw new PreflightFailure(INPUT_UNAVAILABLE);}
+            var n=SourceJson.object().put("version",1).put("treeKind","ATTEMPT").put("runId",run.toString()).put("attemptId",attempt.toString())
+                    .put("rootDevice",Long.toString(rootIdentity.device())).put("rootInode",Long.toString(rootIdentity.inode()));
+            n.putArray("directories").add("");n.putObject("files");store(root,n,fault);return null;
+        });
+    }
 
     static void initialize(InstallationHostGuard guard,UUID run,UUID attempt){
         initialize(guard,run,attempt,guard.binding().root().resolve("runs/"+run+"/attempts/"+attempt),"ATTEMPT");
@@ -99,6 +121,10 @@ final class ContentEvidenceBudget {
     }
     /** Atomically install one complete fixed plan. Never retrofit a populated legacy tree. */
     static void reservePlan(ContentOperationPlan plan){
+        reservePlan(plan,NO_STORE_FAULT);
+    }
+    static void reservePlan(ContentOperationPlan plan,StoreFault fault){
+        need(plan!=null && fault!=null,INPUT_INVALID);
         Path directory=plan.root(),root=root(directory);need(root!=null && root.equals(directory),INPUT_INVALID);
         locked(root,()->{
             var n=read(root);validate(root,n);
@@ -106,7 +132,7 @@ final class ContentEvidenceBudget {
             var next=(ObjectNode)n.deepCopy();plan.apply(next);var total=limits(next);
             need(total.inventoryMaximum()<=128*1024,RESOURCE_LIMIT);
             if(n.get("version").intValue()==2)need(Arrays.equals(SourceJson.canonical(n),SourceJson.canonical(next)),INPUT_CHANGED);
-            else store(root,next);
+            else store(root,next,fault);
             return null;
         });
     }
@@ -228,13 +254,19 @@ final class ContentEvidenceBudget {
         return new Totals(bytes,count,reserved.reservedBytes(),reserved.reservedEntries(),reserved.inventoryMaximum());
     }
     private static void store(Path root,JsonNode n){
+        store(root,n,NO_STORE_FAULT);
+    }
+    private static void store(Path root,JsonNode n,StoreFault fault){
         byte[] bytes=SourceJson.canonical(n);need(bytes.length<=LEDGER,RESOURCE_LIMIT);
         try{
             try(var channel=FileChannel.open(root.resolve(PENDING),Set.of(StandardOpenOption.WRITE,StandardOpenOption.CREATE_NEW,LinkOption.NOFOLLOW_LINKS),PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))){
-                var b=ByteBuffer.wrap(bytes);while(b.hasRemaining())channel.write(b);channel.force(true);
+                fault.at(StoreBoundary.PREFIX_CREATED);
+                var b=ByteBuffer.wrap(bytes);while(b.hasRemaining())channel.write(b);fault.at(StoreBoundary.PREFIX_WRITTEN);
+                channel.force(true);fault.at(StoreBoundary.PREFIX_FORCED);
             }
             need(Arrays.equals(bytes,PreflightFiles.read(root.resolve(PENDING),LEDGER,true)),INPUT_CHANGED);
-            Files.move(root.resolve(PENDING),root.resolve(MANIFEST),StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);PreparedCommand.forceDirectory(root);
+            Files.move(root.resolve(PENDING),root.resolve(MANIFEST),StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);
+            fault.at(StoreBoundary.RENAMED);PreparedCommand.forceDirectory(root);fault.at(StoreBoundary.DIRECTORY_FORCED);
         }catch(FileAlreadyExistsException ex){throw new PreflightFailure(INPUT_CHANGED);}
         catch(java.io.IOException ex){throw new PreflightFailure(INPUT_UNAVAILABLE);}
     }

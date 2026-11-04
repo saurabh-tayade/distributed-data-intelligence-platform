@@ -352,6 +352,8 @@ final class RecoveryHandoff {
         // Targets are immutable. Resolve IDs after coordinator lock, then lock R -> A -> K.
         var ids=one(jdbc.queryForList("SELECT run_id,target_attempt_id FROM ddip_management.controls WHERE control_id=?",control));
         var r=one(jdbc.queryForList("SELECT run_id,product_id,pipeline,pipeline_version,idempotency_key,normalized_request,request_sha256,captured_selection,selection_sha256,execution_profile_id,state,current_stage,current_attempt_id,row_version,finished_at,result_artifact_id,outcome_code,counts_bytes,retry_eligible FROM ddip_management.runs WHERE run_id=? FOR UPDATE",ids.get("run_id")));
+        // New admissions must never enter the legacy missing-root/no-stage shortcut.
+        need(!NarrowContentAdmission.hasHistory(jdbc,(UUID)r.get("run_id")),EVIDENCE_UNAVAILABLE);
         var a=one(jdbc.queryForList("SELECT attempt_id,run_id,attempt_no,kind,instance_id,owner_epoch,state,started_at,finished_at,outcome_code,row_version FROM ddip_management.attempts WHERE attempt_id=? FOR UPDATE",ids.get("target_attempt_id")));
         var k=one(jdbc.queryForList("SELECT control_id,run_id,type,idempotency_key,normalized_request,request_sha256,expected_version,target_attempt_id,quiescence_confirmed,state,reason,requester,requested_at,applied_at,row_version FROM ddip_management.controls WHERE control_id=? FOR UPDATE",control));
         String workerSql="SELECT instance_id,installation_id,execution_profile_id,profile_sha256,host_binding_sha256,pid,process_started_at,status,heartbeat_at,row_version FROM ddip_management.worker_instances WHERE instance_id=? FOR UPDATE";

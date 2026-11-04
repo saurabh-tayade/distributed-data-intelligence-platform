@@ -9,6 +9,7 @@
     "platform.contentapi.management.RunSubmissionIT",
     "platform.contentapi.management.SourceManagementIT",
     "platform.contentapi.management.WorkerCoordinationIT",
+    "platform.contentapi.management.NarrowContentAdmissionIT",
     "platform.contentapi.management.ContentResumeControlIT"
   ],
   "reliability": [
