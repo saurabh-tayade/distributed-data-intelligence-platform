@@ -413,6 +413,8 @@ class WorkflowTests(unittest.TestCase):
         for key in ("classified", "mode", *JOBS):
             self.assertIn(f"{key}: ${{{{ steps.classify.outputs.{key} }}}}", body)
         self.assertIn("python3 -I -B -m unittest discover -s .github/ci/tests -v", block("documentation"))
+        self.assertIn("python3 -I -B -m unittest discover -s scripts/tests -p test_local_operations_demo.py -v", block("documentation"))
+        self.assertIn("python -I -B -m unittest discover -s scripts/tests -p test_demo_reliability_native.py -v", block("analytics_http"))
         self.assertEqual(POSTGRES_WORKFLOW.count("    services:"), 1)
         self.assertIn("mvn -B -ntp -f services/content-api/pom.xml verify -Ppostgres", POSTGRES_WORKFLOW)
         self.assertIn('mvn -B -ntp -f services/content-api/pom.xml verify -Pintegration -Danalytics.python="$(command -v python)"', block("analytics_http"))

@@ -1,5 +1,6 @@
 """Focused lifecycle safety checks; actual native/HTTP acceptance is run separately."""
 import importlib.util
+from copy import deepcopy
 import io
 import json
 import os
@@ -90,10 +91,93 @@ class DemoSafetyTests(unittest.TestCase):
             self.assertEqual(demo.owned_container(self.state), "a" * 64)
 
     def test_external_service_and_jvm_configuration_is_not_inherited(self):
-        with patch.dict(demo.os.environ, {"DDIP_DB_URL": "retained", "SPRING_CONFIG_LOCATION": "retained", "ANALYTICS_GOLD_ROOT": "retained", "JAVA_TOOL_OPTIONS": "-Dddip.database.url=retained"}):
+        inherited = {"DDIP_DB_URL": "retained", "SPRING_CONFIG_LOCATION": "retained", "ANALYTICS_GOLD_ROOT": "retained",
+                     "JAVA_TOOL_OPTIONS": "-Dddip.database.url=retained", "JDK_JAVA_OPTIONS": "retained", "_JAVA_OPTIONS": "retained",
+                     "SERVER_PORT": "9999", "RELIABILITY_ANALYTICS_ROOT": "/retained/output",
+                     "RELIABILITY_ANALYTICS_BATCH_ROOT": "/retained/batches", "RELIABILITY_ANALYTICS_REFERENCE_ROOT": "/retained/reference",
+                     "RELIABILITY_ANALYTICS_PUBLICATION": "f" * 64, "RELIABILITY_ANALYTICS_PYTHON_EXECUTABLE": "/retained/python",
+                     "RELIABILITY_ANALYTICS_PYTHONEXECUTABLE": "/retained/python", "RELIABILITY_ANALYTICS_PROCESSING_ROOT": "/retained/code",
+                     "RELIABILITY_ANALYTICS_FUTURE_OPTION": "retained"}
+        with patch.dict(demo.os.environ, inherited | {"PATH": "/approved/bin", "JAVA_HOME": "/approved/jdk", "UNRELATED": "kept"}):
             environment = demo.Demo(Mock()).env
-        for name in ("DDIP_DB_URL", "SPRING_CONFIG_LOCATION", "ANALYTICS_GOLD_ROOT", "JAVA_TOOL_OPTIONS"):
+            self.assertEqual({name: demo.os.environ[name] for name in inherited}, inherited)
+        for name in inherited:
             self.assertNotIn(name, environment)
+        for name, value in {"PATH": "/approved/bin", "JAVA_HOME": "/approved/jdk", "UNRELATED": "kept"}.items():
+            self.assertEqual(environment[name], value)
+
+    def selection(self):
+        root = self.root / "reliability-analytics"
+        return dict(root=str(root / "output"), batchRoot=str(root / "batches"), referenceRoot=str(root / "references"), publication="a" * 64)
+
+    def test_reliability_arguments_pin_every_operator_setting(self):
+        selected = self.selection()
+        self.assertEqual(demo.reliability_arguments("/approved/python", selected), [
+            "--reliability.analytics.python-executable=/approved/python",
+            "--reliability.analytics.processing-root=" + str(demo.REPO / "processing"),
+            "--reliability.analytics.root=" + selected["root"],
+            "--reliability.analytics.batch-root=" + selected["batchRoot"],
+            "--reliability.analytics.reference-root=" + selected["referenceRoot"],
+            "--reliability.analytics.publication=" + selected["publication"]])
+
+    def test_missing_invalid_or_external_reliability_selection_is_rejected(self):
+        for identity in (None, "", "latest", "A" * 64, "../publication", "a" * 63, 1):
+            with self.subTest(identity=identity), self.assertRaisesRegex(RuntimeError, "selected Reliability publication"):
+                demo.reliability_arguments("/approved/python", self.selection() | {"publication": identity})
+        for key in ("root", "batchRoot", "referenceRoot"):
+            with self.subTest(key=key), self.assertRaisesRegex(RuntimeError, "isolated demo fixture"):
+                demo.reliability_arguments("/approved/python", self.selection() | {key: "/retained"})
+
+    def analytics_evidence(self):
+        self.save()
+        native = dict(product_id="application-reliability", product_contract_version=2, processor_revision=2,
+                      input_format="JSONL", origin="synthetic", label="Synthetic request events — not production reliability.",
+                      product_fingerprint="a" * 64, reference=dict(reference_id="bench-services", revision="r1", snapshot_fingerprint="b" * 64),
+                      filters=dict(start=demo.RELIABILITY_START, end=demo.RELIABILITY_END, service_id=None, environment=None),
+                      rows=[dict(zip(demo.RELIABILITY_ROWS, [demo.RELIABILITY_START, "svc00", "test", "2", "1", 0.5, "30", 15.0, "20",
+                                                          "Service 00", None, None, "MATCHED"]))], limit="1", offset="0", has_more=True)
+        response = demo.reliability_response(native)
+        scenario = dict(name="first-page", query=dict(start=demo.RELIABILITY_START, end=demo.RELIABILITY_END, limit=1, offset=0), response=response)
+        demo.write_json(self.root / "reliability-analytics-verification.json", dict(selection=self.selection(), scenarios=[scenario]))
+        return response
+
+    def test_reliability_http_matches_exact_native_projection_and_query(self):
+        response = self.analytics_evidence()
+        with patch.object(demo, "http", return_value=(response, {"Cache-Control": "no-store"})) as http:
+            result = demo.verify_reliability_http("http://127.0.0.1:14173", self.selection())
+        self.assertEqual(result["publication"], "a" * 64)
+        self.assertEqual(result["scenarios"][0]["response"]["data"][0]["requestCount"], "2")
+        self.assertIsNone(result["scenarios"][0]["response"]["data"][0]["ownerTeam"])
+        base, path = http.call_args.args
+        self.assertEqual(base, "http://127.0.0.1:14173")
+        self.assertEqual(demo.urllib.parse.parse_qs(demo.urllib.parse.urlsplit(path).query),
+                         dict(start=[demo.RELIABILITY_START], end=[demo.RELIABILITY_END], limit=["1"], offset=["0"]))
+
+    def test_reliability_http_rejects_switched_publication_types_rows_and_cache(self):
+        response = self.analytics_evidence()
+        invalid = [response | {"publication": "f" * 64}, response | {"data": []}, response | {"origin": "production"},
+                   response | {"meta": response["meta"] | {"hasMore": 1}}, response | {"reference": response["reference"] | {"revision": "r2"}}]
+        changed = deepcopy(response)
+        changed["data"][0]["requestCount"] = 2
+        invalid.append(changed)
+        for payload in invalid:
+            with self.subTest(payload=payload), patch.object(demo, "http", return_value=(payload, {"Cache-Control": "no-store"})):
+                with self.assertRaisesRegex(RuntimeError, "native report mismatch"):
+                    demo.verify_reliability_http("http://127.0.0.1:18080", self.selection())
+        with patch.object(demo, "http", return_value=(response, {})):
+            with self.assertRaisesRegex(RuntimeError, "cache contract"):
+                demo.verify_reliability_http("http://127.0.0.1:18080", self.selection())
+
+    def test_changed_selection_or_failed_http_never_falls_back(self):
+        self.analytics_evidence()
+        with patch.object(demo, "http") as http:
+            with self.assertRaisesRegex(RuntimeError, "selection changed"):
+                demo.verify_reliability_http("http://127.0.0.1:18080", self.selection() | {"publication": "f" * 64})
+            http.assert_not_called()
+        with patch.object(demo, "http", side_effect=RuntimeError("HTTP 500")) as http:
+            with self.assertRaisesRegex(RuntimeError, "HTTP 500"):
+                demo.verify_reliability_http("http://127.0.0.1:18080", self.selection())
+            self.assertEqual(http.call_count, 1)
 
     def test_reused_supervisor_pid_is_never_signalled(self):
         self.save()

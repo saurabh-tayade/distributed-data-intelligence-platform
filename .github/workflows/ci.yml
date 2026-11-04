@@ -73,6 +73,8 @@ jobs:
         run: python3 .github/ci/postgres_partitions.py
       - name: Test CI classification and required gate
         run: python3 -I -B -m unittest discover -s .github/ci/tests -v
+      - name: Test local demo safety and analytics isolation
+        run: python3 -I -B -m unittest discover -s scripts/tests -p test_local_operations_demo.py -v
 
   ingestion:
     name: Java 21 ingestion and Bronze storage
@@ -270,6 +272,8 @@ jobs:
           PYTHONPATH=processing:processing/tests python services/api/tests/generate_fixtures.py --output services/api/target/fixtures
       - name: Generate Spark-free Reliability HTTP fixtures for JSONL and Parquet
         run: PYTHONPATH=processing:processing/tests python services/content-api/tests/generate_reliability_fixtures.py --output services/content-api/target/reliability-fixtures
+      - name: Verify isolated demo Reliability selection with the native reader
+        run: python -I -B -m unittest discover -s scripts/tests -p test_demo_reliability_native.py -v
       - name: Verify Spring Boot analytics APIs against native Gold and Reliability fixtures
         run: |
           export JAVA_HOME="$JAVA_HOME_21_X64"

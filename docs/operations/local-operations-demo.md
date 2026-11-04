@@ -52,6 +52,7 @@ Omit `--offline` if Maven needs to download its existing pinned dependencies. Th
 launcher builds the packaged API and frontend before starting services. Default URLs:
 
 - Analytics: `http://127.0.0.1:14173/#/analytics`
+- Reliability: `http://127.0.0.1:14173/#/analytics/reliability`
 - Sources: `http://127.0.0.1:14173/#/operations/sources`
 - Executions: `http://127.0.0.1:14173/#/operations/executions`
 - API: `http://127.0.0.1:18080`
@@ -69,8 +70,9 @@ refuse, including after failed initialization; it is never silently overwritten.
 
 All state, logs, credentials-bearing configuration and new native data are private
 under ignored `local-data/operations-demo/`. Do not share that directory. There are
-no committed credentials or AWS resources. The launcher ignores inherited DDIP,
-Analytics, Spring/server and JVM option configuration; Java loads only the packaged
+no committed credentials or AWS resources. The launcher ignores inherited `DDIP_`,
+`ANALYTICS_`, `RELIABILITY_ANALYTICS_`, `SPRING_`, `SERVER_` and JVM option configuration;
+Java loads only the packaged
 application configuration plus this demo's explicit environment/arguments. It never
 uses the retained development database or existing native publication roots.
 
@@ -84,12 +86,20 @@ uses the retained development database or existing native publication roots.
    revision retain their fixture meaning; they are not a production build identity.
 3. Generate the separate, documented M2.4 synthetic Gold publications using
    `processing/tests/gold_fixtures.py:create_analytics_publications`. Pin Analytics
-   to its full publication fingerprint. Reliability output is never activated as Gold.
+   to its full publication fingerprint. Also generate a separate JSONL Reliability
+   analytics publication using `processing/tests/reliability_format_fixtures.py:completed`,
+   the existing literal G1 verifier fixture. Fully reopen it with the native reader
+   before saving its selection and expected request-window reports. Pin all Reliability
+   analytics roots and the exact fingerprint at API startup. Neither selection comes
+   from an Operations run result, a directory scan, inherited settings or a latest pointer.
 4. Start PostgreSQL 17.11 using the repository's pinned local image. Apply unchanged
    migrations through the packaged `migrate` role. Provision only immutable storage
    bindings, run/runtime/import profiles and their associations through trusted SQL.
    These references have no public provisioning API.
 5. Start API mode with exact API/UI loopback origins and the private source catalog.
+   Check seven bounded Reliability request-window scenarios against the native reports
+   through direct HTTP, including exact identity/reference/metrics, filters, pagination,
+   empty results, pre-epoch UTC and `no-store` caching.
    Register the source through `POST /api/management/v1/sources`.
 6. Invoke the packaged `operator-import` role with the real bounded import catalog.
    Require a fresh VERIFIED import. Discover the run profile, two compatible imported
@@ -105,7 +115,9 @@ uses the retained development database or existing native publication roots.
    enabled. Keep revision 1 current so the fixed revision-1 inputs remain compatible
    with the existing submission UI; no extra historical revision is fabricated.
 10. Start Vite preview with the existing proxy, preserving Host. Check the successful
-    run through that proxy and read the separate Gold publisher report. Print READY.
+    run through that proxy and read the separate Gold publisher report. Repeat the same
+    Reliability scenarios through the proxy and require unchanged publication identity
+    and responses after managed execution. Print READY and the Reliability view/UTC interval.
 
 Expected tiny synthetic Reliability results are **15 occurrences, 10 valid, 5 rejected,
 4 unique events and 3 five-minute windows**. CHECK_INPUTS, PUBLISH_RELIABILITY and
@@ -113,6 +125,14 @@ VERIFY_RESULT must all be VERIFIED. The final publication is native PySpark outp
 followed by the worker's independent verification and atomic finalization. The wrapper's
 additional native read is a separate acceptance observation; HTTP's
 `VERIFIED_AT_EXECUTION` remains historical evidence, not continuous requalification.
+
+The separate **Reliability analytics fixture** has **10 occurrences, 5 valid, 5 rejected,
+4 unique events and 3 windows**. It is a literal verifier fixture, not another Spark run
+or a claim that the worker's 15-occurrence output has been activated. Its October interval
+contains two windows; the third is deliberately pre-epoch. Every API read fully verifies
+the selected publication and its retained raw/reference dependencies. Missing or corrupt
+artifacts fail closed, without substituting a successful run or another publication.
+The launcher does not raise the existing process, timeout, response or pagination limits.
 
 The fixture uses native local files, so SeaweedFS is not needed. The existing
 [Compose file](../../infrastructure/local/compose.yaml) explicitly names its retained
@@ -126,7 +146,11 @@ same pinned image without modifying Compose or creating a parallel production st
 `status` distinguishes initialization phases from READY, reports the actual run
 state when reachable, and reports supervisor/container presence. `state.json` records
 cumulative wall-clock phase timings. `acceptance.json` contains successful public HTTP
-observations; `native-verification.json` contains the additional native read result.
+observations, including Reliability report parity through the UI proxy;
+`native-verification.json` contains the managed run's additional native read result.
+`prepared.json` holds the fixed, separate Gold and Reliability selections.
+`reliability-analytics-verification.json` contains the selected Reliability roots/fingerprint,
+native report expectations and unchanged-file count for its output and dependencies.
 Private per-command logs include build, fixtures, migrate, API, importer, worker,
 frontend and independent verification.
 
@@ -148,10 +172,20 @@ remove native files while a demo worker/child may still use them.
 
 ## Owner browser acceptance checklist
 
-HTTP acceptance is automated; browser acceptance is a separate observation. Once READY:
+HTTP acceptance is automated; browser acceptance is a separate observation. The owner
+has deferred the walkthrough until the entire UI is in place. The following is a checklist,
+not new browser acceptance evidence. Once READY:
 
 1. Open Analytics at the printed UI URL. Confirm Publisher Overview, Daily Activity,
    Data Quality and Article Explorer load the pinned **synthetic Gold** publication.
+   Open **Application Reliability** at `#/analytics/reliability`. Enter UTC start
+   `2026-10-01T00:00:00.000000Z` and end `2026-10-01T00:10:00.000000Z`, then apply the
+   filters. Expect `svc00` and `svc01` windows with request counts **2** and **1**.
+   Filter to `svc00` / `test` for one row, or `absent-service` for an empty result.
+   For the missing-reference window use start `1969-12-31T23:55:00.000000Z`, end
+   `1970-01-01T00:00:00.000000Z`, service `svc09`, environment `production`.
+   The label remains **synthetic**, including that environment. Check publication and
+   reference identities, nullable reference fields and explicitly approximate p95.
 2. Open Operations → Sources. Inspect `fixture-jsonl`, its enabled state, current
    revision 1 and immutable revision-1 record. This initial fixture has one revision;
    editing it would deliberately make the fixed revision-1 batches undiscoverable
@@ -164,7 +198,10 @@ HTTP acceptance is automated; browser acceptance is a separate observation. Once
 5. Inspect audit events including RUN_SUCCEEDED. Refresh run, attempts, stages and events
    independently. No latest control receipt is expected: this demo does not issue controls.
 6. Check keyboard selection/focus, narrow-screen scrolling, browser Back/Forward and
-   unchanged Analytics selection. With only three stages, default stage paging has
+   unchanged separate Content and Reliability selections. Navigating to Operations or
+   completing a new run must not select another analytics publication. Reloading the
+   dashboard resets its session pin, but does not change the API's configured selection.
+   With only three stages, default stage paging has
    no next page; broader pagination/race coverage remains in the existing automated tests.
 7. Run **status**, then **down**. Confirm ports close, the labelled container/volume is
    absent and the private demo directory is removed. Launch again to confirm a new
@@ -174,17 +211,54 @@ HTTP acceptance is automated; browser acceptance is a separate observation. Once
 
 ```sh
 python3 -m unittest discover -s scripts/tests -p test_local_operations_demo.py -v
+# Spark-free native demo checks, with the pinned DuckDB analytics dependencies:
+"$DDIP_DEMO_PYTHON" -m unittest discover -s scripts/tests -p test_demo_reliability_native.py -v
 python3 -m unittest discover -s .github/ci/tests -v
 npm run check
 git diff --check
 ```
 
 The safety tests mock external tools to check ownership, refusal, missing resources,
-inherited configuration and HTTP headers. They do not replace the real startup/native
+inherited configuration, explicit selection, response mismatches and HTTP headers. The
+native tests exercise the real selected fixture, read-only reports and missing/corrupt
+publications/dependencies. Run them with the pinned DuckDB 1.4.5 environment;
+missing dependencies fail rather than silently skipping acceptance. Neither replaces full startup/native
 acceptance above. No new production dependencies, schemas, endpoints, frontend features
 or processing/recovery changes are part of this workflow.
 
+## Reliability analytics slice validation — 2026-11-04
+
+On Linux x86_64, local checks used Java 21.0.13, Maven 3.9.11, Node 24.22.1 and a
+Python 3.12.14 analytics-only environment with DuckDB 1.4.5. That Python environment
+does **not** meet the full demo's pinned Python 3.12.15/PySpark 4.0.2 prerequisite.
+
+- **21 launcher safety tests** and **3 native demo tests** passed, including five
+  wrong-identity, missing-publication and damaged-dependency cases. CI now runs the
+  safety suite in the documentation job and the native suite in the existing pinned
+  analytics job.
+- The packaged application in database-free `analytics` role and built Vite preview
+  passed all **7 selected-fixture report scenarios directly and through the proxy**.
+  Four forbidden publication/path overrides or out-of-bounds requests returned 400.
+  Removing the selected completion marker returned only the safe generic 500 code
+  through both routes. Restoring it recovered the same selection and all seven reports.
+  All **16 fixture/evidence files** retained their hashes and mtimes, and the test's
+  API/frontend processes were stopped. This is HTTP acceptance, not browser interaction.
+- **406 backend unit/web tests**, **16 existing Reliability HTTP/native integration
+  tests** (34 JSONL/Parquet scenarios and 12 damaged cases), **15 native verifier tests**,
+  **1,170 frontend tests** and **45 CI-policy tests** passed. Typecheck, lint, both
+  production builds, Markdown/local-link checks, hygiene and whitespace checks passed.
+  The existing frontend main-bundle warning remains (754.60 kB minified / 216.91 kB gzip).
+
+Docker and the pinned Spark environment were unavailable, so the complete managed
+demo startup/restart/teardown was **not rerun** for this slice. Full Gold/Spark and
+PostgreSQL regression profiles and hosted CI were not run locally. Browser walkthrough
+and personal UI refinement remain deferred. The historical full-demo evidence below
+does not remove these limits, and this slice does not complete every #53 criterion.
+
 ## Local acceptance — 2026-11-02
+
+This historical full-demo evidence predates the separate Reliability analytics view.
+It does not qualify the new analytics configuration or constitute a new browser review.
 
 Final validation used macOS arm64, Java 21.0.7, Node 24.22.1, the pinned native Python
 environment and the pinned PostgreSQL 17.11 Bookworm image on local Docker Desktop.
