@@ -4,7 +4,7 @@
 
 ## Sources and ingestion
 
-Planned sources include publisher/content metadata delivered as files or API responses and engagement events such as content views or clicks. RSS/Atom contracts, source usage guidance, identities, schemas and timestamp semantics are documented; engagement-source contracts and retention policies remain deferred. No real MSN integration or business dataset exists.
+Planned sources include publisher/content metadata delivered as files or API responses and engagement events such as content views or clicks. RSS/Atom contracts, source usage guidance, identities, schemas and timestamp semantics are documented; engagement-source contracts and retention policies remain deferred. No proprietary content-platform integration or private business dataset is included.
 
 The Java RSS/Atom batch adapter lands inputs with source identifiers, ingestion timestamps, and provenance. Streaming adapters will publish events through either Kafka or Redpanda; the broker choice remains open. A future Spark Structured Streaming path will persist/process events with explicit checkpoint, replay, watermark, and late-event policies. A broker is transport, not the long-term analytical record.
 

@@ -2,7 +2,7 @@
 
 ## Objectives
 
-Build a public, portfolio-quality, local-first Content Intelligence & Analytics Platform inspired by a large content portal. Demonstrate heterogeneous ingestion, distributed transformations, trustworthy analytical layers, SQL exploration, and multiple consumers with reproducible evidence.
+Build a public, portfolio-quality, local-first Content Intelligence & Analytics Platform for content aggregation and analytics. Demonstrate heterogeneous ingestion, distributed transformations, trustworthy analytical layers, SQL exploration, and multiple consumers with reproducible evidence.
 
 M1 delivered Java 21 local RSS/Atom batch ingestion, SeaweedFS Bronze persistence, Spark Silver normalization and verified Bronze-to-Silver integration with local Parquet. M2 delivered validated Silver selection, deterministic Spark Gold products, immutable publication/replay and standalone DuckDB reports, reconciled against the six retained snapshots. See the [M1](m1-closeout.md) and [M2 closeout records](m2-closeout.md). M6.2 adds a verified Spring Boot publisher API, and M6.3 adds its React/TypeScript dashboard. M6.4 adds article/daily/quality APIs and deterministic article pagination. M6.5 implements all four dashboard views and article exploration. Browser acceptance and final M6 closeout remain pending; streaming and the remaining full-MVP objectives below remain planned.
 
