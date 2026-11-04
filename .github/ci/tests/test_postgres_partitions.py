@@ -116,8 +116,8 @@ class PostgresInventoryTests(unittest.TestCase):
         self.assertEqual(PARTITIONS.inventory(self.root), self.groups)
         self.assertEqual(len(sum(self.groups.values(), [])), len(set(sum(self.groups.values(), []))))
         self.assertEqual({k: len(v) for k, v in self.groups.items()},
-                         dict(core=10, reliability=7, ingestion=3, gold=3, content_recovery=3))
-        self.assertEqual(len(sum(self.groups.values(), [])), 26)
+                         dict(core=11, reliability=7, ingestion=3, gold=3, content_recovery=3))
+        self.assertEqual(len(sum(self.groups.values(), [])), 27)
         self.assertEqual(tuple(self.groups['gold']), GOLD)
         self.assertEqual(tuple(self.groups['content_recovery']), CONTENT_RECOVERY)
 

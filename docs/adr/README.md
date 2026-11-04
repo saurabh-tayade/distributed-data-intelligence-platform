@@ -80,3 +80,8 @@ of the narrower versioned Content design direction, preserving existing readers 
 contracts. Its envelope and fixed-plan foundation is implemented, but native precompletion,
 runtime adoption and restart qualification remain open. This does not change historical ADR
 statuses or complete Gate B0; ordinary Content dispatch stays disabled.
+
+[ADR 0023](0023-tracked-narrow-content-admission.md) records the owner-approved tracked
+claimed → preparing → ready direction and its inactive durable-binding implementation.
+It adds bounded preparation and facts-only reconstruction, not stage authorization or
+operational recovery. PostgreSQL and remaining native safety qualification stay required.

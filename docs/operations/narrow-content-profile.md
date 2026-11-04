@@ -162,3 +162,8 @@ The subsequent [inactive strict expectation reader](narrow-content-strict-reader
 an explicit read-only API requiring independently supplied policy, plan, identities and ledger
 hash. It rejects downgrade and absent-marker shortcuts for that API without changing legacy
 paths. Authoritative persistence and production integration remain deferred.
+
+The later [tracked admission slice](narrow-content-admission.md) adds an explicit inactive
+SQL claim/enrollment path and PREPARING/READY receipts. Its next-attempt-number check preserves
+recovery headroom even when historical numbering has gaps. It does not change the historical
+foundation results above or qualify operational stage allocation and continuation.
