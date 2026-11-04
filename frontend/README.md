@@ -534,6 +534,58 @@ npm run check
 git diff --check
 ```
 
+## Reliability request-window analytics (#58)
+
+Open **Analytics → Application Reliability**, or `#/analytics/reliability`, for a separate
+read-only view of `GET /api/v1/reliability/request-windows`. The existing Content views and
+their Gold publication pin remain independent. Reliability retains its own pin, applied
+filters, draft inputs and page position across workspace navigation. A verified response
+with a different Reliability publication permanently blocks that product's results until
+browser reload, including after navigation away and back; it does not block Content or
+Operations. The synthetic-origin notice remains visible during loading, empty and error states.
+
+Enter an explicit start and end before the first read. Inputs use exact UTC
+`YYYY-MM-DDTHH:mm:ss.ffffffZ` timestamps on five-minute boundaries, with inclusive start,
+exclusive end and a positive interval no longer than 31 days. End also accepts the native
+`10000-01-01T00:00:00.000000Z` sentinel. No current-day default, inclusive calendar-date
+interpretation, timezone conversion, trimming or silent alignment is applied. Optional exact
+service ID and dev/test/production environment filters are applied only on submission.
+The environment label describes synthetic events, including when its value is `production`.
+
+The UI offers 20/50/100 rows per page, while its API boundary validates the endpoint's full
+1–1000 limit and 0–1,000,000 offset bounds. Previous/Next fetch one page explicitly. Applying
+filters resets the offset; Refresh page rereads the current position. Only the visible
+product fetches. Abort and request-lifetime guards prevent obsolete, reversed or route-interrupted
+responses from replacing rows or setting either product's pin. No full-scope download, polling,
+publication switcher, exports, event catalog, arbitrary SQL or paths are exposed.
+
+The semantic table preserves native ascending window/service/environment ordering and
+microsecond timestamps. Counters, duration sums and approximate p95 remain exact decimal
+strings and are formatted through BigInt. Ratios and means display their validated numeric
+values without presentation rounding. The 5xx metric is explicitly a ratio of recorded
+requests, not a percentage or availability score. P95 is explicitly approximate and never
+combined across rows. Empty scopes contain no fabricated zero windows or aggregate totals.
+Missing service references retain the request row with explicitly unavailable metadata.
+
+The independent client rejects unexpected fields, unsupported product/version/origin metadata,
+bad reference identifiers, malformed numeric values, invalid order, out-of-scope rows and
+mismatched echoed filters or paging metadata. Fixed local error copy never displays server
+diagnostics. Product and service-reference provenance is available in an expandable panel;
+it does not claim current ownership or operational health.
+
+Automated tests cover protocol negatives, exact values, filters, explicit paging, empty/error
+states, publication mismatches, Content pin isolation, navigation interruptions, reversed
+responses, StrictMode and keyboard controls. These are mocked HTTP/DOM checks, not live
+browser, narrow-screen or screen-reader certification. The local API probe at
+`127.0.0.1:8080` was unavailable; live API/browser acceptance remains separate. Use the
+frontend validation commands above; dependency versions and the lockfile are unchanged.
+
+Local validation on Node.js **24.22.1** passed typecheck, ESLint, production build and
+**1,170 frontend tests across 30 files**, including 274 Reliability protocol tests and
+30 Reliability UI tests. Repository Markdown/link checks and `git diff --check` passed.
+The existing 500 kB warning remains; the main chunk is **754.60 kB minified / 216.91 kB gzip**.
+No threshold was raised. Hosted CI and live visual/accessibility acceptance remain pending.
+
 ## Acceptance and design
 
 M6.5 acceptance, recorded before implementation: preserve all publisher tests and functionality; load only the active analytical view; pin one publication across views and permanently block results after a current-response identity mismatch until explicit reload. Daily/quality must use exact source and inclusive UTC ingestion-date filters. Article pages must come from the server, preserve order, reset on source changes and obey `hasMore` and offset bounds. Counters remain exact, distinct daily counts are never aggregated as global identities, and quality rates are never presented as percentages. Untrusted article metadata is rendered as text with explicit HTTP(S)-only navigation. Synthetic automated coverage and retained-data/browser evidence are recorded separately; M6 closeout remains a separate review.
