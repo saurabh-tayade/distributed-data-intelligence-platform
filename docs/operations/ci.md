@@ -12,6 +12,10 @@ PostgreSQL tests, prebuilt adapters and isolated storage are described below.
 independent partitions and an unchanged logical PostgreSQL check. The current workflow uses five
 partitions after the Gold timeout follow-up below. Each execution partition retains the 90-minute ceiling.
 
+The [November 4 hosted evidence](ci-hosted-evidence-2026-11-04.md) records successful selective PRs,
+full main runs and measured Gold/Content recovery headroom. It supersedes earlier pending hosted
+acceptance statements for those workflow changes, without claiming full-regression speed or cost savings.
+
 ## Acceptance criteria and workflow graph
 
 - Classify the complete PR diff, including both sides of renames and deleted files.
@@ -60,7 +64,7 @@ flowchart LR
 | content_postgres_gold | Native Gold/Content publication and finalization integration | 90 minutes |
 | content_postgres_content_recovery | Content recovery, explicit RESUME and inherited recovery integration | 90 minutes |
 | content_postgres | Original PostgreSQL check; requires every selected partition to succeed | 5 minutes |
-| analytics_http | Fresh synthetic Gold fixtures, content API unit/component tests and GoldApiIT HTTP/native compatibility | 15 minutes |
+| analytics_http | Fresh Gold and Spark-free Reliability fixtures, content API unit/component tests, GoldApiIT and ReliabilityApiIT HTTP/native compatibility | 15 minutes |
 | processing | Existing required backend context; classification and five-suite aggregate | 5 minutes |
 | documentation | Existing Markdown/link/hygiene checks plus focused CI policy tests | 5 minutes |
 | frontend | Existing typecheck, lint, component tests and production build | 10 minutes |
@@ -84,7 +88,7 @@ wait for partition completion; no execution partition waits for another executio
 
 The [explicit inventory](../../.github/ci/postgres-partitions.json) covers every PostgreSQL integration
 class exactly once. Default Maven PostgreSQL discovery includes all standard integration names
-and excludes only `GoldApiIT`, which remains in the HTTP profile. The always-running documentation
+and excludes only `GoldApiIT` and `ReliabilityApiIT`, which remain in the HTTP profile. The always-running documentation
 job and every selected partition validate complete source membership. Missing/new/duplicate classes
 fail CI until deliberately assigned. Actual Maven XML reports must cover the exact selected classes
 with positive test counts and no failures, errors or skips. This guards selection/discovery as
@@ -105,8 +109,9 @@ fail-closed behavior. These measured cancellations motivate moving the three Con
 classes out of Gold into their own independent caller. They are censored runtimes, not completed
 partition timings or evidence that the split now fits. PR #72's four-partition measurements remain
 historical. The timeout ceiling, logical classification output, `content_postgres` check name and
-final required processing gate are unchanged. Hosted acceptance must independently complete and
-report-verify both new three-class partitions within 90 minutes; local static checks do not prove headroom.
+final required processing gate are unchanged. The [November 4 review](ci-hosted-evidence-2026-11-04.md#gold-and-content-recovery-headroom)
+now records independently completed, report-verified three-class partitions within 90 minutes.
+Observed headroom is not a guarantee for future workloads; the timeout remains unchanged.
 
 ## Change categories and dependency rules
 
@@ -167,9 +172,8 @@ rejects a selective plan on a main push.
 
 ## Required checks and aggregate semantics
 
-Read-only inspection on October 26, 2026 confirmed merged main
-[dd725da](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/commit/dd725da3dc77ab383ca6f365ad3312a7fb347b70)
-and effective [ruleset 25349747](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/rules/25349747).
+Read-only inspection on November 4, 2026 reconfirmed the active
+[ruleset 25349747](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/rules/25349747).
 Its four required GitHub Actions contexts (integration ID 15368) remain:
 
 - Documentation and repository hygiene
@@ -198,9 +202,10 @@ Thus the separately required ingestion context remains compatible when explicitl
 required aggregate independently verifies that skip. Documentation and frontend remain fully executed
 separate required checks. No check is hidden with a workflow-level path filter.
 
-**No ruleset change is required.** The owner must keep these four contexts. After submitting and merging,
-verify the first full run and then representative selective PRs. No commit, push, PR, issue update,
-branch switch or GitHub setting change is performed as part of local implementation.
+**No ruleset change is required for the implemented selection policy.** Keep these four contexts.
+Successful full and representative selective runs are now recorded in the
+[hosted evidence](ci-hosted-evidence-2026-11-04.md). Release/tag publication is not separately gated;
+the issue's release-gate criterion remains an explicit owner decision.
 
 ## Alternatives and maintenance tradeoffs
 
@@ -218,7 +223,7 @@ This changes CI orchestration only and introduces no application architecture or
 All validation jobs still use ubuntu-24.04 and the existing SHA-pinned actions. Java steps select
 the runner's JAVA_HOME_21_X64 and put it first on PATH. This preserves the approved JDK 21 selection;
 the hosted runner supplies its patch version, rather than the workflow pinning a Java patch.
-The measured baseline used Temurin 21.0.12.1+1. Each of the four native backend jobs independently
+The measured baseline used Temurin 21.0.12.1+1. Each native backend execution job independently
 installs exact Python 3.12.15 through the existing pinned setup-python action.
 
 Each native job installs both existing requirement files with the unchanged command. These retain
@@ -233,7 +238,7 @@ create services/api/target/fixtures from synthetic inputs in their own workspace
 No job consumes another job's workspace or generated outputs. A local rerun must remove that
 generated fixture directory first because the generator intentionally refuses to overwrite it.
 
-Only content_postgres provisions PostgreSQL. Its image is unchanged:
+Each of the five PostgreSQL execution partitions provisions its own service. The image is unchanged:
 
 ```text
 postgres:17.11-bookworm@sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826
@@ -245,12 +250,15 @@ down. DB credentials stay scoped to the PostgreSQL Maven step. No operational da
 credentials or private execution artifacts are required. Workflow permission remains contents: read;
 checkout continues to disable persisted credentials.
 
-Existing test-specific restart hooks are unchanged. Ordinary hosted CI does not set the optional
-external restart-signal properties: those cases check fresh connections/application restart.
-They do not establish an actual PostgreSQL server restart. The existing
+Hosted CI does not set the optional external restart-signal properties: those signal-based cases
+check fresh connections/application restart and do not establish an actual server restart.
+Separately, the Content recovery partition supplies its disposable PostgreSQL container ID to
+`ContentResumeIT` and `ContentInheritedRecoveryIT`, which perform real container restarts and check
+the server start time. The [hosted evidence](ci-hosted-evidence-2026-11-04.md#gold-and-content-recovery-headroom)
+records those successful cases. The existing
 [local restart harness](../../scripts/test-recovery-postgres.py) explicitly performs actual
 disposable-container restarts when requested; see reproduction below. This workflow does not replace
-that harness or add an external restart controller to hosted CI.
+that harness or supply its external signal controller to hosted CI.
 
 The existing pip caches remain keyed by all three requirement files. Frontend npm caching is
 unchanged. These caches contain downloaded dependencies, not fixtures, native publications,
@@ -341,65 +349,51 @@ python3 -I -B -m unittest discover -s .github/ci/tests -v
 
 ## Hosted timing evidence
 
-These are successful **Phase 1 parallel-layout hosted measurements**, read from the Actions run/job
-APIs on October 26, 2026. Main was dd725da; the PR head was dbec28d. Both used ubuntu-24.04 and the
-unchanged suites above. Workflow wall-clock is run_started_at to the run's completed updated_at;
-job duration is completed_at minus started_at. Queueing and the final aggregate contribute to workflow
-elapsed time. Aggregate runner-minutes sum all eight job durations before billing rounding, including
-documentation, ingestion, frontend and the gate; this is not billed usage.
+The [November 4 evidence record](ci-hosted-evidence-2026-11-04.md) contains current completed
+change-aware runs, all full-run job durations, Gold/Content recovery timeout margins, classification
+examples and the remaining release-gate decision. The baseline below is retained for comparison.
 
-| Measurement | Phase 1 PR [40274271862](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/40274271862) | Phase 1 main [40343648419](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/40343648419) | Phase 2 hosted |
-| --- | ---: | ---: | --- |
-| Run start (UTC, October 26) | 05:27:02 | 14:51:56 | Pending owner submission |
-| Completion (UTC) | 06:12:16 | 15:39:42 | Pending |
-| Workflow wall-clock | 45m14s | 47m46s | Pending |
-| documentation | 10s | 11s | Pending |
-| ingestion | 24s | 28s | Pending |
-| processing_python | 17m35s | 18m43s | Pending |
-| analytics_jdbc | 1m22s | 1m17s | Pending |
-| content_postgres | 44m58s | 47m33s | Pending |
-| analytics_http | 2m19s | 2m15s | Pending |
-| processing gate | 3s | 4s | Pending |
-| Sum of job durations | 4,037s | 4,259s | Pending |
-| Aggregate runner-minutes | 67.28 | 70.98 | Pending |
+These successful **Phase 1 parallel-layout measurements** were originally read from Actions APIs
+on October 26, 2026. Main was dd725da; the PR head was dbec28d. Both used ubuntu-24.04 and the
+then-current suites. Workflow execution span below uses run_started_at through the final job's
+completed_at, rechecked on November 4. This is one second shorter than each originally recorded
+run updated_at interval; individual job durations and their sums are unchanged.
 
-The main PostgreSQL test step alone took 47m05s; Python tests took 18m21s. These observed parallel
-runs exceeded Phase 1's earlier planning estimates. At the Phase 2 baseline, the 60m PostgreSQL
-and 30m Python budgets were retained, as were 15m compatibility budgets. PR #71 subsequently
-raised only PostgreSQL to 90m, as documented below. PostgreSQL remains the observed longest-running job.
-No timeout or native execution deadline is reduced.
+| Measurement | Phase 1 PR [40274271862](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/40274271862) | Phase 1 main [40343648419](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/40343648419) |
+| --- | ---: | ---: |
+| Run start (UTC, October 26) | 05:27:02 | 14:51:56 |
+| Final job completion (UTC) | 06:12:15 | 15:39:41 |
+| Workflow execution span | 45m13s | 47m45s |
+| documentation | 10s | 11s |
+| ingestion | 24s | 28s |
+| processing_python | 17m35s | 18m43s |
+| analytics_jdbc | 1m22s | 1m17s |
+| content_postgres | 44m58s | 47m33s |
+| analytics_http | 2m19s | 2m15s |
+| frontend | 26s | 28s |
+| processing gate | 3s | 4s |
+| Sum of job durations | 4,037s | 4,259s |
+| Aggregate job-minutes, not billed usage | 67.28 | 70.98 |
+
+The main PostgreSQL test step alone took 47m05s; Python tests took 18m21s. At the Phase 2
+baseline, the 60m PostgreSQL and 30m Python budgets were retained, as were 15m compatibility
+budgets. PR #71 subsequently raised PostgreSQL to 90m, and later partitioning retained that
+ceiling per execution job. No native execution deadline is reduced.
 
 For historical context, the previous sequential main run
 [40261800565](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/40261800565)
-took 42m46s and 43.88 total runner-minutes; the sequential
+took 42m46s and 43.88 total job-minutes; the sequential
 [PR run 40257464896](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/40257464896)
-took 49m38s and 50.75 runner-minutes. These are different runs, not a controlled performance experiment.
-Phase 1 is not shown to improve the merged-main wall-clock in these observations. The earlier
-sequential logs reported 373 Python, 48 JDBC, 702 PostgreSQL integration, 20 HTTP integration and
-29 ingestion cases, plus 326 content-api unit/component cases per invocation. Those are historical
-counts; Phase 2 has not rerun the application suites locally or on GitHub.
+took 49m37s and 50.75 job-minutes using the same final-job method. These are different runs, not a
+controlled experiment. Phase 1 did not demonstrate improved merged-main wall-clock in these observations.
+The earlier sequential logs reported 373 Python, 48 JDBC, 702 PostgreSQL integration, 20 HTTP
+integration and 29 ingestion cases, plus 326 content-api unit/component cases per invocation.
+Those historical counts predate the current five-partition workload and additional HTTP coverage.
 
-**No Phase 2 performance improvement is claimed.** Local policy-test elapsed time measures only the
-classifier/gate tests. No new hosted estimate substitutes for a measurement. Full changes/main pushes
-add classifier overhead and retain all suite work; docs/frontend-only PRs can avoid backend work after
-the trusted-base bootstrap. Runner queueing, concurrency, caches, Docker pulls and native variation
-still affect actual elapsed time and resource usage.
-
-After owner deployment, fill the Phase 2 column using actual completed runs. Record the immutable
-head/base, change category, selected and skipped suites, runner image, cache state where visible and
-run attempt. Compare a main full run and representative documentation/frontend, JDBC, processing and
-API PRs against the Phase 1 baseline. Preserve both workflow wall-clock and per-job durations; report
-sum-of-job-seconds / 60 separately. Reruns must use their own attempt's jobs. Read-only commands:
-
-```sh
-gh api repos/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/RUN_ID
-gh api 'repos/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/RUN_ID/jobs?per_page=100'
-```
-
-The owner handles commit/push, PR submission and merge after review. Retain the four ruleset contexts,
-check that the initial deployment runs all suites, then verify classification summaries, skipped job
-contexts and required-gate results in subsequent hosted PRs. Phase 2 hosted correctness and timing
-comparison remain pending that deployment; issue #54 is not closed by local validation.
+The current record demonstrates that documentation-only and frontend-scoped PRs avoid unrelated backend work and
+both new Gold/Content recovery partitions complete within 90 minutes. It does not establish faster
+or cheaper full regression. Preserve workload, attempt and cache differences when comparing timings;
+never use a local test duration, cancelled job or later metadata update as a substitute measurement.
 
 ## Reproduce and investigate classification
 

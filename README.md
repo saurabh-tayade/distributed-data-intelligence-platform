@@ -168,7 +168,7 @@ git diff --cached --check
 
 The root npm package contains check tooling only; the frontend has its own package and lockfile. Dependency installation needs registry access. Once installed, these checks validate Markdown, local links and repository hygiene without starting data services. Application and synthetic-fixture reproduction commands belong to the linked processing, API and frontend guides.
 
-[D02 Phase 1 CI responsibilities and reproduction](docs/operations/ci.md) document the independent backend jobs, the aggregate that preserves the existing required check, timeout rationale and hosted timing baseline. The parallel workflow still needs hosted validation; no measured duration improvement is claimed.
+[D02 change-aware CI responsibilities and reproduction](docs/operations/ci.md) document conservative suite selection, five independent PostgreSQL partitions and the preserved required checks. The [November 4 hosted evidence](docs/operations/ci-hosted-evidence-2026-11-04.md) records successful selective and full runs, measured partition headroom and the remaining release-gate decision. Full-regression speed or cost improvement is not claimed.
 
 ## Project intent and AI assistance
 
