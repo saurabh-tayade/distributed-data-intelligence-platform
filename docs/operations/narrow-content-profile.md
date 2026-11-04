@@ -157,3 +157,8 @@ Before any supported profile or ordinary dispatch can be claimed:
 
 No accepted historical contract, API error vocabulary, automatic publication selection,
 ordinary dispatch, operator control, database schema or runtime hash is changed by this slice.
+
+The subsequent [inactive strict expectation reader](narrow-content-strict-reader.md) provides
+an explicit read-only API requiring independently supplied policy, plan, identities and ledger
+hash. It rejects downgrade and absent-marker shortcuts for that API without changing legacy
+paths. Authoritative persistence and production integration remain deferred.

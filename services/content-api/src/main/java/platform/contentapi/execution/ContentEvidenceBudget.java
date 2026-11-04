@@ -122,6 +122,38 @@ final class ContentEvidenceBudget {
     }
     static Totals totals(Path directory){Path root=root(directory);need(root!=null,INPUT_INVALID);return locked(root,()->validate(root,read(root)));}
     static Totals inspect(Path directory){Path root=root(directory);need(root!=null,INPUT_INVALID);return locked(root,()->validate(root,read(root,false)));}
+    /** Explicit narrow read: never discover a root, initialize state or fall back to legacy. */
+    static Totals inspect(NarrowContentEvidenceContext context,InstallationHostGuard guard,
+                          NarrowContentEvidenceContext.FrozenIdentities independentlySupplied){
+        need(context!=null,INPUT_INVALID);Path root=context.root();
+        synchronized(LOCAL_LOCKS.computeIfAbsent(root,k->new Object())){
+            try{
+                context.check(guard,independentlySupplied);
+                try(var channel=FileChannel.open(root.resolve(LOCK),StandardOpenOption.WRITE,LinkOption.NOFOLLOW_LINKS)){
+                    context.check(guard,independentlySupplied);
+                    try(var lock=channel.lock()){
+                        // Recheck pathname identities after waiting; the lock is not an identity seal.
+                        context.check(guard,independentlySupplied);
+                        need(!Files.exists(root.resolve(PENDING),LinkOption.NOFOLLOW_LINKS),INPUT_CHANGED);
+                        PreflightFiles.privateEntry(root.resolve(MANIFEST),false);
+                        var identity=InstallationHostGuard.identity(root.resolve(MANIFEST));
+                        var modified=Files.getLastModifiedTime(root.resolve(MANIFEST),LinkOption.NOFOLLOW_LINKS);
+                        byte[] bytes=PreflightFiles.read(root.resolve(MANIFEST),LEDGER,true);
+                        var value=parse(root,bytes);context.ledger(bytes,value);
+                        var result=validate(root,value);
+                        byte[] after=PreflightFiles.read(root.resolve(MANIFEST),LEDGER,true);
+                        need(Arrays.equals(bytes,after) && identity.equals(InstallationHostGuard.identity(root.resolve(MANIFEST)))
+                                && modified.equals(Files.getLastModifiedTime(root.resolve(MANIFEST),LinkOption.NOFOLLOW_LINKS))
+                                && !Files.exists(root.resolve(PENDING),LinkOption.NOFOLLOW_LINKS),INPUT_CHANGED);
+                        context.check(guard,independentlySupplied);
+                        return result;
+                    }
+                }
+            }catch(PreflightFailure ex){throw ex;}
+            catch(java.io.IOException ex){throw new PreflightFailure(INPUT_UNAVAILABLE);}
+            catch(RuntimeException ex){throw new PreflightFailure(INPUT_CHANGED);}
+        }
+    }
     static void require(InstallationHostGuard guard,UUID run,UUID attempt){
         Path root=guard.binding().root().resolve("runs/"+run+"/attempts/"+attempt);REQUIRED.add(root);inspect(root);
     }
@@ -134,7 +166,10 @@ final class ContentEvidenceBudget {
     }
     private static ObjectNode read(Path root,boolean writing){
         if(writing)need(!Files.exists(root.resolve(PENDING),LinkOption.NOFOLLOW_LINKS),INPUT_CHANGED);
-        var n=PreflightFiles.canonical(PreflightFiles.read(root.resolve(MANIFEST),LEDGER,true),LEDGER);
+        return parse(root,PreflightFiles.read(root.resolve(MANIFEST),LEDGER,true));
+    }
+    private static ObjectNode parse(Path root,byte[] bytes){
+        var n=PreflightFiles.canonical(bytes,LEDGER);
         need(n.get("version")!=null && n.get("version").isIntegralNumber() && n.get("version").canConvertToInt() && Set.of(1,2).contains(n.get("version").intValue()),INPUT_INVALID);
         if(n.get("version").intValue()==2){
             SourceJson.fields(n,"version","treeKind","runId","attemptId","rootDevice","rootInode","directories","files","reservationPolicy","planKind","sourceId");
