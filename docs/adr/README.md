@@ -74,3 +74,9 @@ Earlier entries describe their historical checkpoint status.
 Content evidence producer/reservation protocol following the Gate B0 completion investigation.
 It is **Proposed**, not implemented or owner accepted. Content dispatch remains disabled;
 no approved recoverable operational profile has been established.
+
+[ADR 0022](0022-narrow-managed-content-profile.md) records the owner's November 4 approval
+of the narrower versioned Content design direction, preserving existing readers and native
+contracts. Its envelope and fixed-plan foundation is implemented, but native precompletion,
+runtime adoption and restart qualification remain open. This does not change historical ADR
+statuses or complete Gate B0; ordinary Content dispatch stays disabled.
