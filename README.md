@@ -172,7 +172,7 @@ The root npm package contains check tooling only; the frontend has its own packa
 
 ## Project intent and AI assistance
 
-DDIP is an independent, non-commercial engineering and learning portfolio exploring data processing, analytical products and reliable execution. It is inspired in part by content aggregation systems and is **not affiliated with Microsoft or MSN**. It does not attempt to reproduce a commercial platform.
+DDIP is an independent, non-commercial engineering and learning portfolio exploring data processing, analytical products and reliable execution through content aggregation and synthetic application reliability workflows. It is not affiliated with or endorsed by any commercial platform.
 
 Development uses AI assistance, primarily OpenAI ChatGPT and Codex, for planning, architecture discussions, implementation, tests, debugging, documentation and review. Generated suggestions and code are inputs to engineering review, not authoritative evidence. The project author remains responsible for architectural decisions, acceptance, correctness validation, measurements and overall direction.
 
