@@ -77,6 +77,11 @@ zero-filled windows, cross-window percentile or cross-page snapshot transaction 
 Every request independently reopens and fully verifies the same configured immutable publication
 and retained raw/reference dependencies.
 
+The [bounded serving evidence](../benchmarks/reliability-serving-small-fixture.md) records native
+initialization/verification, same-session reports, fresh CLI and first/later HTTP page timings,
+consumer tradeoffs, freshness semantics and the #58 acceptance reconciliation. Its tiny synthetic
+fixture measurements are not production or scale benchmarks.
+
 ## UI behavior
 
 The Reliability route is separate from Content Analytics. Users enter an explicit UTC interval

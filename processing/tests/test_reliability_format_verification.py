@@ -195,6 +195,19 @@ class VerificationTests(unittest.TestCase):
         s._db=Failed();self.assert_code('RESOURCE_LIMIT',s.report,'reference_coverage')
         self.assertIsNone(s._db);self.assert_code('QUERY_FAILED',s.report,'reference_coverage');s.close()
 
+    def test_request_window_response_limits_fail_closed_for_both_formats(self):
+        bounds=dict(start='2026-10-01T00:00:00.000000Z',end='2026-10-01T00:10:00.000000Z',limit=1)
+        for fmt in ('JSONL','PARQUET'):
+            root=self.root/fmt;root.mkdir();o,fp,b,r=completed(root,fmt)
+            for name,value in (('PAGE_BYTES',0),('RESPONSE_LIMIT',100)):
+                with self.subTest(input_format=fmt,budget=name):
+                    s=analytics.open_publication(o,fp,batch_root=b,reference_root=r)
+                    with patch.object(m,name,value):
+                        self.assert_code('RESPONSE_LIMIT',s.report,'requests_5m',**bounds)
+                    self.assertIsNone(s._db)
+                    self.assert_code('QUERY_FAILED',s.report,'requests_5m',**bounds)
+                    s.close()
+
     def test_post_query_mutation_prevents_success(self):
         o,fp,b,r=completed(self.root);s=analytics.open_publication(o,fp,batch_root=b,reference_root=r)
         check=s._check;calls=0
