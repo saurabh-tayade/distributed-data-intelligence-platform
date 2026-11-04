@@ -13,6 +13,8 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[2]
 GROUPS = ('core', 'reliability', 'ingestion', 'gold', 'content_recovery')
 INCLUDES = ['**/IT*.java', '**/*IT.java', '**/*ITCase.java']
+HTTP_CLASSES = ('platform.contentapi.GoldApiIT', 'platform.contentapi.ReliabilityApiIT')
+HTTP_EXCLUDES = ['**/' + name.rsplit('.', 1)[1] + '.java' for name in HTTP_CLASSES]
 UNIT_NAMES = ('Test*.java', '*Test.java', '*Tests.java', '*TestCase.java')
 NS = {'m': 'http://maven.apache.org/POM/4.0.0'}
 
@@ -41,7 +43,7 @@ def inventory(root=ROOT):
     config = profiles['postgres'].find('.//m:configuration', NS)
     includes = [n.text for n in config.findall('m:includes/m:include', NS)]
     excludes = [n.text for n in config.findall('m:excludes/m:exclude', NS)]
-    if includes != INCLUDES or excludes != ['**/GoldApiIT.java']:
+    if includes != INCLUDES or excludes != HTTP_EXCLUDES:
         raise ValueError('PostgreSQL default discovery must remain comprehensive')
     other = [n.text for n in profiles['integration'].findall('.//m:includes/m:include', NS)]
     if other != excludes:
@@ -59,13 +61,15 @@ def inventory(root=ROOT):
         if not match:
             raise ValueError('integration class has no package')
         name = match[1] + '.' + path.stem
-        if fnmatch.fnmatch(path.as_posix(), excludes[0]):
+        if any(fnmatch.fnmatch(path.as_posix(), pattern) for pattern in excludes):
+            if name in http:
+                raise ValueError('duplicate HTTP integration source class')
             http.add(name)
         else:
             if name in found:
                 raise ValueError('duplicate integration source class')
             found.add(name)
-    if http != {'platform.contentapi.GoldApiIT'} or found != set(selected):
+    if http != set(HTTP_CLASSES) or found != set(selected):
         raise ValueError('unassigned, removed or unexpected integration class: ' + ','.join(sorted(found ^ set(selected))))
     return groups
 

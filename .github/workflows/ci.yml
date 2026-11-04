@@ -268,7 +268,9 @@ jobs:
           export PATH="$JAVA_HOME/bin:$PATH"
           export PYSPARK_PYTHON="$(command -v python)"
           PYTHONPATH=processing:processing/tests python services/api/tests/generate_fixtures.py --output services/api/target/fixtures
-      - name: Verify all Spring Boot analytics APIs against synthetic Gold fixtures
+      - name: Generate Spark-free Reliability HTTP fixtures for JSONL and Parquet
+        run: PYTHONPATH=processing:processing/tests python services/content-api/tests/generate_reliability_fixtures.py --output services/content-api/target/reliability-fixtures
+      - name: Verify Spring Boot analytics APIs against native Gold and Reliability fixtures
         run: |
           export JAVA_HOME="$JAVA_HOME_21_X64"
           export PATH="$JAVA_HOME/bin:$PATH"

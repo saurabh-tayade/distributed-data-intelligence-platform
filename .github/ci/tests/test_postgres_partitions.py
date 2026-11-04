@@ -20,6 +20,7 @@ SCOPE = {'__name__': 'test_postgres'}
 exec(compile(CODE, 'ci.yml:content_postgres', 'exec'), SCOPE)
 GATE = SCOPE['check_postgres']
 JOBS = tuple('content_postgres_' + g for g in PARTITIONS.GROUPS)
+HTTP_CLASSES = ('platform.contentapi.GoldApiIT', 'platform.contentapi.ReliabilityApiIT')
 GOLD = (
     'platform.contentapi.management.RssGoldIT',
     'platform.contentapi.management.RssContentIT',
@@ -102,7 +103,7 @@ class PostgresInventoryTests(unittest.TestCase):
         for relative in ('.github/ci/postgres-partitions.json', 'services/content-api/pom.xml'):
             target = self.root / relative; target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / relative, target)
-        for name in (*sum(self.groups.values(), []), 'platform.contentapi.GoldApiIT'):
+        for name in (*sum(self.groups.values(), []), *HTTP_CLASSES):
             target = self.root / 'services/content-api/src/test/java' / (name.replace('.', '/') + '.java')
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text('package ' + name.rsplit('.', 1)[0] + ';\n')
@@ -119,6 +120,50 @@ class PostgresInventoryTests(unittest.TestCase):
         self.assertEqual(len(sum(self.groups.values(), [])), 26)
         self.assertEqual(tuple(self.groups['gold']), GOLD)
         self.assertEqual(tuple(self.groups['content_recovery']), CONTENT_RECOVERY)
+
+    def test_exact_analytics_http_inventory_is_separate(self):
+        self.assertEqual(PARTITIONS.HTTP_CLASSES, HTTP_CLASSES)
+        self.assertEqual(PARTITIONS.HTTP_EXCLUDES, ['**/GoldApiIT.java', '**/ReliabilityApiIT.java'])
+        self.assertTrue(set(HTTP_CLASSES).isdisjoint(sum(self.groups.values(), [])))
+        self.assertEqual(PARTITIONS.inventory(self.root), self.groups)
+
+    def test_each_http_class_is_required(self):
+        for name in HTTP_CLASSES:
+            with self.subTest(name=name):
+                path = self.root / 'services/content-api/src/test/java' / (name.replace('.', '/') + '.java')
+                source = path.read_text(); path.unlink()
+                with self.assertRaises(ValueError): PARTITIONS.inventory(self.root)
+                path.write_text(source)
+
+    def test_http_exclusions_cannot_expand_or_become_wildcards(self):
+        path = self.root / 'services/content-api/pom.xml'
+        original = path.read_text()
+        for replacement in ('<exclude>**/*IT.java</exclude>',
+                            '<exclude>**/GoldApiIT.java</exclude>',
+                            '<exclude>**/GoldApiIT.java</exclude><exclude>**/ReliabilityApiIT.java</exclude><exclude>**/PersistenceIT.java</exclude>'):
+            with self.subTest(replacement=replacement):
+                path.write_text(original.replace('<exclude>**/GoldApiIT.java</exclude><exclude>**/ReliabilityApiIT.java</exclude>', replacement))
+                with self.assertRaises(ValueError): PARTITIONS.inventory(self.root)
+        path.write_text(original)
+
+    def test_each_excluded_http_class_must_run_in_http_profile(self):
+        path = self.root / 'services/content-api/pom.xml'
+        original = path.read_text()
+        for name in HTTP_CLASSES:
+            with self.subTest(name=name):
+                include = '<include>**/' + name.rsplit('.', 1)[1] + '.java</include>'
+                path.write_text(original.replace(include, ''))
+                with self.assertRaises(ValueError): PARTITIONS.inventory(self.root)
+        path.write_text(original)
+
+    def test_http_class_cannot_be_assigned_to_postgres_partition(self):
+        path = self.root / '.github/ci/postgres-partitions.json'
+        original = path.read_text()
+        for name in HTTP_CLASSES:
+            with self.subTest(name=name):
+                self.manifest(lambda n: n['core'].append(name))
+                with self.assertRaises(ValueError): PARTITIONS.inventory(self.root)
+                path.write_text(original)
 
     def test_gold_and_content_recovery_selectors_are_exact(self):
         for partition, classes in (('gold', GOLD), ('content_recovery', CONTENT_RECOVERY)):

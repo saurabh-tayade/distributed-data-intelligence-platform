@@ -60,3 +60,10 @@ The existing safe error body contains only `code`: 400 invalid arguments; 503 pu
 All endpoints share the existing process concurrency, timeout and stream budgets. Article metadata/provenance can reach the stdout cap before 1000 rows; reduce the limit or deliberately configure an operator-owned byte budget. Overflows fail without partial success. Each page reopens and verifies the whole immutable publication. Offset pagination is deterministic for one unchanged publication but is not a scalability improvement, a transaction spanning HTTP calls or protection against concurrent operator reconfiguration.
 
 See the [API startup and test guide](../../services/content-api/README.md) and [Python consumer guide](duckdb-analytics.md) for reproduction commands and validation evidence.
+
+## Reliability v2 request-window slice
+
+Reliability uses a separate [request-window endpoint and pinned publication](reliability-analytics-api.md),
+with native five-minute UTC interval filters rather than Content daily ingestion dates. Its synthetic
+labeling, v2 identity, approximate p95 and raw/reference retention requirements remain explicit.
+The Content contracts above are unchanged.

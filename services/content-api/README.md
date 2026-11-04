@@ -1744,3 +1744,17 @@ Production Content dispatch remains disabled; no Gold/enrichment stage or termin
 run is implemented. Content reconciliation remains unsupported by the Reliability operator
 command. See the [D3 operator contract and measured tests](../../docs/operations/managed-rss-fetch.md#d3-managed-silver-lifecycle)
 and [ADR 0015 implementation record](../../docs/adr/0015-managed-silver-receipt-adapter.md).
+
+## Reliability request-window analytics (#58)
+
+The read-only `GET /api/v1/reliability/request-windows` endpoint exposes the existing verified
+Reliability v2 report beside Content analytics. Required `start`/`end` select a five-minute-aligned,
+exclusive-end UTC interval of at most 31 days; optional `serviceId`, `environment`, `limit` and
+`offset` retain native filter and pagination semantics. Exact metrics remain decimal strings and
+all results are explicitly synthetic. See the [contract, configuration and reproduction guide](../../docs/architecture/reliability-analytics-api.md).
+
+The endpoint invokes the fixed native `reliability_format_analytics.py` through the same bounded
+process runner as Content. Configure `reliability.analytics.publication` independently; no
+Operations result is automatically activated. Native CLI failures are generic safe execution
+failures because stderr is discarded, not parsed or returned. No publication switching, exports,
+new SQL, native contract changes or Content dispatch is introduced.
