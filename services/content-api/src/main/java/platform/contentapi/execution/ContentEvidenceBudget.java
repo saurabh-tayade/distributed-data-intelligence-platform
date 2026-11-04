@@ -91,7 +91,23 @@ final class ContentEvidenceBudget {
                 }
             }
             var ds=next.putArray("directories");directories.forEach(ds::add);
+            // A version-2 plan is complete before effects: existing exact slots may be
+            // consumed, but even an empty unplanned directory cannot extend its inventory.
+            need(n.get("version").intValue()!=2 || !changed,RESOURCE_LIMIT);
             limits(next);if(changed)store(root,next);return null;
+        });
+    }
+    /** Atomically install one complete fixed plan. Never retrofit a populated legacy tree. */
+    static void reservePlan(ContentOperationPlan plan){
+        Path directory=plan.root(),root=root(directory);need(root!=null && root.equals(directory),INPUT_INVALID);
+        locked(root,()->{
+            var n=read(root);validate(root,n);
+            need(n.get("treeKind").stringValue().equals("ATTEMPT") && (n.get("version").intValue()==2 || n.get("files").isEmpty() && n.get("directories").size()==1 && n.get("directories").get(0).stringValue().isEmpty()),INPUT_CHANGED);
+            var next=(ObjectNode)n.deepCopy();plan.apply(next);var total=limits(next);
+            need(total.inventoryMaximum()<=128*1024,RESOURCE_LIMIT);
+            if(n.get("version").intValue()==2)need(Arrays.equals(SourceJson.canonical(n),SourceJson.canonical(next)),INPUT_CHANGED);
+            else store(root,next);
+            return null;
         });
     }
     static void write(Path directory,Path target,Path temporary,byte[] bytes,Runnable action){
@@ -119,8 +135,13 @@ final class ContentEvidenceBudget {
     private static ObjectNode read(Path root,boolean writing){
         if(writing)need(!Files.exists(root.resolve(PENDING),LinkOption.NOFOLLOW_LINKS),INPUT_CHANGED);
         var n=PreflightFiles.canonical(PreflightFiles.read(root.resolve(MANIFEST),LEDGER,true),LEDGER);
-        SourceJson.fields(n,"version","treeKind","runId","attemptId","rootDevice","rootInode","directories","files");
-        need(n.get("version").intValue()==1 && n.get("directories").isArray() && n.get("files").isObject(),INPUT_INVALID);
+        need(n.get("version")!=null && n.get("version").isIntegralNumber() && n.get("version").canConvertToInt() && Set.of(1,2).contains(n.get("version").intValue()),INPUT_INVALID);
+        if(n.get("version").intValue()==2){
+            SourceJson.fields(n,"version","treeKind","runId","attemptId","rootDevice","rootInode","directories","files","reservationPolicy","planKind","sourceId");
+            need(n.get("reservationPolicy").isString() && n.get("reservationPolicy").stringValue().equals(NarrowContentProfile.POLICY),INPUT_INVALID);
+            ContentOperationPlan.validate(root,n);
+        }else SourceJson.fields(n,"version","treeKind","runId","attemptId","rootDevice","rootInode","directories","files");
+        need(n.get("directories").isArray() && n.get("files").isObject(),INPUT_INVALID);
         var id=InstallationHostGuard.identity(root);
         need(n.get("rootDevice").stringValue().equals(Long.toString(id.device())) && n.get("rootInode").stringValue().equals(Long.toString(id.inode()))
                 && root.endsWith(prefix(n)),INPUT_CHANGED);
@@ -143,6 +164,7 @@ final class ContentEvidenceBudget {
         for(String f:List.of(MANIFEST,PENDING,LOCK))inventoryEntry(list.addObject(),prefix+"/"+f,false);
         int maximum=SourceJson.canonical(inventory).length;
         need(bytes<=BYTES && entries<=ENTRIES && maximum<=INVENTORY && SourceJson.canonical(n).length<=LEDGER,RESOURCE_LIMIT);
+        if(n.get("version").intValue()==2)need(maximum<=128*1024,RESOURCE_LIMIT);
         return new Totals(0,0,bytes,entries,maximum);
     }
     private static void inventoryEntry(ObjectNode f,String address,boolean directory){
