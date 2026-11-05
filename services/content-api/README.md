@@ -1806,3 +1806,11 @@ EOF-gated read-only strict-sink probe. Child PID and process-start identity are 
 release. This does not execute a native command or change stage/result history, and historical
 facts cannot authorize replay. There is no production caller, operator invocation, narrow recovery
 release or Content dispatch activation. Gate B0 remains incomplete.
+
+## Inactive native Content correspondence (#49)
+
+The [19-slot native correspondence catalog](../../docs/operations/narrow-native-operation-correspondence.md)
+separates original ledger coordinates from historical SQL stages and native command checkpoints.
+Its registered runtime-chain and command-identity inspectors are read-only and return no execution
+authority. Existing runtime-v2 adapters still consume ledger-v1, not the READY strict-sink plan.
+No native routing policy, publisher launch, journal consumption, recovery or dispatch is enabled.
