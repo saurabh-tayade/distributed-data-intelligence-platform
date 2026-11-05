@@ -51,8 +51,7 @@ abstract class RunApiFixtures {
     }
     @AfterAll void cleanup(){close();if(admin!=null)admin.execute("DROP DATABASE "+database+" WITH (FORCE)");}
     @BeforeEach void setup(){
-        jdbc.execute("DROP SCHEMA IF EXISTS ddip_management CASCADE");var flyway=Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();
-        new SchemaLifecycle(flyway,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(true);
+        jdbc.execute("DROP SCHEMA IF EXISTS ddip_management CASCADE");migrateFixtureSchema();
         catalog=ReviewedSourceCatalog.from(catalog());sources=new SourceRepository(jdbc,tx,INSTALL,catalog,new SourceCursor(KEY));runs=new RunRepository(jdbc,tx,INSTALL,catalog);
         storage(BRONZE,CONTENT,"BRONZE");storage(BATCH,RELIABILITY,"BATCH");storage(REFS,CONTENT,"REFERENCE");storage(SERVICE_BINDING,RELIABILITY,"REFERENCE");storage(SILVER_BINDING,CONTENT,"SILVER");
         for(String role:List.of("GOLD","CONTENT","CONTROL","STAGING","TEMP"))storage("content-"+role,CONTENT,role);
@@ -60,6 +59,10 @@ abstract class RunApiFixtures {
         profile(CONTENT_PROFILE,true,"rss-atom-v1");profile(JSON_PROFILE,false,"request-jsonl-v2");profile(PARQUET_PROFILE,false,"request-parquet-v1");
         createSource(CONTENT,"demo-feed",rss());createSource(RELIABILITY,"demo-requests",requests("request-jsonl-v2"));createSource(RELIABILITY,"second-requests",requests("request-parquet-v1"));
         artifact(PUB,RunFixtures.evidence("PUBLISHER_REFERENCE",REFS,"demo-feed",null));artifact(SERVICE,RunFixtures.evidence("SERVICE_REFERENCE",SERVICE_BINDING,"demo-requests",null));artifact(JSON_BATCH,RunFixtures.evidence("RELIABILITY_BATCH_V2",BATCH,"demo-requests","JSONL"));artifact(PARQUET_BATCH,RunFixtures.evidence("RELIABILITY_BATCH_V2",BATCH,"second-requests","PARQUET"));artifact(SILVER,RunFixtures.silver(SILVER_BINDING,BRONZE));
+    }
+    void migrateFixtureSchema(){
+        var flyway=Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();
+        new SchemaLifecycle(flyway,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(true);
     }
     static ManagementTransactions transactions(JdbcTemplate j){return new ManagementTransactions(new TransactionTemplate(new JdbcTransactionManager(j.getDataSource())));}
     void storage(String id,String product,String role){byte[] b=bytes("{}");jdbc.update("INSERT INTO ddip_management.storage_bindings(binding_id,product,role,configuration_bytes,configuration_sha256,installation_id) VALUES (?,?,?,?,?,?)",id,product,role,b,SourceJson.sha(b),INSTALL);}

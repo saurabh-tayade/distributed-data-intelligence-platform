@@ -10,6 +10,7 @@
     "platform.contentapi.management.SourceManagementIT",
     "platform.contentapi.management.WorkerCoordinationIT",
     "platform.contentapi.management.NarrowContentAdmissionIT",
+    "platform.contentapi.management.NarrowContentOperationJournalIT",
     "platform.contentapi.management.ContentResumeControlIT"
   ],
   "reliability": [

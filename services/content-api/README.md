@@ -1797,3 +1797,12 @@ coverage allows only source and returns full source-filtered totals before pagin
 Both preserve native exact counters, source/reference identities and ordering. The existing
 `#/content` UI offers tables for both reports under its shared Content session pin.
 See the [complete contract, safe states and native/HTTP/UI parity evidence](../../docs/architecture/content-discovery-api.md).
+
+## Inactive narrow Content operation journal (#49)
+
+The [V11 operation-journal and pipe-probe record](../../docs/operations/narrow-content-operation-journal.md)
+connects tracked READY admission to a permanently consumed CHECK_INPUTS/0 reservation and a bounded,
+EOF-gated read-only strict-sink probe. Child PID and process-start identity are recorded before
+release. This does not execute a native command or change stage/result history, and historical
+facts cannot authorize replay. There is no production caller, operator invocation, narrow recovery
+release or Content dispatch activation. Gate B0 remains incomplete.

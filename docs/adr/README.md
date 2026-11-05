@@ -95,3 +95,8 @@ runtime adoption and operational fault/restart qualification remain Gate B0 obli
 Content native orchestration with complete projected and actual envelope checks. It keeps
 legacy modules and standalone formats unchanged and does not authorize managed launch,
 current-writer identity, recovery adoption or dispatch. Gate B0 remains closed.
+
+[ADR 0026](0026-narrow-operation-journal-and-bootstrap.md) records the owner-approved
+separate durable operation journal and bounded startup-pipe direction. The inactive integration
+is one original read-only probe with permanent reservation consumption and facts-only history.
+Native execution, explicit narrow recovery and dispatch remain unqualified and disabled.

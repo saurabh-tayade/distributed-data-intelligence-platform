@@ -127,3 +127,11 @@ Local validation used Python 3.12.14, DuckDB 1.4.5, Corretto JDK 21.0.13 and Mav
   absence checks that refuse permission/I/O failures instead of treating them as missing files.
 
 These are local tests, not hosted CI, new native launch or PostgreSQL restart/recovery evidence.
+
+## Subsequent inactive launch probe
+
+The later [operation journal and startup-pipe slice](narrow-content-operation-journal.md) connects
+this unchanged strict sink to one fixed read-only CHECK_INPUTS/0 probe. Its versioned packet and
+durable reservation are defined outside the sink. This supersedes the earlier absence of an
+inactive launcher only; no native command, publisher, recovery continuation or production
+dispatch uses the sink, and correspondence still does not establish SQL authority by itself.
