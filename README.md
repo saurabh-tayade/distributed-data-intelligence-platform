@@ -124,7 +124,7 @@ Kafka/Redpanda, Iceberg, cloud S3 and Athena are **future candidates**, not inst
 Choose a standalone Content workflow or the managed Reliability workflow. There is no single command that provisions and configures every role.
 
 For disposable UI review with real native Reliability execution and separate synthetic
-Gold and Reliability Analytics fixtures, use the [local Operations demo runbook](docs/operations/local-operations-demo.md).
+Gold, Content and Reliability Analytics selections, use the [local Operations demo runbook](docs/operations/local-operations-demo.md).
 It provides explicit startup, status, teardown and a manual browser checklist.
 
 1. **Prepare local storage and runtimes:** follow the [SeaweedFS setup](docs/local-seaweedfs.md), [Spark/Python setup](docs/architecture/silver-processing.md#contract-correction-acceptance-and-python-setup) and, for management/worker roles, [PostgreSQL setup and role commands](services/content-api/README.md#e5-b1-persistence-and-runtime-roles). Use Java 21 and the pinned Python dependencies; the frontend and repository checks use Node.js 24. Keep credentials and private profiles in ignored local configuration.

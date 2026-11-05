@@ -280,6 +280,11 @@ jobs:
           export PATH="$JAVA_HOME/bin:$PATH"
           export PYSPARK_PYTHON="$(command -v python)"
           PYTHONPATH=processing:processing/tests python services/content-api/tests/generate_content_fixtures.py --output services/content-api/target/content-fixtures
+      - name: Verify isolated demo Content selection with the native publisher and reader
+        run: |
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          python -I -B -m unittest discover -s scripts/tests -p test_demo_content_native.py -v
       - name: Verify Spring Boot analytics APIs against native Gold, Content and Reliability fixtures
         run: |
           export JAVA_HOME="$JAVA_HOME_21_X64"

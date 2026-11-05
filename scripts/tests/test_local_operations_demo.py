@@ -97,7 +97,10 @@ class DemoSafetyTests(unittest.TestCase):
                      "RELIABILITY_ANALYTICS_BATCH_ROOT": "/retained/batches", "RELIABILITY_ANALYTICS_REFERENCE_ROOT": "/retained/reference",
                      "RELIABILITY_ANALYTICS_PUBLICATION": "f" * 64, "RELIABILITY_ANALYTICS_PYTHON_EXECUTABLE": "/retained/python",
                      "RELIABILITY_ANALYTICS_PYTHONEXECUTABLE": "/retained/python", "RELIABILITY_ANALYTICS_PROCESSING_ROOT": "/retained/code",
-                     "RELIABILITY_ANALYTICS_FUTURE_OPTION": "retained"}
+                     "RELIABILITY_ANALYTICS_FUTURE_OPTION": "retained",
+                     **{"CONTENT_ANALYTICS_" + suffix: "retained" for suffix in (
+                         "ROOT", "GOLD_ROOT", "GOLDROOT", "REFERENCE_ROOT", "REFERENCEROOT", "PUBLICATION",
+                         "PYTHON_EXECUTABLE", "PYTHONEXECUTABLE", "PROCESSING_ROOT", "PROCESSINGROOT", "FUTURE_OPTION")}}
         with patch.dict(demo.os.environ, inherited | {"PATH": "/approved/bin", "JAVA_HOME": "/approved/jdk", "UNRELATED": "kept"}):
             environment = demo.Demo(Mock()).env
             self.assertEqual({name: demo.os.environ[name] for name in inherited}, inherited)
@@ -137,8 +140,9 @@ class DemoSafetyTests(unittest.TestCase):
                       rows=[dict(zip(demo.RELIABILITY_ROWS, [demo.RELIABILITY_START, "svc00", "test", "2", "1", 0.5, "30", 15.0, "20",
                                                           "Service 00", None, None, "MATCHED"]))], limit="1", offset="0", has_more=True)
         response = demo.reliability_response(native)
-        scenario = dict(name="first-page", query=dict(start=demo.RELIABILITY_START, end=demo.RELIABILITY_END, limit=1, offset=0), response=response)
-        demo.write_json(self.root / "reliability-analytics-verification.json", dict(selection=self.selection(), scenarios=[scenario]))
+        scenario = dict(report="requests_5m", endpoint="request-windows", name="first-page", query=dict(start=demo.RELIABILITY_START, end=demo.RELIABILITY_END, limit=1, offset=0), response=response)
+        demo.write_json(self.root / "reliability-analytics-verification.json", dict(selection=self.selection(), scenarios=[scenario],
+            inventory=demo.selection_inventory(self.selection()), unchangedFiles=0))
         return response
 
     def test_reliability_http_matches_exact_native_projection_and_query(self):
@@ -178,6 +182,193 @@ class DemoSafetyTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "HTTP 500"):
                 demo.verify_reliability_http("http://127.0.0.1:18080", self.selection())
             self.assertEqual(http.call_count, 1)
+
+    def content_selection(self):
+        root = self.root / "content-analytics"
+        return dict(root=str(root / "output"), goldRoot=str(root / "gold"),
+                    referenceRoot=str(root / "references"), publication="c" * 64)
+
+    def test_content_arguments_pin_every_operator_setting(self):
+        selected = self.content_selection()
+        self.assertEqual(demo.content_arguments("/approved/python", selected), [
+            "--content.analytics.python-executable=/approved/python",
+            "--content.analytics.processing-root=" + str(demo.REPO / "processing"),
+            "--content.analytics.root=" + selected["root"],
+            "--content.analytics.gold-root=" + selected["goldRoot"],
+            "--content.analytics.reference-root=" + selected["referenceRoot"],
+            "--content.analytics.publication=" + selected["publication"]])
+
+    def test_content_rejects_invalid_missing_and_external_selections(self):
+        for selection in (None, {}, [], *[self.content_selection() | {"publication": value}
+                for value in (None, "", "latest", "C" * 64, "../publication", "c" * 63, 1)]):
+            with self.subTest(selection=selection), self.assertRaisesRegex(RuntimeError, "selected Content publication"):
+                demo.content_arguments("/approved/python", selection)
+        for key in ("root", "goldRoot", "referenceRoot"):
+            for value in (None, "/retained", str(Path(self.content_selection()[key]) / "..")):
+                with self.subTest(key=key, value=value), self.assertRaisesRegex(RuntimeError, "isolated demo fixture"):
+                    demo.content_arguments("/approved/python", self.content_selection() | {key: value})
+
+    def test_both_analytics_selections_reject_symlink_roots_and_ancestors(self):
+        outside = self.root.parent / "retained"
+        outside.mkdir()
+        for product, selection, arguments in (
+                ("content", self.content_selection(), demo.content_arguments),
+                ("reliability", self.selection(), demo.reliability_arguments)):
+            directory = self.root / (product + "-analytics")
+            directory.mkdir(parents=True)
+            for key in ("root", "goldRoot", "batchRoot", "referenceRoot"):
+                if key not in selection:
+                    continue
+                link = Path(selection[key])
+                link.symlink_to(outside, target_is_directory=True)
+                with self.subTest(product=product, key=key), self.assertRaisesRegex(RuntimeError, "without symlinks"):
+                    arguments("/approved/python", selection)
+                link.unlink()
+            directory.rmdir()
+            directory.symlink_to(outside, target_is_directory=True)
+            with self.subTest(product=product, key="ancestor"), self.assertRaisesRegex(RuntimeError, "without symlinks"):
+                arguments("/approved/python", selection)
+            directory.unlink()
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def content_native(self):
+        return dict(product_id="content-intelligence", product_fingerprint="c" * 64, gold_fingerprint="d" * 64,
+                    reference=dict(reference_id="publishers", revision="r1", snapshot_fingerprint="e" * 64),
+                    filters=dict(source="alpha", start_date="2026-10-12", end_date="2026-10-13", declared_language=None),
+                    rows=[dict(source_id="alpha", article_count="9007199254740993", publisher_category=None,
+                               reference_status="MATCHED", reference_usage="USED",
+                               missing_optional_attributes=["publisher_category", "country_code"])],
+                    totals=dict(article_count="9007199254740993", missing_article_count="0"),
+                    limit="1", offset="0", has_more=True)
+
+    def test_content_projection_preserves_identity_nulls_decimal_strings_and_enum_values(self):
+        native = self.content_native()
+        original = deepcopy(native)
+        self.assertEqual(demo.content_response(native), dict(
+            publication="c" * 64, productId="content-intelligence", goldPublication="d" * 64,
+            reference=dict(referenceId="publishers", revision="r1", snapshotFingerprint="e" * 64),
+            filters=dict(sourceId="alpha", **{"from": "2026-10-12", "to": "2026-10-13"}, declaredLanguage=None),
+            data=[dict(sourceId="alpha", articleCount="9007199254740993", publisherCategory=None,
+                       referenceStatus="MATCHED", referenceUsage="USED",
+                       missingOptionalAttributes=["publisher_category", "country_code"])],
+            totals=dict(articleCount="9007199254740993", missingArticleCount="0"),
+            meta=dict(returned=1, limit=1, offset=0, hasMore=True)))
+        self.assertEqual(native, original)
+        del native["totals"]
+        self.assertNotIn("totals", demo.content_response(native))
+
+    def report_evidence(self, product):
+        """Use real local files to exercise the inventory guard, not mocked inventories."""
+        self.analytics_evidence()
+        selection = self.content_selection() if product == "content" else self.selection()
+        for key in ("root", "goldRoot", "batchRoot", "referenceRoot"):
+            if key in selection:
+                directory = Path(selection[key])
+                directory.mkdir(parents=True, exist_ok=True)
+                (directory / "fixture.json").write_text('{"original":true}')
+        if product == "content":
+            response = demo.content_response(self.content_native())
+            reports = (("catalog", "catalog"), ("source_discovery_daily", "source-discovery-daily"),
+                       ("reference_coverage", "reference-coverage"))
+            query = dict(sourceId="alpha", **{"from": "2026-10-12", "to": "2026-10-13"}, limit=1, offset=0)
+        else:
+            response = json.loads((self.root / "reliability-analytics-verification.json").read_text())["scenarios"][0]["response"]
+            response["totals"] = dict(requestCount="2", missingServiceCount="0")
+            reports = (("requests_5m", "request-windows"), ("input_coverage", "input-coverage"),
+                       ("reference_coverage", "reference-coverage"))
+            query = dict(serviceId="svc00", environment="test", limit=1, offset=0)
+        scenarios = [dict(report=report, endpoint=endpoint, name="first-page", query=query, response=response)
+                     for report, endpoint in reports]
+        inventory = demo.selection_inventory(selection)
+        evidence = dict(selection=selection, scenarios=scenarios, inventory=inventory,
+                        unchangedFiles=sum(map(len, inventory.values())))
+        demo.write_json(self.root / (product + "-analytics-verification.json"), evidence)
+        return selection, evidence
+
+    def test_http_routes_all_content_and_reliability_reports_with_exact_queries(self):
+        for product in ("content", "reliability"):
+            selection, evidence = self.report_evidence(product)
+            responses = [(case["response"], {"Cache-Control": "no-store"}) for case in evidence["scenarios"]]
+            with self.subTest(product=product), patch.object(demo, "http", side_effect=responses) as http:
+                result = demo.verify_analytics_http(product, "http://127.0.0.1:14173", selection)
+            self.assertEqual(result["publication"], selection["publication"])
+            self.assertEqual(result["unchangedFiles"], 3)
+            self.assertEqual(len(result["scenarios"]), 3)
+            for call, case, observed in zip(http.call_args_list, evidence["scenarios"], result["scenarios"], strict=True):
+                base, path = call.args
+                self.assertEqual(base, "http://127.0.0.1:14173")
+                parsed = demo.urllib.parse.urlsplit(path)
+                self.assertEqual(parsed.path, "/api/v1/" + product + "/" + case["endpoint"])
+                self.assertEqual(demo.urllib.parse.parse_qs(parsed.query), {key: [str(value)] for key, value in case["query"].items()})
+                self.assertEqual(observed, {key: case[key] for key in ("report", "name", "response")})
+
+    def test_all_reports_reject_changed_identity_types_totals_and_cache_without_fallback(self):
+        for product in ("content", "reliability"):
+            selection, evidence = self.report_evidence(product)
+            for index, case in enumerate(evidence["scenarios"]):
+                original = case["response"]
+                invalid = [original | {"publication": "f" * 64}, original | {"data": []},
+                           original | {"totals": {}}, original | {"totals": {key: "99" for key in original["totals"]}},
+                           original | {"totals": {key: 0 for key in original["totals"]}},
+                           original | {"filters": {}}, original | {"productId": "switched-product"},
+                           original | {"meta": original["meta"] | {"hasMore": 1}},
+                           original | {"reference": original["reference"] | {"revision": "r2"}}]
+                changed = deepcopy(original)
+                count = "articleCount" if product == "content" else "requestCount"
+                changed["data"][0][count] = int(changed["data"][0][count])
+                invalid.append(changed)
+                changed_null = deepcopy(original)
+                changed_null["data"][0]["publisherCategory" if product == "content" else "ownerTeam"] = ""
+                invalid.append(changed_null)
+                if product == "content":
+                    changed_enums = deepcopy(original)
+                    changed_enums["data"][0]["missingOptionalAttributes"] = ["publisherCategory", "countryCode"]
+                    invalid.append(changed_enums)
+                    invalid.append(original | {"goldPublication": "f" * 64})
+                for payload, headers, error in [(value, {"Cache-Control": "no-store"}, "native report mismatch") for value in invalid] + [(original, {}, "cache contract")]:
+                    preceding = [(previous["response"], {"Cache-Control": "no-store"}) for previous in evidence["scenarios"][:index]]
+                    with self.subTest(product=product, report=case["report"], payload=payload, headers=headers), patch.object(
+                            demo, "http", side_effect=preceding + [(payload, headers)]) as http:
+                        with self.assertRaisesRegex(RuntimeError, error):
+                            demo.verify_analytics_http(product, "http://127.0.0.1:18080", selection)
+                        self.assertEqual(http.call_count, index + 1)
+            for key in selection:
+                with self.subTest(product=product, selection=key), patch.object(demo, "http") as http:
+                    with self.assertRaisesRegex(RuntimeError, "selection changed"):
+                        demo.verify_analytics_http(product, "http://127.0.0.1:18080", selection | {key: "changed"})
+                    http.assert_not_called()
+            with patch.object(demo, "http", side_effect=RuntimeError("HTTP 500")) as http:
+                with self.assertRaisesRegex(RuntimeError, "HTTP 500"):
+                    demo.verify_analytics_http(product, "http://127.0.0.1:18080", selection)
+                self.assertEqual(http.call_count, 1)
+
+    def test_http_refuses_hash_or_mtime_mutation_before_and_after_reads(self):
+        for product in ("content", "reliability"):
+            keys = ("root", "goldRoot", "referenceRoot") if product == "content" else ("root", "batchRoot", "referenceRoot")
+            for key in keys:
+                for mutation in ("hash", "mtime"):
+                    for timing in ("before", "after"):
+                        selection, evidence = self.report_evidence(product)
+                        path = Path(selection[key]) / "fixture.json"
+                        stat = path.stat()
+                        def mutate():
+                            if mutation == "hash":
+                                path.write_text('{"original":false}')
+                                os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+                            else:
+                                os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+                        calls = []
+                        def respond(base, route):
+                            calls.append(route)
+                            if len(calls) == len(evidence["scenarios"]):
+                                mutate()
+                            return evidence["scenarios"][len(calls)-1]["response"], {"Cache-Control": "no-store"}
+                        if timing == "before":
+                            mutate()
+                        with self.subTest(product=product, key=key, mutation=mutation, timing=timing), patch.object(demo, "http", side_effect=respond) as http:
+                            with self.assertRaisesRegex(RuntimeError, "changed after preparation" if timing == "before" else "HTTP reads changed"):
+                                demo.verify_analytics_http(product, "http://127.0.0.1:18080", selection)
+                            self.assertEqual(http.call_count, 0 if timing == "before" else 3)
 
     def test_reused_supervisor_pid_is_never_signalled(self):
         self.save()

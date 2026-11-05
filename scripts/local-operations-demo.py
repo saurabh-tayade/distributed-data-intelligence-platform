@@ -129,6 +129,33 @@ def reliability_scenarios():
                                service_id="svc09", environment="production"))]
 
 
+def reliability_coverage_scenarios(report):
+    if report == "input_coverage":
+        return [("default", {}), ("first-page", dict(limit=1)), ("empty-page", dict(limit=1, offset=1)),
+                ("source", dict(source_id="bench-source")), ("batch", dict(batch_id="b00")),
+                ("combined", dict(source_id="bench-source", batch_id="b00")),
+                ("empty-source", dict(source_id="absent")), ("empty-batch", dict(batch_id="absent"))]
+    return [("default", {}), ("first-page", dict(limit=1)), ("final-page", dict(limit=1, offset=3)),
+            ("empty-page", dict(limit=1, offset=4)), ("matched", dict(service_id="svc00")),
+            ("optional-null", dict(service_id="svc01")), ("missing", dict(service_id="svc09")),
+            ("unused", dict(service_id="svc-unused")), ("empty-filter", dict(service_id="absent"))]
+
+
+def content_scenarios(report):
+    count = 3 if report == "source_discovery_daily" else 4
+    common = [("default", dict(limit=100)), ("first-page", dict(limit=1)),
+              ("final-page", dict(limit=1, offset=count-1)), ("empty-page", dict(limit=1, offset=count)),
+              ("source", dict(source="alpha")), ("optional-null", dict(source="beta")),
+              ("missing", dict(source="gamma")), ("empty-filter", dict(source="absent"))]
+    if report != "catalog":
+        common += [("unused", dict(source="delta"))]
+    if report != "reference_coverage":
+        common += [("inclusive-date", dict(start_date="2026-10-12", end_date="2026-10-12")),
+                   ("combined", dict(source="alpha", start_date="2026-10-12", end_date="2026-10-13", limit=1, offset=1))]
+    # Content catalog native default is 10; the HTTP contract defaults to 100.
+    return [(name, dict(limit=100) | options) for name, options in common]
+
+
 def camel(name):
     first, *rest = name.split("_")
     return first + "".join(part.title() for part in rest)
@@ -140,27 +167,90 @@ def reliability_response(native):
     result.update(publication=native["product_fingerprint"],
                   reference={camel(key): value for key, value in native["reference"].items()},
                   filters={camel(key): value for key, value in native["filters"].items()},
-                  data=[{camel(key): row[key] for key in RELIABILITY_ROWS} for row in native["rows"]],
+                  data=[{camel(key): value for key, value in row.items()} for row in native["rows"]],
                   meta=dict(returned=len(native["rows"]), limit=int(native["limit"]), offset=int(native["offset"]), hasMore=native["has_more"]))
+    if "totals" in native:
+        result["totals"] = {camel(key): value for key, value in native["totals"].items()}
+    return result
+
+
+def content_name(name):
+    return {"source": "sourceId", "start_date": "from", "end_date": "to"}.get(name, camel(name))
+
+
+def content_response(native):
+    """Project native named-report fields only; never reconstruct counts or joins."""
+    result = dict(publication=native["product_fingerprint"], productId=native["product_id"],
+                  goldPublication=native["gold_fingerprint"],
+                  reference={camel(key): value for key, value in native["reference"].items()},
+                  filters={content_name(key): value for key, value in native["filters"].items()},
+                  data=[{camel(key): value for key, value in row.items()} for row in native["rows"]],
+                  meta=dict(returned=len(native["rows"]), limit=int(native["limit"]), offset=int(native["offset"]), hasMore=native["has_more"]))
+    if "totals" in native:
+        result["totals"] = {camel(key): value for key, value in native["totals"].items()}
     return result
 
 
 def file_inventory(root):
-    return {str(path.relative_to(root)): (hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns)
+    return {str(path.relative_to(root)): dict(sha256=hashlib.sha256(path.read_bytes()).hexdigest(), mtimeNs=path.stat().st_mtime_ns)
             for path in root.rglob("*") if path.is_file()}
 
 
+def selection_inventory(selection):
+    return {key: file_inventory(Path(selection[key])) for key in ("root", "goldRoot", "batchRoot", "referenceRoot") if key in selection}
+
+
 def verify_reliability_analytics(selection):
-    """Fully verify the selected fixture and capture bounded native request-window reports."""
+    """Fully verify the unchanged G1 selection and capture all three native reports."""
     from reliability_format_analytics import open_publication
-    roots = [Path(selection[key]) for key in ("root", "batchRoot", "referenceRoot")]
-    before = [file_inventory(root) for root in roots]
-    with open_publication(roots[0], selection["publication"], batch_root=roots[1], reference_root=roots[2]) as opened:
-        scenarios = [dict(name=name, query={camel(key): value for key, value in options.items()},
-                          response=reliability_response(opened.report("requests_5m", **options)))
-                     for name, options in reliability_scenarios()]
-    require(before == [file_inventory(root) for root in roots], "Reliability analytics read changed selected fixture files")
-    return dict(selection=selection, scenarios=scenarios, unchangedFiles=sum(map(len, before)))
+    before = selection_inventory(selection)
+    scenarios = []
+    with open_publication(selection["root"], selection["publication"], batch_root=selection["batchRoot"], reference_root=selection["referenceRoot"]) as opened:
+        for report in ("requests_5m", "input_coverage", "reference_coverage"):
+            cases = reliability_scenarios() if report == "requests_5m" else reliability_coverage_scenarios(report)
+            endpoint = "request-windows" if report == "requests_5m" else report.replace("_", "-")
+            for name, options in cases:
+                scenarios.append(dict(report=report, endpoint=endpoint, name=name,
+                    query={camel(key): value for key, value in options.items()},
+                    response=reliability_response(opened.report(report, **options))))
+    require(before == selection_inventory(selection), "Reliability analytics read changed selected fixture files")
+    return dict(selection=selection, scenarios=scenarios, inventory=before, unchangedFiles=sum(map(len, before.values())))
+
+
+def verify_content_analytics(selection):
+    from content_analytics import open_publication
+    before = selection_inventory(selection)
+    scenarios = []
+    with open_publication(selection["root"], selection["publication"], gold_root=selection["goldRoot"], reference_root=selection["referenceRoot"]) as opened:
+        for report in ("catalog", "source_discovery_daily", "reference_coverage"):
+            for name, options in content_scenarios(report):
+                scenarios.append(dict(report=report, endpoint=report.replace("_", "-"), name=name,
+                    query={content_name(key): value for key, value in options.items()},
+                    response=content_response(opened.report(report, **options))))
+    require(before == selection_inventory(selection), "Content analytics read changed selected fixture files")
+    return dict(selection=selection, scenarios=scenarios, inventory=before, unchangedFiles=sum(map(len, before.values())))
+
+
+def prepare_content_analytics(root, *, spark=None):
+    # Real Content publication over literal synthetic Gold, not Bronze/Silver proof.
+    from generate_content_fixtures import completed
+    from silver import session
+    directory = root / "content-analytics"
+    directory.mkdir(mode=0o700)
+    owned_spark = spark is None
+    if owned_spark:
+        spark = session()
+        spark.sparkContext.setLogLevel("ERROR")
+    try:
+        publication = completed(directory, spark=spark)
+    finally:
+        if owned_spark:
+            spark.stop()
+    selection = dict(root=str(directory / "output"), publication=publication,
+                     goldRoot=str(directory / "gold"), referenceRoot=str(directory / "references"))
+    verified = verify_content_analytics(selection)
+    write_json(root / "content-analytics-verification.json", verified)
+    return selection
 
 
 def prepare_reliability_analytics(root):
@@ -175,32 +265,52 @@ def prepare_reliability_analytics(root):
     return selection
 
 
-def reliability_arguments(python, selection):
+def analytics_arguments(product, python, selection):
     require(isinstance(selection, dict) and isinstance(selection.get("publication"), str)
-            and re.fullmatch("[0-9a-f]{64}", selection["publication"]), "Missing or invalid selected Reliability publication")
-    for key, directory in (("root", "output"), ("batchRoot", "batches"), ("referenceRoot", "references")):
-        require(selection.get(key) == str(ROOT / "reliability-analytics" / directory), "Reliability analytics must use the isolated demo fixture")
-    return ["--reliability.analytics.python-executable=" + str(python),
-            "--reliability.analytics.processing-root=" + str(REPO / "processing"),
-            "--reliability.analytics.root=" + selection["root"],
-            "--reliability.analytics.batch-root=" + selection["batchRoot"],
-            "--reliability.analytics.reference-root=" + selection["referenceRoot"],
-            "--reliability.analytics.publication=" + selection["publication"]]
+            and re.fullmatch("[0-9a-f]{64}", selection["publication"]), f"Missing or invalid selected {product.title()} publication")
+    dependency = "gold" if product == "content" else "batch"
+    for key, directory in (("root", "output"), (dependency + "Root", "gold" if dependency == "gold" else "batches"), ("referenceRoot", "references")):
+        expected = ROOT / (product + "-analytics") / directory
+        require(selection.get(key) == str(expected) and expected.resolve() == expected,
+                f"{product.title()} analytics must use the isolated demo fixture without symlinks")
+    prefix = "--" + product + ".analytics."
+    return [prefix + "python-executable=" + str(python), prefix + "processing-root=" + str(REPO / "processing"),
+            prefix + "root=" + selection["root"], prefix + dependency + "-root=" + selection[dependency + "Root"],
+            prefix + "reference-root=" + selection["referenceRoot"], prefix + "publication=" + selection["publication"]]
+
+
+def reliability_arguments(python, selection):
+    return analytics_arguments("reliability", python, selection)
+
+
+def content_arguments(python, selection):
+    return analytics_arguments("content", python, selection)
+
+
+def verify_analytics_http(product, base, selection):
+    verified = json.loads((ROOT / (product + "-analytics-verification.json")).read_bytes())
+    title = product.title()
+    require(verified["selection"] == selection, title + " analytics selection changed after preparation")
+    require(verified["inventory"] == selection_inventory(selection), title + " selected fixture files changed after preparation")
+    observations = []
+    for scenario in verified["scenarios"]:
+        path = "/api/v1/" + product + "/" + scenario["endpoint"] + "?" + urllib.parse.urlencode(scenario["query"])
+        response, headers = http(base, path)
+        require(headers.get("Cache-Control") == "no-store", title + " analytics cache contract mismatch")
+        # JSON comparison also distinguishes analytical strings and booleans from numeric values.
+        require(json.dumps(response, sort_keys=True) == json.dumps(scenario["response"], sort_keys=True),
+                "Selected " + title + " analytics/native report mismatch: " + scenario["report"] + "/" + scenario["name"])
+        observations.append(dict(report=scenario["report"], name=scenario["name"], response=response))
+    require(verified["inventory"] == selection_inventory(selection), title + " HTTP reads changed selected fixture files")
+    return dict(publication=selection["publication"], scenarios=observations, unchangedFiles=verified["unchangedFiles"])
 
 
 def verify_reliability_http(base, selection):
-    verified = json.loads((ROOT / "reliability-analytics-verification.json").read_bytes())
-    require(verified["selection"] == selection, "Reliability analytics selection changed after preparation")
-    observations = []
-    for scenario in verified["scenarios"]:
-        path = "/api/v1/reliability/request-windows?" + urllib.parse.urlencode(scenario["query"])
-        response, headers = http(base, path)
-        require(headers.get("Cache-Control") == "no-store", "Reliability analytics cache contract mismatch")
-        # JSON comparison also distinguishes analytical strings and booleans from numeric values.
-        require(json.dumps(response, sort_keys=True) == json.dumps(scenario["response"], sort_keys=True),
-                "Selected Reliability analytics/native report mismatch: " + scenario["name"])
-        observations.append(dict(name=scenario["name"], response=response))
-    return dict(publication=selection["publication"], scenarios=observations)
+    return verify_analytics_http("reliability", base, selection)
+
+
+def verify_content_http(base, selection):
+    return verify_analytics_http("content", base, selection)
 
 
 def prepare(root):
@@ -209,7 +319,7 @@ def prepare(root):
     scratch.mkdir(mode=0o700)
     os.chdir(root)
     os.environ.update(TMPDIR=str(scratch), SPARK_LOCAL_DIRS=str(scratch), SPARK_SUBMIT_OPTS="-Djava.io.tmpdir=" + str(scratch))
-    sys.path[:0] = [str(REPO / "processing"), str(REPO / "processing/tests")]
+    sys.path[:0] = [str(REPO / "processing"), str(REPO / "processing/tests"), str(REPO / "services/content-api/tests")]
     from publication_metadata import canonical_bytes
     from reliability_preflight_fixtures import create
     from gold_fixtures import create_analytics_publications
@@ -244,7 +354,8 @@ def prepare(root):
     (root / "import-catalog.json").write_bytes(canonical_bytes(selection))
     gold, publications = create_analytics_publications(root / "analytics")
     reliability = prepare_reliability_analytics(root)
-    write_json(root / "prepared.json", dict(source=source, runtime=profiles[RUNTIME], goldRoot=str(gold), publication=publications["full"].rsplit("=", 1)[1], reliability=reliability))
+    content = prepare_content_analytics(root)
+    write_json(root / "prepared.json", dict(source=source, runtime=profiles[RUNTIME], goldRoot=str(gold), goldInventory=file_inventory(gold), publication=publications["full"].rsplit("=", 1)[1], reliability=reliability, content=content))
 
 
 def verify_native(root, fingerprint):
@@ -271,7 +382,7 @@ class Demo:
         self.args, self.children, self.created = args, [], False
         self.started = time.monotonic()
         self.state = dict(id=str(uuid.uuid4()), root=str(ROOT), phase="INITIALIZING", supervisor=os.getpid(), supervisorStamp=process_stamp(os.getpid()), timings={})
-        self.env = {key: value for key, value in os.environ.items() if not key.startswith(("DDIP_", "ANALYTICS_", "RELIABILITY_ANALYTICS_", "SPRING_", "SERVER_"))}
+        self.env = {key: value for key, value in os.environ.items() if not key.startswith(("DDIP_", "ANALYTICS_", "CONTENT_ANALYTICS_", "RELIABILITY_ANALYTICS_", "SPRING_", "SERVER_"))}
         for key in ("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS"):
             self.env.pop(key, None)
 
@@ -321,7 +432,7 @@ class Demo:
         ROOT.mkdir(mode=0o700, parents=True)
         self.created = True
         self.phase("BUILDING")
-        maven = ["mvn", "-B", "-ntp", "-Daether.syncContext.named.factory=noop", "-f", "services/content-api/pom.xml", "-DskipTests", "package"]
+        maven = ["mvn", "-B", "-ntp", "-Daether.syncContext.named.factory=noop", "-f", "services/content-api/pom.xml", "-DskipUnitTests", "package"]
         if self.args.offline:
             maven.insert(1, "-o")
         self.command("build-api", maven)
@@ -360,7 +471,7 @@ class Demo:
         api = self.launch("api", self.java("api") + [f"--server.port={self.args.api_port}", f"--ddip.management.origins={base},{ui}",
                           "--analytics.python-executable=" + str(python), "--analytics.script=" + str(REPO / "processing/gold_analytics.py"),
                           "--analytics.gold-root=" + prepared["goldRoot"], "--analytics.publication=" + prepared["publication"]]
-                          + reliability_arguments(python, prepared["reliability"]))
+                          + reliability_arguments(python, prepared["reliability"]) + content_arguments(python, prepared["content"]))
         def api_ready():
             require(api.poll() is None, "API exited during startup; inspect api.log")
             try:
@@ -370,6 +481,8 @@ class Demo:
                 return False
         wait_for("API readiness", api_ready)
         reliability_direct = verify_reliability_http(base, prepared["reliability"])
+        content_direct = verify_content_http(base, prepared["content"])
+        require(prepared["goldInventory"] == file_inventory(Path(prepared["goldRoot"])), "Separate Gold fixture files changed")
         source = prepared["source"]
         http(base, "/api/management/v1/sources", dict(productId="application-reliability", sourceId=source["sourceId"], displayName="Synthetic demo requests", enabled=True, config=source["configuration"]), expected=201)
         self.phase("IMPORTING_NATIVE_INPUTS")
@@ -439,9 +552,12 @@ class Demo:
         require(publishers["publication"] == prepared["publication"] and len(publishers["data"]) == 2, "Separate Analytics fixture mismatch")
         reliability_proxy = verify_reliability_http(ui, prepared["reliability"])
         require(reliability_direct == reliability_proxy, "Reliability analytics selection changed during managed execution")
-        write_json(ROOT / "acceptance.json", dict(run=detail, attempts=attempts["data"], stages=stages["data"], events=events["data"], source=current["data"], revisions=revisions["data"], analyticsPublication=prepared["publication"], reliabilityAnalytics=reliability_proxy, coordinatorReleased=True))
+        content_proxy = verify_content_http(ui, prepared["content"])
+        require(content_direct == content_proxy, "Content analytics selection changed during managed execution")
+        require(prepared["goldInventory"] == file_inventory(Path(prepared["goldRoot"])), "Separate Gold fixture files changed during managed execution or reads")
+        write_json(ROOT / "acceptance.json", dict(run=detail, attempts=attempts["data"], stages=stages["data"], events=events["data"], source=current["data"], revisions=revisions["data"], analyticsPublication=prepared["publication"], reliabilityAnalytics=reliability_proxy, contentAnalytics=content_proxy, coordinatorReleased=True))
         self.phase("READY")
-        print(f"Analytics: {ui}/#/analytics\nReliability: {ui}/#/analytics/reliability\nReliability UTC interval: {RELIABILITY_START} to {RELIABILITY_END}\nOperations: {ui}/#/operations/executions/{run}\nPrivate status/logs: {ROOT}\nStop: Ctrl-C, or python3 scripts/local-operations-demo.py down", flush=True)
+        print(f"Analytics: {ui}/#/analytics\nContent: {ui}/#/content\nReliability: {ui}/#/analytics/reliability\nReliability UTC interval: {RELIABILITY_START} to {RELIABILITY_END}\nOperations: {ui}/#/operations/executions/{run}\nPrivate status/logs: {ROOT}\nStop: Ctrl-C, or python3 scripts/local-operations-demo.py down", flush=True)
         while True:
             for name, child in self.children:
                 if name in ("api", "worker", "frontend"):
