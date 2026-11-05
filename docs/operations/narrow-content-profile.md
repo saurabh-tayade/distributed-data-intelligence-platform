@@ -167,3 +167,9 @@ The later [tracked admission slice](narrow-content-admission.md) adds an explici
 SQL claim/enrollment path and PREPARING/READY receipts. Its next-attempt-number check preserves
 recovery headroom even when historical numbering has gaps. It does not change the historical
 foundation results above or qualify operational stage allocation and continuation.
+
+The subsequent [native precompletion slice](narrow-native-precompletion.md) adds explicitly
+versioned Silver prospective metadata and Content complete-row guards. Its entry points are
+inactive and preserve the historical modules. Gold/Content full metadata and nested proof
+closure remain required Gate B0 work; the earlier foundation results are not upgraded to
+operational or maximum-output evidence by that addition.

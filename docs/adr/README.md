@@ -85,3 +85,8 @@ statuses or complete Gate B0; ordinary Content dispatch stays disabled.
 claimed → preparing → ready direction and its inactive durable-binding implementation.
 It adds bounded preparation and facts-only reconstruction, not stage authorization or
 operational recovery. PostgreSQL and remaining native safety qualification stay required.
+
+[ADR 0024](0024-narrow-native-precompletion-guards.md) records additive Silver prospective
+metadata and Content complete-report-row guards within the approved narrow profile direction.
+The versioned library entry points remain inactive. Full metadata/nested proof closure,
+runtime adoption and operational fault/restart qualification remain Gate B0 obligations.
