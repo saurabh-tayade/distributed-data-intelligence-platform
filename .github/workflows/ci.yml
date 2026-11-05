@@ -274,7 +274,13 @@ jobs:
         run: PYTHONPATH=processing:processing/tests python services/content-api/tests/generate_reliability_fixtures.py --output services/content-api/target/reliability-fixtures
       - name: Verify isolated demo Reliability selection with the native reader
         run: python -I -B -m unittest discover -s scripts/tests -p test_demo_reliability_native.py -v
-      - name: Verify Spring Boot analytics APIs against native Gold and Reliability fixtures
+      - name: Generate Content HTTP fixtures with retained Gold and reference dependencies
+        run: |
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          export PYSPARK_PYTHON="$(command -v python)"
+          PYTHONPATH=processing:processing/tests python services/content-api/tests/generate_content_fixtures.py --output services/content-api/target/content-fixtures
+      - name: Verify Spring Boot analytics APIs against native Gold, Content and Reliability fixtures
         run: |
           export JAVA_HOME="$JAVA_HOME_21_X64"
           export PATH="$JAVA_HOME/bin:$PATH"

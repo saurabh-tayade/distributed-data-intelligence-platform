@@ -13,7 +13,7 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[2]
 GROUPS = ('core', 'reliability', 'ingestion', 'gold', 'content_recovery')
 INCLUDES = ['**/IT*.java', '**/*IT.java', '**/*ITCase.java']
-HTTP_CLASSES = ('platform.contentapi.GoldApiIT', 'platform.contentapi.ReliabilityApiIT')
+HTTP_CLASSES = ('platform.contentapi.GoldApiIT', 'platform.contentapi.ReliabilityApiIT', 'platform.contentapi.ContentApiIT')
 HTTP_EXCLUDES = ['**/' + name.rsplit('.', 1)[1] + '.java' for name in HTTP_CLASSES]
 UNIT_NAMES = ('Test*.java', '*Test.java', '*Tests.java', '*TestCase.java')
 NS = {'m': 'http://maven.apache.org/POM/4.0.0'}

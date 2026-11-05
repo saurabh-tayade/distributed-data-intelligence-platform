@@ -11,7 +11,7 @@ import org.springframework.web.method.annotation.HandlerMethodValidationExceptio
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 @AnalyticsRole
-@RestControllerAdvice(assignableTypes = {PublisherController.class, AnalyticsController.class, ReliabilityRequestController.class})
+@RestControllerAdvice(assignableTypes = {PublisherController.class, AnalyticsController.class, ReliabilityRequestController.class, ContentCatalogController.class})
 public class ApiExceptionHandler {
     private static final Logger LOG = LoggerFactory.getLogger(ApiExceptionHandler.class);
     public record ErrorResponse(String code) { }

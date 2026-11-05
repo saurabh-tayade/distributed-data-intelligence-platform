@@ -12,6 +12,8 @@ import { SourceCommandPanel } from './operations/SourceCommandPanel';
 import { ReliabilitySubmission } from './operations/ReliabilitySubmission';
 import { RunSubmissionPanel } from './operations/RunSubmissionPanel';
 import { useReliability } from './useReliability';
+import { ContentWorkspace } from './ContentWorkspace';
+import { useContent } from './useContent';
 import { ReliabilityWorkspace } from './ReliabilityWorkspace';
 
 export function App() {
@@ -24,11 +26,12 @@ export function App() {
   const submission = route === 'run-submit';
   const operations = !!(sourceArea || executionContext || submission);
   const model = useAnalytics(route === 'analytics');
+  const content = useContent(route === 'content');
   const reliability = useReliability(route === 'reliability');
-  const analyticsArea = route === 'analytics' || route === 'reliability';
+  const analyticsArea = route === 'analytics' || route === 'content' || route === 'reliability';
   const previousRoute = useRef(route);
   const section = route === 'analytics' ? analyticsViews.find((item) => item.id === model.view)!.label
-    : route === 'reliability' ? 'Reliability request windows' : source ? 'Source detail' : route === 'source-new' ? 'Register source' : submission ? 'Submit Reliability Run' : inspection ? 'Run detail' : executions ? 'Executions' : route === 'sources' ? 'Sources' : 'Page not found';
+    : route === 'content' ? 'Enriched Content catalog' : route === 'reliability' ? 'Reliability request windows' : source ? 'Source detail' : route === 'source-new' ? 'Register source' : submission ? 'Submit Reliability Run' : inspection ? 'Run detail' : executions ? 'Executions' : route === 'sources' ? 'Sources' : 'Page not found';
   useEffect(() => {
     document.title = `${section} | DDIP`;
   }, [section]);
@@ -40,6 +43,7 @@ export function App() {
   return <AppShell section={section} area={analyticsArea ? 'analytics' : operations ? 'operations' : 'none'} product={route === 'reliability' ? 'Application Reliability' : 'Content Intelligence'}>
     {analyticsArea && <nav className="operations-navigation" aria-label="Analytics products">
       <a href="#/analytics" aria-current={route === 'analytics' ? 'page' : undefined}>Content Intelligence</a>
+      <a href="#/content" aria-current={route === 'content' ? 'page' : undefined}>Enriched Content catalog</a>
       <a href="#/analytics/reliability" aria-current={route === 'reliability' ? 'page' : undefined}>Application Reliability</a>
     </nav>}
     {operations && <nav className="operations-navigation" aria-label="Operations views">
@@ -51,6 +55,7 @@ export function App() {
     <RunSubmissionPanel visible={operations} />
     {/* Keep the Analytics model and publication pin across workspace navigation. */}
     <div hidden={route !== 'analytics'}><AnalyticsWorkspace model={model} /></div>
+    <div hidden={route !== 'content'}><ContentWorkspace model={content} /></div>
     <div hidden={route !== 'reliability'}><ReliabilityWorkspace model={reliability} /></div>
     <div hidden={route !== 'sources'}><SourceList active={route === 'sources'} /></div>
     {route === 'source-new' && <SourceRegistration />}

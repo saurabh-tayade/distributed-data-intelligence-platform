@@ -20,7 +20,7 @@ SCOPE = {'__name__': 'test_postgres'}
 exec(compile(CODE, 'ci.yml:content_postgres', 'exec'), SCOPE)
 GATE = SCOPE['check_postgres']
 JOBS = tuple('content_postgres_' + g for g in PARTITIONS.GROUPS)
-HTTP_CLASSES = ('platform.contentapi.GoldApiIT', 'platform.contentapi.ReliabilityApiIT')
+HTTP_CLASSES = ('platform.contentapi.GoldApiIT', 'platform.contentapi.ReliabilityApiIT', 'platform.contentapi.ContentApiIT')
 GOLD = (
     'platform.contentapi.management.RssGoldIT',
     'platform.contentapi.management.RssContentIT',
@@ -123,7 +123,7 @@ class PostgresInventoryTests(unittest.TestCase):
 
     def test_exact_analytics_http_inventory_is_separate(self):
         self.assertEqual(PARTITIONS.HTTP_CLASSES, HTTP_CLASSES)
-        self.assertEqual(PARTITIONS.HTTP_EXCLUDES, ['**/GoldApiIT.java', '**/ReliabilityApiIT.java'])
+        self.assertEqual(PARTITIONS.HTTP_EXCLUDES, ['**/GoldApiIT.java', '**/ReliabilityApiIT.java', '**/ContentApiIT.java'])
         self.assertTrue(set(HTTP_CLASSES).isdisjoint(sum(self.groups.values(), [])))
         self.assertEqual(PARTITIONS.inventory(self.root), self.groups)
 
@@ -140,9 +140,9 @@ class PostgresInventoryTests(unittest.TestCase):
         original = path.read_text()
         for replacement in ('<exclude>**/*IT.java</exclude>',
                             '<exclude>**/GoldApiIT.java</exclude>',
-                            '<exclude>**/GoldApiIT.java</exclude><exclude>**/ReliabilityApiIT.java</exclude><exclude>**/PersistenceIT.java</exclude>'):
+                            '<exclude>**/GoldApiIT.java</exclude><exclude>**/ReliabilityApiIT.java</exclude><exclude>**/ContentApiIT.java</exclude><exclude>**/PersistenceIT.java</exclude>'):
             with self.subTest(replacement=replacement):
-                path.write_text(original.replace('<exclude>**/GoldApiIT.java</exclude><exclude>**/ReliabilityApiIT.java</exclude>', replacement))
+                path.write_text(original.replace('<exclude>**/GoldApiIT.java</exclude><exclude>**/ReliabilityApiIT.java</exclude><exclude>**/ContentApiIT.java</exclude>', replacement))
                 with self.assertRaises(ValueError): PARTITIONS.inventory(self.root)
         path.write_text(original)
 
