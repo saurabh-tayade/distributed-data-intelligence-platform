@@ -16,13 +16,16 @@ Statuses describe scoped capabilities and evidence, not production readiness.
 | Capability | Status | Scope and remaining boundary |
 | --- | --- | --- |
 | Standalone Content Processing | ✓ Implemented and locally tested | RSS/Atom ingestion, SeaweedFS Bronze, Spark Silver and Gold |
-| Publisher Enrichment and Content Reports | ✓ Implemented and locally tested | Versioned publisher-reference enrichment, standalone DuckDB reports and a bounded [REST/React enriched catalog](docs/architecture/content-catalog-api.md) |
+| Publisher Enrichment and Content Reports | ✓ Implemented and locally tested | Versioned publisher-reference enrichment, standalone DuckDB reports and bounded REST/React [catalog](docs/architecture/content-catalog-api.md), [daily discovery and reference coverage](docs/architecture/content-discovery-api.md) |
 | Gold REST APIs and React Analytics | ✓ Implemented and locally tested | Four analytical endpoints and dashboard views; final browser acceptance and closeout remain pending |
+| Reliability REST APIs and React Analytics | ✓ Implemented and locally tested | Separately pinned [request windows, input coverage and reference coverage](docs/architecture/reliability-analytics-api.md); browser acceptance remains pending |
 | Managed Reliability Processing | ✓ Implemented and locally tested | JSONL/Parquet inputs, fixed-profile worker execution, Spark publication and independent output verification |
 | Durable Source and Run Management | ✓ Implemented and locally tested | Source revisions, verified imports, frozen run submissions and bounded execution history |
 | Execution Recovery | ◐ Partially implemented | [Controlled local Reliability recovery](docs/operations/reliability-recovery.md) is implemented and tested for JSONL/Parquet with explicit operator approval, native verification and atomic disposition; broader E5 recovery remains unfinished |
-| Managed Content Processing | ◐ Partially implemented | Internal D1–D5a publication, independent verification, explicit recovery/resume and inherited-attempt reconciliation; ordinary Content worker dispatch remains blocked by the recovery evidence envelope |
-| Cancellation, Retry and React Operations | ○ Planned | Execution controls and an operator UI |
+| Managed Content Processing | ◐ Partially implemented | Internal D1–D5a publication, independent verification, explicit recovery/resume and inherited-attempt reconciliation; ordinary Content worker dispatch remains blocked by incomplete Gate B0 recovery evidence qualification |
+| React Operations | ✓ Implemented and locally tested | Source management, guarded Reliability submission and run/attempt/stage/audit inspection; full browser acceptance remains pending |
+| Cancellation and Retry | ○ Planned | CANCEL/RETRY execution controls remain unimplemented |
+| Product Authorization and Governed Exports | — Deferred | Product-scoped access policy and export/download workflows remain unimplemented |
 | Streaming, Performance Benchmarks, AWS Validation and Multiworker Execution | — Deferred | Scale experiments and additional execution/deployment models |
 
 ## Inputs, outputs and consumers
@@ -30,8 +33,8 @@ Statuses describe scoped capabilities and evidence, not production readiness.
 | Data product | Selected inputs | Resulting datasets and information | Current consumers |
 | --- | --- | --- | --- |
 | Content: feed history and Gold analytics | RSS/Atom XML snapshots, preserved with Bronze ingestion metadata in SeaweedFS | Silver accepted/rejected observations; Gold article catalog and source/day activity, with quality diagnostics | Content analysts through DuckDB SQL, Spring Boot REST and the React dashboard |
-| Content: publisher enrichment | One completed Gold publication and one versioned publisher-reference CSV snapshot | Immutable `content_catalog_v1` and `content_source_discovery_daily_v1` Parquet; publisher context, first discovery within selected history and reference coverage | Standalone DuckDB reports/CLI and a separately pinned, paged enriched catalog through REST and React |
-| Application Reliability v2 | Explicitly registered synthetic JSONL v2 or Parquet v1 request batches, plus one versioned service-reference CSV snapshot | Immutable event, occurrence and five-minute aggregate Parquet; request counts, 5xx error rates, mean latency, rank-qualified approximate p95, duplicate/rejection accounting and reference coverage | Service/data engineers through independent DuckDB reports/CLI; operators inspect managed execution through REST |
+| Content: publisher enrichment | One completed Gold publication and one versioned publisher-reference CSV snapshot | Immutable `content_catalog_v1` and `content_source_discovery_daily_v1` Parquet; publisher context, first discovery within selected history and reference coverage | Standalone DuckDB reports/CLI and separately pinned catalog, daily discovery and reference coverage through REST and React |
+| Application Reliability v2 | Explicitly registered synthetic JSONL v2 or Parquet v1 request batches, plus one versioned service-reference CSV snapshot | Immutable event, occurrence and five-minute aggregate Parquet; request counts, 5xx error rates, mean latency, rank-qualified approximate p95, duplicate/rejection accounting and reference coverage | Service/data engineers through independent DuckDB reports/CLI and separately pinned REST/React request windows and coverage reports; operators inspect managed execution through REST and React |
 
 Content observation counts describe retained feed observations, **not readership or engagement**. Discovery is scoped to the selected history. Reliability inputs are **synthetic request events, not real production monitoring**. Each Reliability publication uses one homogeneous input format.
 
@@ -57,7 +60,7 @@ flowchart TB
     end
 
     subgraph CONTROL["Local management and consumers"]
-        api["Spring Boot API<br/>Gold analytics + management"] --> react["React content dashboard"]
+        api["Spring Boot API<br/>analytics + management"] --> react["React Analytics + Operations"]
         api <-->|"management metadata"| postgres[("PostgreSQL<br/>sources, artifacts, runs, history")]
         postgres <-->|"frozen selections + lifecycle"| worker["One managed worker<br/>one pinned Reliability profile"]
     end
@@ -112,9 +115,9 @@ Small deterministic fixtures demonstrate correctness, real Spark publication, in
 | Processing | Python 3.12.15, PySpark / Apache Spark 4.0.2, Spark SQL |
 | Data formats | RSS/Atom XML, JSON metadata and JSONL events, CSV references, Parquet analytical datasets |
 | Analytical reads | DuckDB 1.4.5; Spark-free verification and SQL reports |
-| Operational persistence | PostgreSQL 17, Spring JDBC and Flyway; migrations V1–V7 |
+| Operational persistence | PostgreSQL 17, Spring JDBC and Flyway; migrations V1–V10 |
 | Local storage | SeaweedFS 4.48 with a loopback S3-compatible Bronze interface; approved local filesystem roots for analytical publications and private execution evidence |
-| Frontend | React, TypeScript, Vite and Recharts; existing Gold analytics dashboard |
+| Frontend | React, TypeScript, Vite and Recharts; Gold, Content and Reliability Analytics plus Operations |
 | Local infrastructure | Docker Compose for SeaweedFS/PostgreSQL; host-launched ingestion, processing, API and worker roles |
 
 Kafka/Redpanda, Iceberg, cloud S3 and Athena are **future candidates**, not installed platform capabilities. No streaming broker, multiworker deployment or AWS infrastructure is required for the implemented local workflows. Pinned dependencies and private runtime/profile requirements are documented in the guides below.
@@ -125,7 +128,10 @@ Choose a standalone Content workflow or the managed Reliability workflow. There 
 
 For disposable UI review with real native Reliability execution and separate synthetic
 Gold, Content and Reliability Analytics selections, use the [local Operations demo runbook](docs/operations/local-operations-demo.md).
-It provides explicit startup, status, teardown and a manual browser checklist.
+It provides explicit startup, status, teardown and a manual browser checklist. The latest
+[combined-demo validation](docs/operations/local-operations-demo.md#combined-demo-integration-validation--2026-11-05)
+covers native fixtures and direct/proxied HTTP reports, not a new full managed
+startup/restart/teardown run. Browser walkthrough and screenshots remain deferred.
 
 1. **Prepare local storage and runtimes:** follow the [SeaweedFS setup](docs/local-seaweedfs.md), [Spark/Python setup](docs/architecture/silver-processing.md#contract-correction-acceptance-and-python-setup) and, for management/worker roles, [PostgreSQL setup and role commands](services/content-api/README.md#e5-b1-persistence-and-runtime-roles). Use Java 21 and the pinned Python dependencies; the frontend and repository checks use Node.js 24. Keep credentials and private profiles in ignored local configuration.
 2. **Build Content datasets:** use the [batch ingestion guide](docs/architecture/batch-ingestion.md), [Bronze-to-Silver guide](docs/architecture/bronze-to-silver.md) and [Gold publication guide](docs/architecture/gold-publication.md). [Publisher snapshots](docs/architecture/publisher-reference-snapshots.md) and [Content publication commands](docs/architecture/content-intelligence-publication.md#stage-b-implementation-and-executed-validation) add the standalone enrichment path. Tests and examples provide synthetic alternatives to deliberate live feed retrieval.
@@ -140,7 +146,7 @@ It provides explicit startup, status, teardown and a manual browser checklist.
 | [ingestion/](ingestion/) | Java RSS/Atom retrieval, batch CLI and Bronze storage |
 | [processing/](processing/) | Silver, Gold, Content and Reliability publishers/readers; native verification and synthetic tests |
 | [services/content-api/](services/content-api/) | Spring Boot analytics, PostgreSQL management APIs, operator imports and the single Reliability worker |
-| [frontend/](frontend/) | React/TypeScript Gold analytics dashboard and article explorer |
+| [frontend/](frontend/) | React/TypeScript Gold, Content and Reliability Analytics; source management, Reliability submission and execution inspection |
 | [config/](config/) | Public feed catalog and publisher-reference vocabulary; private deployment configuration is excluded |
 | [infrastructure/local/](infrastructure/local/) | Local SeaweedFS/PostgreSQL Compose configuration |
 | [docs/](docs/) | Architecture, contracts, decisions, operator guidance and recorded evidence |
