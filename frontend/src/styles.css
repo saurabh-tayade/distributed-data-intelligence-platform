@@ -387,3 +387,9 @@ tbody tr:hover { background: #f9fbf8; }
 .submission-choices span, .reliability-submission p, .reliability-submission code { overflow-wrap: anywhere; }
 .submission-choices details { margin-block: .75rem; }
 .reliability-submission { min-width: 0; }
+
+/* Keep dependency identities legible on the shared dark publication panel. */
+.content-selection .article-detail-grid { width: 100%; min-width: 0; }
+.content-selection .article-detail-grid dd { color: inherit; }
+
+.content-summary { overflow-wrap: anywhere; }

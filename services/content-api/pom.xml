@@ -26,7 +26,7 @@
       <build><plugins><plugin>
         <groupId>org.apache.maven.plugins</groupId><artifactId>maven-failsafe-plugin</artifactId>
         <executions><execution><goals><goal>integration-test</goal><goal>verify</goal></goals></execution></executions>
-        <configuration><includes><include>**/IT*.java</include><include>**/*IT.java</include><include>**/*ITCase.java</include></includes><excludes><exclude>**/GoldApiIT.java</exclude><exclude>**/ReliabilityApiIT.java</exclude></excludes><failIfNoTests>true</failIfNoTests></configuration>
+        <configuration><includes><include>**/IT*.java</include><include>**/*IT.java</include><include>**/*ITCase.java</include></includes><excludes><exclude>**/GoldApiIT.java</exclude><exclude>**/ReliabilityApiIT.java</exclude><exclude>**/ContentApiIT.java</exclude></excludes><failIfNoTests>true</failIfNoTests></configuration>
       </plugin></plugins></build>
     </profile>
     <profile>
@@ -34,9 +34,10 @@
       <build><plugins><plugin>
         <groupId>org.apache.maven.plugins</groupId><artifactId>maven-failsafe-plugin</artifactId>
         <executions><execution><goals><goal>integration-test</goal><goal>verify</goal></goals></execution></executions>
-        <configuration><includes><include>**/GoldApiIT.java</include><include>**/ReliabilityApiIT.java</include></includes><systemPropertyVariables>
+        <configuration><includes><include>**/GoldApiIT.java</include><include>**/ReliabilityApiIT.java</include><include>**/ContentApiIT.java</include></includes><systemPropertyVariables>
           <gold.fixture>${project.basedir}/../api/target/fixtures</gold.fixture>
           <reliability.fixture>${project.basedir}/target/reliability-fixtures</reliability.fixture>
+          <content.fixture>${project.basedir}/target/content-fixtures</content.fixture>
           <analytics.python>${analytics.python}</analytics.python>
         </systemPropertyVariables></configuration>
       </plugin></plugins></build>

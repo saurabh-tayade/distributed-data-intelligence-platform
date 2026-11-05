@@ -366,6 +366,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("**/*IT.java", pom)
         self.assertIn("**/GoldApiIT.java", pom)
         self.assertIn("**/ReliabilityApiIT.java", pom)
+        self.assertIn("**/ContentApiIT.java", pom)
 
     def test_all_managed_content_partitions_build_provision_and_always_cleanup(self):
         managed = "inputs.partition == 'ingestion' || inputs.partition == 'gold' || inputs.partition == 'content_recovery'"

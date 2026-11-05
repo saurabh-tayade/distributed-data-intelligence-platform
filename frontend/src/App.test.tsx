@@ -193,6 +193,8 @@ describe('publisher dashboard', () => {
     await user.tab();
     expect(screen.getByRole('link', { name: 'Content Intelligence' })).toHaveFocus();
     await user.tab();
+    expect(screen.getByRole('link', { name: 'Enriched Content catalog' })).toHaveFocus();
+    await user.tab();
     expect(screen.getByRole('link', { name: 'Application Reliability' })).toHaveFocus();
     await user.tab();
     expect(screen.getByRole('combobox', { name: 'Publisher scope' })).toHaveFocus();

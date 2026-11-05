@@ -1758,3 +1758,24 @@ process runner as Content. Configure `reliability.analytics.publication` indepen
 Operations result is automatically activated. Native CLI failures are generic safe execution
 failures because stderr is discarded, not parsed or returned. No publication switching, exports,
 new SQL, native contract changes or Content dispatch is introduced.
+
+## Enriched Content catalog analytics (#58)
+
+`GET /api/v1/content/catalog` exposes only the existing verified Content v1 catalog. The
+[HTTP contract and parity evidence](../../docs/architecture/content-catalog-api.md) describe its
+fixed source, discovery-date and publisher-reference filters, exact counters, deterministic
+pagination and retained-dependency verification. The [small-fixture measurements](../../docs/benchmarks/content-serving-small-fixture.md)
+separate verification from report/HTTP costs; they are not scale benchmarks.
+
+Configure `content.analytics.publication` independently of `analytics.publication` and
+`reliability.analytics.publication`. Set `content.analytics.python-executable` to the pinned
+analytics environment and the operator-controlled `processing-root`, `root`, `gold-root` and
+`reference-root` to the retained native artifacts. The existing shared timeout, process-admission
+and output-byte budgets apply. No publication registry, activation, cached verification or
+PostgreSQL serving projection is introduced. Gold and Reliability contracts remain unchanged.
+
+The React route `#/content` displays Content, base Gold and publisher-reference identities with
+its own session pin. A different base Gold fingerprint from the existing Gold dashboard is
+explicitly allowed and labeled; the UI never joins those two selections or replaces one silently.
+Each page reopens and fully verifies the selected native dependencies. Missing or damaged
+artifacts fail closed, including when filters would otherwise return no rows.
