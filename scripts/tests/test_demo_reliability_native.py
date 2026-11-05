@@ -33,7 +33,7 @@ class ReliabilityDemoNativeTests(unittest.TestCase):
         verified = demo.verify_reliability_analytics(self.selection)
         self.assertEqual(before, demo.file_inventory(self.root))
         self.assertGreater(verified["unchangedFiles"], 0)
-        reports = {scenario["name"]: scenario["response"] for scenario in verified["scenarios"]}
+        reports = {scenario["name"]: scenario["response"] for scenario in verified["scenarios"] if scenario["report"] == "requests_5m"}
         self.assertEqual(list(reports), [name for name, _ in demo.reliability_scenarios()])
         self.assertEqual([row["requestCount"] for row in reports["default"]["data"]], ["2", "1"])
         self.assertTrue(reports["first-page"]["meta"]["hasMore"])
@@ -47,6 +47,41 @@ class ReliabilityDemoNativeTests(unittest.TestCase):
         self.assertEqual(old["referenceStatus"], "MISSING")
         self.assertIsNone(old["serviceName"])
         self.assertTrue(all(report["publication"] == self.selection["publication"] and report["origin"] == "synthetic" for report in reports.values()))
+
+    def test_coverage_reports_preserve_g1_scope_totals_and_reference_edges(self):
+        before = demo.file_inventory(self.root)
+        verified = demo.verify_reliability_analytics(self.selection)
+        self.assertEqual(before, demo.file_inventory(self.root))
+        self.assertEqual(verified["inventory"], demo.selection_inventory(self.selection))
+        reports = {(row["report"], row["name"]): row["response"] for row in verified["scenarios"]}
+        inputs = reports["input_coverage", "default"]
+        self.assertEqual(len(inputs["data"]), 1)
+        self.assertEqual(inputs["totals"]["physicalOccurrenceCount"], "10")
+        self.assertEqual(inputs["totals"]["validOccurrenceCount"], "5")
+        self.assertEqual(inputs["totals"]["rejectedOccurrenceCount"], "5")
+        self.assertEqual(inputs["totals"]["distinctValidIdentityCount"], "4")
+        self.assertEqual(inputs["totals"]["duplicateExcessInScope"], "1")
+        self.assertEqual(inputs["data"][0]["rejectedReasonCounts"]["FIELD_NULL"], "2")
+        self.assertEqual(inputs["data"][0]["rejectedReasonCounts"]["FIELD_VALUE"], "3")
+        for report in ("input_coverage", "reference_coverage"):
+            default = reports[report, "default"]
+            empty = reports[report, "empty-page"]
+            self.assertEqual(default["totals"], empty["totals"])
+            self.assertEqual(empty["data"], [])
+            self.assertFalse(empty["meta"]["hasMore"])
+            for row in [x for x in verified["scenarios"] if x["report"] == report]:
+                self.assertEqual(default["publication"], row["response"]["publication"])
+                self.assertEqual(default["reference"], row["response"]["reference"])
+        self.assertEqual(reports["input_coverage", "empty-source"]["totals"]["inputBatchCount"], "0")
+        coverage = reports["reference_coverage", "default"]
+        self.assertEqual(coverage["totals"]["eventCount"], "4")
+        self.assertEqual(coverage["totals"]["unusedReferenceServiceCount"], "1")
+        self.assertEqual([row["referenceUsage"] for row in coverage["data"]], ["UNUSED", "USED", "USED", "ABSENT"])
+        optional = reports["reference_coverage", "optional-null"]["data"][0]
+        self.assertIsNone(optional["ownerTeam"])
+        self.assertEqual(optional["missingOptionalAttributes"], ["owner_team", "service_tier"])
+        self.assertIsNone(reports["reference_coverage", "missing"]["data"][0]["serviceName"])
+        self.assertEqual(reports["reference_coverage", "empty-filter"]["totals"]["eventCount"], "0")
 
     def test_wrong_identity_and_damaged_publication_or_dependencies_fail_closed(self):
         import reliability_format_metadata as metadata

@@ -2,8 +2,8 @@
 
 This is a disposable development demonstration, not a new execution/deployment
 capability or a benchmark. It runs the packaged API, production operator importer,
-actual Reliability worker and built React application. No successful artifacts,
-runs, attempts, stages or audit events are inserted by setup SQL.
+actual Reliability worker, standalone Spark Content publisher and built React application.
+No successful artifacts, runs, attempts, stages or audit events are inserted by setup SQL.
 
 ## Prerequisites
 
@@ -52,6 +52,7 @@ Omit `--offline` if Maven needs to download its existing pinned dependencies. Th
 launcher builds the packaged API and frontend before starting services. Default URLs:
 
 - Analytics: `http://127.0.0.1:14173/#/analytics`
+- Content: `http://127.0.0.1:14173/#/content`
 - Reliability: `http://127.0.0.1:14173/#/analytics/reliability`
 - Sources: `http://127.0.0.1:14173/#/operations/sources`
 - Executions: `http://127.0.0.1:14173/#/operations/executions`
@@ -71,9 +72,9 @@ refuse, including after failed initialization; it is never silently overwritten.
 All state, logs, credentials-bearing configuration and new native data are private
 under ignored `local-data/operations-demo/`. Do not share that directory. There are
 no committed credentials or AWS resources. The launcher ignores inherited `DDIP_`,
-`ANALYTICS_`, `RELIABILITY_ANALYTICS_`, `SPRING_`, `SERVER_` and JVM option configuration;
-Java loads only the packaged
-application configuration plus this demo's explicit environment/arguments. It never
+`ANALYTICS_`, `CONTENT_ANALYTICS_`, `RELIABILITY_ANALYTICS_`, `SPRING_`, `SERVER_`
+and JVM option configuration. Java loads only the packaged application configuration
+plus this demo's explicit environment/arguments. It never
 uses the retained development database or existing native publication roots.
 
 ## What startup actually does
@@ -89,17 +90,25 @@ uses the retained development database or existing native publication roots.
    to its full publication fingerprint. Also generate a separate JSONL Reliability
    analytics publication using `processing/tests/reliability_format_fixtures.py:completed`,
    the existing literal G1 verifier fixture. Fully reopen it with the native reader
-   before saving its selection and expected request-window reports. Pin all Reliability
-   analytics roots and the exact fingerprint at API startup. Neither selection comes
+   before saving its selection and expected reports. Pin all Reliability
+   analytics roots and the exact fingerprint at API startup. Independently generate the
+   standard four-article Content composition using
+   `services/content-api/tests/generate_content_fixtures.py:completed` under
+   `content-analytics/{output,gold,references}`. This runs the real Spark Content publisher
+   over a literal synthetic Gold consumer fixture, not Bronze/Silver processing. Pin all
+   six `content.analytics` settings: `python-executable`, `processing-root`, `root`,
+   `gold-root`, `reference-root` and `publication`. None of the three selections comes
    from an Operations run result, a directory scan, inherited settings or a latest pointer.
 4. Start PostgreSQL 17.11 using the repository's pinned local image. Apply unchanged
    migrations through the packaged `migrate` role. Provision only immutable storage
    bindings, run/runtime/import profiles and their associations through trusted SQL.
    These references have no public provisioning API.
 5. Start API mode with exact API/UI loopback origins and the private source catalog.
-   Check seven bounded Reliability request-window scenarios against the native reports
-   through direct HTTP, including exact identity/reference/metrics, filters, pagination,
-   empty results, pre-epoch UTC and `no-store` caching.
+   Check all three Content reports (catalog, source discovery and reference coverage)
+   and all three Reliability reports (request windows, input coverage and reference
+   coverage) against native expectations through direct HTTP before managed execution.
+   Check identity, decimal-string counts, nullable fields, filters,
+   pages, totals, empty results, pre-epoch UTC where applicable and `no-store` caching.
    Register the source through `POST /api/management/v1/sources`.
 6. Invoke the packaged `operator-import` role with the real bounded import catalog.
    Require a fresh VERIFIED import. Discover the run profile, two compatible imported
@@ -115,9 +124,11 @@ uses the retained development database or existing native publication roots.
    enabled. Keep revision 1 current so the fixed revision-1 inputs remain compatible
    with the existing submission UI; no extra historical revision is fabricated.
 10. Start Vite preview with the existing proxy, preserving Host. Check the successful
-    run through that proxy and read the separate Gold publisher report. Repeat the same
-    Reliability scenarios through the proxy and require unchanged publication identity
-    and responses after managed execution. Print READY and the Reliability view/UTC interval.
+    run through that proxy and read the separate Gold publisher report. Repeat the
+    Content and Reliability report probes through the proxy after managed execution,
+    requiring the same responses as the earlier direct HTTP/native expectations.
+    Check file hashes/mtimes against the baseline before and after HTTP reads across
+    the selected roots and retained dependencies. Print READY and the selected analytics views.
 
 Expected tiny synthetic Reliability results are **15 occurrences, 10 valid, 5 rejected,
 4 unique events and 3 five-minute windows**. CHECK_INPUTS, PUBLISH_RELIABILITY and
@@ -126,9 +137,20 @@ followed by the worker's independent verification and atomic finalization. The w
 additional native read is a separate acceptance observation; HTTP's
 `VERIFIED_AT_EXECUTION` remains historical evidence, not continuous requalification.
 
-The separate **Reliability analytics fixture** has **10 occurrences, 5 valid, 5 rejected,
+The separate **Content analytics fixture** contains **4 articles**, with discovery
+rows for `alpha` (2 articles), `beta` (1) and `gamma` (1). Reference coverage includes
+used `alpha` and `beta`, unused `delta` and absent `gamma`; `beta` has nullable optional
+publisher attributes. The selected history and curated reference snapshot are independent
+of both the M2.4 Gold dashboard fixture and Operations. These are feed observations and
+first discovery within selected history, not readership or engagement. This demonstration
+qualifies Content enrichment and its consumers, not the full Bronze-to-Silver-to-Gold path.
+
+The separate **Reliability analytics fixture** has **one G1 input batch**,
+**10 occurrences, 5 valid, 5 rejected,
 4 unique events and 3 windows**. It is a literal verifier fixture, not another Spark run
-or a claim that the worker's 15-occurrence output has been activated. Its October interval
+or a claim that the worker's 15-occurrence output has been activated. Input coverage
+reconciles that single batch; reference coverage includes `svc00`, `svc01`, `svc09` and
+`svc-unused`. This is not the separate five-batch edge-case demonstration. Its October interval
 contains two windows; the third is deliberately pre-epoch. Every API read fully verifies
 the selected publication and its retained raw/reference dependencies. Missing or corrupt
 artifacts fail closed, without substituting a successful run or another publication.
@@ -146,11 +168,14 @@ same pinned image without modifying Compose or creating a parallel production st
 `status` distinguishes initialization phases from READY, reports the actual run
 state when reachable, and reports supervisor/container presence. `state.json` records
 cumulative wall-clock phase timings. `acceptance.json` contains successful public HTTP
-observations, including Reliability report parity through the UI proxy;
+observations, including `contentAnalytics` and `reliabilityAnalytics` report parity
+through direct HTTP before managed execution and the UI proxy afterward;
 `native-verification.json` contains the managed run's additional native read result.
-`prepared.json` holds the fixed, separate Gold and Reliability selections.
+`prepared.json` holds the fixed, independent Gold, Content and Reliability selections.
+`content-analytics-verification.json` contains the selected Content roots/fingerprint,
+native report expectations and unchanged-file evidence for its output and dependencies.
 `reliability-analytics-verification.json` contains the selected Reliability roots/fingerprint,
-native report expectations and unchanged-file count for its output and dependencies.
+native report expectations and baseline hashes/mtimes for its output and dependencies.
 Private per-command logs include build, fixtures, migrate, API, importer, worker,
 frontend and independent verification.
 
@@ -178,6 +203,11 @@ not new browser acceptance evidence. Once READY:
 
 1. Open Analytics at the printed UI URL. Confirm Publisher Overview, Daily Activity,
    Data Quality and Article Explorer load the pinned **synthetic Gold** publication.
+   Open Content at `#/content`. Inspect Catalog, Source Discovery and Reference Coverage:
+   expect four catalog articles, three discovery rows and four coverage rows, with
+   unused `delta`, absent `gamma` and nullable optional fields for `beta`. Check filters,
+   pagination, totals and the separate Content/Gold/reference identities. Content
+   discovery means first discovery within this selected history, not publication date.
    Open **Application Reliability** at `#/analytics/reliability`. Enter UTC start
    `2026-10-01T00:00:00.000000Z` and end `2026-10-01T00:10:00.000000Z`, then apply the
    filters. Expect `svc00` and `svc01` windows with request counts **2** and **1**.
@@ -186,6 +216,10 @@ not new browser acceptance evidence. Once READY:
    `1970-01-01T00:00:00.000000Z`, service `svc09`, environment `production`.
    The label remains **synthetic**, including that environment. Check publication and
    reference identities, nullable reference fields and explicitly approximate p95.
+   Inspect Input Coverage for the single G1 batch (10 occurrences, 5 valid, 5 rejected,
+   4 events), then Reference Coverage for `svc00`, `svc01`, `svc09` and `svc-unused`.
+   Check report-specific filters, pagination and totals. These views retain their
+   independent selection when the 15-occurrence managed run succeeds.
 2. Open Operations → Sources. Inspect `fixture-jsonl`, its enabled state, current
    revision 1 and immutable revision-1 record. This initial fixture has one revision;
    editing it would deliberately make the fixed revision-1 batches undiscoverable
@@ -198,7 +232,7 @@ not new browser acceptance evidence. Once READY:
 5. Inspect audit events including RUN_SUCCEEDED. Refresh run, attempts, stages and events
    independently. No latest control receipt is expected: this demo does not issue controls.
 6. Check keyboard selection/focus, narrow-screen scrolling, browser Back/Forward and
-   unchanged separate Content and Reliability selections. Navigating to Operations or
+   unchanged independent Gold, Content and Reliability selections. Navigating to Operations or
    completing a new run must not select another analytics publication. Reloading the
    dashboard resets its session pin, but does not change the API's configured selection.
    With only three stages, default stage paging has
@@ -213,6 +247,8 @@ not new browser acceptance evidence. Once READY:
 python3 -m unittest discover -s scripts/tests -p test_local_operations_demo.py -v
 # Spark-free native demo checks, with the pinned DuckDB analytics dependencies:
 "$DDIP_DEMO_PYTHON" -m unittest discover -s scripts/tests -p test_demo_reliability_native.py -v
+# Content fixture generation uses the pinned Spark environment:
+"$DDIP_DEMO_PYTHON" -m unittest discover -s scripts/tests -p test_demo_content_native.py -v
 python3 -m unittest discover -s .github/ci/tests -v
 npm run check
 git diff --check
@@ -220,11 +256,48 @@ git diff --check
 
 The safety tests mock external tools to check ownership, refusal, missing resources,
 inherited configuration, explicit selection, response mismatches and HTTP headers. The
-native tests exercise the real selected fixture, read-only reports and missing/corrupt
-publications/dependencies. Run them with the pinned DuckDB 1.4.5 environment;
+native tests exercise the selected fixtures, read-only reports and missing/corrupt
+publications/dependencies. Reliability native checks are Spark-free; Content native
+checks generate their fixture through the real Spark publisher and require the full
+pinned Python 3.12.15/PySpark 4.0.2/DuckDB 1.4.5 environment;
 missing dependencies fail rather than silently skipping acceptance. Neither replaces full startup/native
 acceptance above. No new production dependencies, schemas, endpoints, frontend features
 or processing/recovery changes are part of this workflow.
+
+## Combined demo integration validation — 2026-11-05
+
+On Linux x86_64, checks used Java 21.0.13, Maven 3.9.11, Node 24.22.1, Python
+3.12.14, PySpark 4.0.2 and DuckDB 1.4.5. Python does not meet the full launcher's
+exact 3.12.15 requirement. No runtime installation or system changes were needed.
+
+- **28 launcher safety tests**, **7 native demo tests** and **47 CI-policy tests**
+  passed. The native tests publish the real Content fixture, cover all six reports,
+  assert fixed filters/pages and full-scope totals, and reject ten wrong-identity or
+  damaged-publication/dependency cases. CI runs the new Content native suite with its
+  pinned Spark environment and retains both mandatory frontend native-parity gates.
+- The packaged application in database-free `analytics` role and built Vite preview
+  passed **30 Content and 24 Reliability scenarios both directly and through the proxy**.
+  Eight forbidden-query requests returned 400. Removing each selected completion marker
+  caused all three reports to fail with the generic uncached 500 code on both routes
+  (12 checks); restoring the marker recovered the original selection and reports.
+  All **76 baseline fixture/evidence files** retained hashes and mtimes. Both smoke-test
+  services stopped and their ports closed. These are HTTP observations, not browser review.
+- **574 backend unit/web tests** (3 existing skips) passed with the explicit native
+  Python environment. **1,387 frontend tests**, including both native-parity inputs
+  generated for the merged implementation, passed. Typecheck, lint, production
+  frontend/API builds, Markdown/local-link checks, hygiene and whitespace checks passed.
+  The existing frontend main-bundle warning remains (804.38 kB minified / 227.48 kB gzip).
+- Independent review caught a native/HTTP catalog default-limit mismatch. The demo now
+  sets an explicit limit on every Content probe; the final native regression and actual
+  HTTP/proxy rerun cover the correction. The launcher also uses the current Maven
+  `skipUnitTests` property for its build-only step rather than the ineffective old flag.
+
+Docker is unavailable, so full managed startup, worker execution, restart and teardown
+were **not rerun** for this integration. The smoke test did not exercise PostgreSQL,
+SeaweedFS or the managed coordinator. Full Spark/recovery/PostgreSQL integration profiles
+and hosted CI were not run locally. Browser walkthrough and screenshots remain deferred
+by the owner. This integration advances the combined demo, not every release criterion
+in issue #53. The dated historical evidence below does not remove these limits.
 
 ## Reliability analytics slice validation — 2026-11-04
 

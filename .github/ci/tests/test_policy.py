@@ -66,6 +66,13 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(1, block("analytics_http").count("npm ci --prefix frontend"))
         self.assertLess(block("analytics_http").index("verify -Pintegration"), block("analytics_http").index("DDIP_CONTENT_HTTP_FIXTURES"))
 
+    def test_combined_demo_native_checks_are_mandatory(self):
+        analytics = block("analytics_http")
+        self.assertIn("python -I -B -m unittest discover -s scripts/tests -p test_demo_reliability_native.py -v", analytics)
+        self.assertIn("python -I -B -m unittest discover -s scripts/tests -p test_demo_content_native.py -v", analytics)
+        self.assertLess(analytics.index("test_demo_content_native.py"), analytics.index("verify -Pintegration"))
+        self.assertIn("python3 -I -B -m unittest discover -s scripts/tests -p test_local_operations_demo.py -v", WORKFLOW)
+
     def test_dependency_table(self):
         cases = [
             ("README.md", ()), ("docs/operations/ci.md", ()),
