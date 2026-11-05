@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -22,7 +23,7 @@ import tools.jackson.databind.json.JsonMapper;
 import static platform.contentapi.ApiFailure.Code.*;
 import static platform.contentapi.ContentCatalogResponse.*;
 
-/** A fixed projection of the independently verified native Content catalog. No SQL or cache. */
+/** Fixed projections of independently verified native Content reports. No SQL or cache. */
 @AnalyticsRole
 @Component
 public class ContentAnalyticsAdapter {
@@ -59,19 +60,33 @@ public class ContentAnalyticsAdapter {
     }
 
     public ContentCatalogResponse catalog(ContentCatalogQuery query) {
+        return execute("catalog", () -> decode(runner.run(command(query), script.getParent()), query));
+    }
+
+    public ContentDiscoveryResponse discovery(ContentReportQuery query) {
+        require(query.report() == ContentReportQuery.Report.DISCOVERY);
+        return execute(query.report().nativeName(), () -> decodeDiscovery(runner.run(command(query), script.getParent()), query));
+    }
+
+    public ContentCoverageResponse coverage(ContentReportQuery query) {
+        require(query.report() == ContentReportQuery.Report.COVERAGE);
+        return execute(query.report().nativeName(), () -> decodeCoverage(runner.run(command(query), script.getParent()), query));
+    }
+
+    private <T> T execute(String report, Supplier<T> action) {
         long start = System.nanoTime();
         String outcome = "OK", correlation = UUID.randomUUID().toString();
         try {
             if (properties.publication().isEmpty()) throw new ApiFailure(PUBLICATION_UNAVAILABLE);
             if (executable == null || !Files.isExecutable(executable) || !Files.isRegularFile(script)
                     || !Files.isReadable(script)) throw new ApiFailure(ANALYTICS_RUNTIME_UNAVAILABLE);
-            return decode(runner.run(command(query), script.getParent()), query);
+            return action.get();
         } catch (ApiFailure failure) {
             outcome = failure.code().name(); throw failure;
         } catch (RuntimeException ignored) {
             outcome = ANALYTICS_EXECUTION_FAILED.name(); throw new ApiFailure(ANALYTICS_EXECUTION_FAILED);
         } finally {
-            LOG.info("report=content_catalog executionId={} durationMs={} outcome={}", correlation,
+            LOG.info("report=content_{} executionId={} durationMs={} outcome={}", report, correlation,
                     (System.nanoTime() - start) / 1_000_000, outcome);
         }
     }
@@ -85,6 +100,12 @@ public class ContentAnalyticsAdapter {
         option(args, "source", query.sourceId()); option(args, "start-date", query.from()); option(args, "end-date", query.to());
         option(args, "reference-status", query.referenceStatus()); option(args, "publisher-category", query.publisherCategory());
         option(args, "declared-language", query.declaredLanguage()); option(args, "country-code", query.countryCode());
+        return List.copyOf(args);
+    }
+    List<String> command(ContentReportQuery query) {
+        var args = new ArrayList<>(command(new ContentCatalogQuery(query.sourceId(), query.from(), query.to(),
+                null, null, null, null, query.limit(), query.offset())));
+        args.set(args.indexOf("--report") + 1, query.report().nativeName());
         return List.copyOf(args);
     }
     private static void option(List<String> args, String name, String value) {
@@ -175,6 +196,123 @@ public class ContentAnalyticsAdapter {
                     new Meta(mapped.size(), query.limit(), query.offset(), more.booleanValue()));
         } catch (Exception ignored) { throw new ApiFailure(ANALYTICS_RESPONSE_INVALID); }
     }
+    private record ReportEnvelope(JsonNode body, String gold, Reference reference, Meta meta) { }
+    private ReportEnvelope reportEnvelope(BoundedProcessRunner.Result result, ContentReportQuery query) throws Exception {
+        String text = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(result.stdout())).toString();
+        JsonNode body = JSON.readTree(text);
+        var expected = new HashSet<>(ENVELOPE);
+        if (query.report() == ContentReportQuery.Report.COVERAGE) expected.add("totals");
+        fields(body, expected);
+        require("OK".equals(string(body.get("status"))) && query.report().nativeName().equals(string(body.get("report")))
+                && "content-intelligence".equals(string(body.get("product_id")))
+                && properties.publication().equals(fingerprint(body.get("product_fingerprint")))
+                && Integer.toString(query.limit()).equals(decimal(body.get("limit")))
+                && Integer.toString(query.offset()).equals(decimal(body.get("offset"))));
+        String gold = fingerprint(body.get("gold_fingerprint"));
+        var filter = body.get("filters");
+        fields(filter, query.report() == ContentReportQuery.Report.DISCOVERY ? Set.of("source", "start_date", "end_date") : Set.of("source"));
+        require(Objects.equals(query.sourceId(), nullable(filter.get("source"))));
+        if (query.report() == ContentReportQuery.Report.DISCOVERY) require(Objects.equals(query.from(), nullable(filter.get("start_date")))
+                && Objects.equals(query.to(), nullable(filter.get("end_date"))));
+        var ref = body.get("reference");
+        fields(ref, Set.of("reference_id", "revision", "snapshot_fingerprint"));
+        var reference = new Reference(identifier(ref.get("reference_id"), 64), identifier(ref.get("revision"), 32),
+                fingerprint(ref.get("snapshot_fingerprint")));
+        var rows = body.get("rows"); var more = body.get("has_more");
+        require(rows.isArray() && rows.size() <= query.limit() && more.isBoolean()
+                && (!more.booleanValue() || rows.size() == query.limit()));
+        return new ReportEnvelope(body, gold, reference, new Meta(rows.size(), query.limit(), query.offset(), more.booleanValue()));
+    }
+
+    ContentDiscoveryResponse decodeDiscovery(BoundedProcessRunner.Result result, ContentReportQuery query) {
+        if (result.exitCode() != 0) throw new ApiFailure(ANALYTICS_EXECUTION_FAILED);
+        try {
+            require(query.report() == ContentReportQuery.Report.DISCOVERY);
+            var envelope = reportEnvelope(result, query);
+            var mapped = new ArrayList<ContentDiscoveryResponse.Row>();
+            String previousSource = null, previousDate = null; boolean previousMissing = false;
+            for (var row : envelope.body().get("rows")) {
+                fields(row, Set.of("source_id", "discovery_date", "discovered_article_count", "articles_missing_reference_count"));
+                String source = identifier(row.get("source_id"), 128), date = string(row.get("discovery_date"));
+                ContentCatalogQuery.date(date);
+                require((query.sourceId() == null || source.equals(query.sourceId()))
+                        && (query.from() == null || date.compareTo(query.from()) >= 0)
+                        && (query.to() == null || date.compareTo(query.to()) <= 0)
+                        && (previousSource == null || previousSource.compareTo(source) < 0
+                            || previousSource.equals(source) && previousDate.compareTo(date) < 0));
+                String count = decimal(row.get("discovered_article_count")), missing = decimal(row.get("articles_missing_reference_count"));
+                boolean sourceMissing = missing.equals(count);
+                require(Long.parseLong(count) > 0 && (missing.equals("0") || sourceMissing)
+                        && (!source.equals(previousSource) || previousMissing == sourceMissing));
+                mapped.add(new ContentDiscoveryResponse.Row(source, date, count, missing));
+                previousSource = source; previousDate = date; previousMissing = sourceMissing;
+            }
+            return new ContentDiscoveryResponse(properties.publication(), "content-intelligence", envelope.gold(), envelope.reference(),
+                    new ContentDiscoveryResponse.Filters(query.sourceId(), query.from(), query.to()), List.copyOf(mapped), envelope.meta());
+        } catch (Exception ignored) { throw new ApiFailure(ANALYTICS_RESPONSE_INVALID); }
+    }
+
+    private static final List<String> COVERAGE_TOTALS = List.of("article_count", "matched_article_count", "missing_article_count",
+            "catalog_source_count", "matched_source_count", "missing_source_count", "matched_sources_missing_optional_attributes_count",
+            "reference_source_count", "unused_reference_source_count");
+    private static final List<String> OPTIONAL_ATTRIBUTES = List.of("publisher_category", "declared_language", "country_code");
+    ContentCoverageResponse decodeCoverage(BoundedProcessRunner.Result result, ContentReportQuery query) {
+        if (result.exitCode() != 0) throw new ApiFailure(ANALYTICS_EXECUTION_FAILED);
+        try {
+            require(query.report() == ContentReportQuery.Report.COVERAGE);
+            var envelope = reportEnvelope(result, query); var body = envelope.body();
+            fields(body.get("totals"), Set.copyOf(COVERAGE_TOTALS));
+            var counts = new ArrayList<String>(); var totals = new long[COVERAGE_TOTALS.size()]; var pageTotals = new long[totals.length];
+            for (int i = 0; i < totals.length; i++) {
+                String count = decimal(body.get("totals").get(COVERAGE_TOTALS.get(i))); counts.add(count); totals[i] = Long.parseLong(count);
+            }
+            require(totals[0] == Math.addExact(totals[1], totals[2]) && totals[3] == Math.addExact(totals[4], totals[5])
+                    && totals[7] == Math.addExact(totals[4], totals[8]) && totals[6] <= totals[4]
+                    && totals[4] <= totals[1] && totals[5] <= totals[2]
+                    && (totals[4] == 0) == (totals[1] == 0) && (totals[5] == 0) == (totals[2] == 0));
+            long unionSize = Math.addExact(totals[3], totals[8]);
+            require((query.sourceId() == null || unionSize <= 1)
+                    && envelope.meta().returned() == Math.min(query.limit(), Math.max(0L, unionSize - query.offset()))
+                    && envelope.meta().hasMore() == (unionSize > (long) query.offset() + envelope.meta().returned()));
+            var mapped = new ArrayList<ContentCoverageResponse.Row>(); String previous = null;
+            for (var row : body.get("rows")) {
+                fields(row, Set.of("source_id", "reference_status", "reference_usage", "publisher_name", "publisher_category",
+                        "declared_language", "country_code", "article_count", "articles_missing_reference_count", "missing_optional_attributes"));
+                String source = identifier(row.get("source_id"), 128), status = string(row.get("reference_status")), usage = string(row.get("reference_usage"));
+                require((query.sourceId() == null || query.sourceId().equals(source)) && (previous == null || previous.compareTo(source) < 0));
+                String name = nullable(row.get("publisher_name")), category = nullable(row.get("publisher_category")),
+                        language = nullable(row.get("declared_language")), country = nullable(row.get("country_code"));
+                String count = decimal(row.get("article_count")), missing = decimal(row.get("articles_missing_reference_count"));
+                long articles = Long.parseLong(count), absent = Long.parseLong(missing);
+                require(ContentCatalogQuery.optional(category, ContentCatalogQuery.CATEGORIES)
+                        && ContentCatalogQuery.optional(language, ContentCatalogQuery.LANGUAGES)
+                        && ContentCatalogQuery.optional(country, ContentCatalogQuery.COUNTRIES));
+                boolean matched = status.equals("MATCHED");
+                require(matched ? scalarName(name) && absent == 0 && (usage.equals("USED") && articles > 0 || usage.equals("UNUSED") && articles == 0)
+                        : status.equals("MISSING") && usage.equals("ABSENT") && articles > 0 && absent == articles
+                            && name == null && category == null && language == null && country == null);
+                var missingNode = row.get("missing_optional_attributes"); require(missingNode.isArray());
+                var optional = new ArrayList<String>(); for (var attribute : missingNode) optional.add(string(attribute));
+                var expected = new ArrayList<String>();
+                if (matched) for (String attribute : OPTIONAL_ATTRIBUTES) if (row.get(attribute).isNull()) expected.add(attribute);
+                require(optional.equals(expected));
+                pageTotals[0] = Math.addExact(pageTotals[0], articles);
+                pageTotals[matched ? 1 : 2] = Math.addExact(pageTotals[matched ? 1 : 2], articles);
+                if (articles > 0) { pageTotals[3]++; pageTotals[matched ? 4 : 5]++; }
+                if (matched) { pageTotals[7]++; if (articles == 0) pageTotals[8]++; else if (!optional.isEmpty()) pageTotals[6]++; }
+                mapped.add(new ContentCoverageResponse.Row(source, status, usage, name, category, language, country, count, missing, List.copyOf(optional)));
+                previous = source;
+            }
+            for (int i = 0; i < totals.length; i++) require(pageTotals[i] <= totals[i]
+                    && (query.offset() != 0 || envelope.meta().hasMore() || pageTotals[i] == totals[i]));
+            var values = new ContentCoverageResponse.Totals(counts.get(0), counts.get(1), counts.get(2), counts.get(3), counts.get(4),
+                    counts.get(5), counts.get(6), counts.get(7), counts.get(8));
+            return new ContentCoverageResponse(properties.publication(), "content-intelligence", envelope.gold(), envelope.reference(),
+                    new ContentCoverageResponse.Filters(query.sourceId()), List.copyOf(mapped), values, envelope.meta());
+        } catch (Exception ignored) { throw new ApiFailure(ANALYTICS_RESPONSE_INVALID); }
+    }
+
     private static boolean scalarName(String text) {
         if (text == null || text.isEmpty() || text.codePointCount(0, text.length()) > 200) return false;
         var whitespace = Set.of(9, 10, 11, 12, 13, 32, 133, 160, 5760, 8192, 8193, 8194, 8195, 8196,

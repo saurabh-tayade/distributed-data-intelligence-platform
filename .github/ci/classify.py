@@ -36,6 +36,9 @@ def area(path):
     if (path in READMES or path in HYGIENE or
             path.startswith("docs/") and (PurePosixPath(path).suffix in DOC_SUFFIXES or name == ".gitkeep")):
         return "documentation", frozenset()
+    if path in {"frontend/src/contentApi.ts", "frontend/src/api.ts", "frontend/src/contentNativeParity.test.ts"}:
+        # Content parser parity consumes native fixtures in the HTTP job.
+        return "frontend", frozenset({"analytics_http"})
     if path.startswith("frontend/"):
         return "frontend", frozenset()
     if path == "ingestion/src/test/java/platform/ingestion/managed/BronzeFixture.java":

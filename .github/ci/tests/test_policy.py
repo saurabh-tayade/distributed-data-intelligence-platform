@@ -64,6 +64,9 @@ class ClassificationTests(unittest.TestCase):
             ("docs/architecture/gold-contracts.md", ()), ("docs/visuals/diagram.svg", ()),
             ("AGENTS.md", ()), (".gitignore", ()), (".markdownlint-cli2.mjs", ()),
             ("tests/.gitkeep", ()), ("frontend/README.md", ()),
+            ("frontend/src/contentApi.ts", ("analytics_http",)),
+            ("frontend/src/api.ts", ("analytics_http",)),
+            ("frontend/src/contentNativeParity.test.ts", ("analytics_http",)),
             ("frontend/src/App.tsx", ()), ("frontend/src/test/fixtures.ts", ()),
             ("ingestion/src/test/java/ExampleTest.java", ("ingestion",)),
             ("ingestion/src/test/java/platform/ingestion/managed/BronzeFixture.java", ("ingestion", "content_postgres")),
@@ -419,6 +422,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(POSTGRES_WORKFLOW.count("    services:"), 1)
         self.assertIn("mvn -B -ntp -f services/content-api/pom.xml verify -Ppostgres", POSTGRES_WORKFLOW)
         self.assertIn('mvn -B -ntp -f services/content-api/pom.xml verify -Pintegration -Danalytics.python="$(command -v python)"', block("analytics_http"))
+        self.assertIn("npm ci --prefix frontend", block("analytics_http"))
+        self.assertIn("DDIP_CONTENT_HTTP_FIXTURES=../services/content-api/target/content-fixtures/http-reports.json npm --prefix frontend test -- contentNativeParity.test.ts", block("analytics_http"))
         self.assertIn("python -m unittest discover -s processing/tests -v", block("processing_python"))
         self.assertIn("mvn -B -ntp -f services/api/pom.xml verify", block("analytics_jdbc"))
         for job in JOBS[1:]:

@@ -31,7 +31,7 @@ export function App() {
   const analyticsArea = route === 'analytics' || route === 'content' || route === 'reliability';
   const previousRoute = useRef(route);
   const section = route === 'analytics' ? analyticsViews.find((item) => item.id === model.view)!.label
-    : route === 'content' ? 'Enriched Content catalog' : route === 'reliability' ? 'Reliability request windows' : source ? 'Source detail' : route === 'source-new' ? 'Register source' : submission ? 'Submit Reliability Run' : inspection ? 'Run detail' : executions ? 'Executions' : route === 'sources' ? 'Sources' : 'Page not found';
+    : route === 'content' ? content.report === 'catalog' ? 'Enriched Content catalog' : content.report === 'source_discovery_daily' ? 'Daily source discovery' : 'Publisher reference coverage' : route === 'reliability' ? 'Reliability request windows' : source ? 'Source detail' : route === 'source-new' ? 'Register source' : submission ? 'Submit Reliability Run' : inspection ? 'Run detail' : executions ? 'Executions' : route === 'sources' ? 'Sources' : 'Page not found';
   useEffect(() => {
     document.title = `${section} | DDIP`;
   }, [section]);

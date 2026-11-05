@@ -16,4 +16,14 @@ public class ContentCatalogController {
     public ResponseEntity<ContentCatalogResponse> catalog(@RequestParam MultiValueMap<String, String> parameters) {
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(adapter.catalog(ContentCatalogQuery.from(parameters)));
     }
+    @GetMapping("/source-discovery-daily")
+    public ResponseEntity<ContentDiscoveryResponse> discovery(@RequestParam MultiValueMap<String, String> parameters) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(adapter.discovery(
+                ContentReportQuery.from(parameters, ContentReportQuery.Report.DISCOVERY)));
+    }
+    @GetMapping("/reference-coverage")
+    public ResponseEntity<ContentCoverageResponse> coverage(@RequestParam MultiValueMap<String, String> parameters) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(adapter.coverage(
+                ContentReportQuery.from(parameters, ContentReportQuery.Report.COVERAGE)));
+    }
 }

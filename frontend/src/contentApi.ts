@@ -34,12 +34,12 @@ export interface ContentResponse extends ContentIdentity {
 const messages: Record<ErrorKind, string> = {
   'publication-changed': 'The Content publication, base Gold selection or publisher reference has changed. Reload the dashboard to start a new session. Results are never combined across selections.',
   'invalid-argument': 'Check the supported Content filters and try again.',
-  'invalid-response': 'The API returned data that does not match the Content catalog contract. No results are displayed.',
-  network: 'Cannot reach the Content catalog API. Check the local API and development proxy, then try again.',
-  unavailable: 'Content catalog is unavailable. Check that the API has a completed Content publication and its Gold and publisher-reference dependencies.',
-  capacity: 'The Content catalog service is busy. Wait a moment, then try again.',
-  timeout: 'The Content catalog request took too long. Please try again.',
-  execution: 'The Content catalog request could not be completed. Please try again.',
+  'invalid-response': 'The API returned data that does not match the Content report contract. No results are displayed.',
+  network: 'Cannot reach the Content API. Check the local API and development proxy, then try again.',
+  unavailable: 'Content reports are unavailable. Check that the API has a completed Content publication and its Gold and publisher-reference dependencies.',
+  capacity: 'The Content report service is busy. Wait a moment, then try again.',
+  timeout: 'The Content report request took too long. Please try again.',
+  execution: 'The Content report request could not be completed. Please try again.',
 };
 export class ContentError extends Error {
   constructor(public readonly kind: ErrorKind) { super(messages[kind]); this.name = 'ContentError'; }
@@ -139,5 +139,134 @@ export async function fetchContentCatalog(query: ContentQuery, signal: AbortSign
   try {
     need(response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() === 'application/json');
     return parseContentCatalog(await response.json(), query);
+  } catch (error) { if (signal.aborted) throw error; throw new ContentError('invalid-response'); }
+}
+
+export type ContentReport = 'catalog' | 'source_discovery_daily' | 'reference_coverage';
+export interface ContentDailyRow {
+  sourceId: string; discoveryDate: string; discoveredArticleCount: string; articlesMissingReferenceCount: string;
+}
+export interface ContentCoverageRow {
+  sourceId: string; referenceStatus: 'MATCHED' | 'MISSING'; referenceUsage: 'USED' | 'UNUSED' | 'ABSENT';
+  publisherName: string | null; publisherCategory: ContentRow['publisherCategory'];
+  declaredLanguage: ContentRow['declaredLanguage']; countryCode: ContentRow['countryCode'];
+  articleCount: string; articlesMissingReferenceCount: string;
+  missingOptionalAttributes: ('publisher_category' | 'declared_language' | 'country_code')[];
+}
+export const CONTENT_COVERAGE_TOTALS = ['articleCount', 'matchedArticleCount', 'missingArticleCount', 'catalogSourceCount', 'matchedSourceCount', 'missingSourceCount', 'matchedSourcesMissingOptionalAttributesCount', 'referenceSourceCount', 'unusedReferenceSourceCount'] as const;
+export type ContentCoverageTotals = Record<typeof CONTENT_COVERAGE_TOTALS[number], string>;
+export interface ContentDailyResponse extends ContentIdentity {
+  productId: 'content-intelligence'; filters: { sourceId: string | null; from: string | null; to: string | null };
+  data: ContentDailyRow[]; meta: ContentResponse['meta'];
+}
+export interface ContentCoverageResponse extends ContentIdentity {
+  productId: 'content-intelligence'; filters: { sourceId: string | null };
+  data: ContentCoverageRow[]; totals: ContentCoverageTotals; meta: ContentResponse['meta'];
+}
+export type ContentReportResponse = ContentResponse | ContentDailyResponse | ContentCoverageResponse;
+const REPORT_FILTERS = { catalog: FILTERS, source_discovery_daily: ['sourceId', 'from', 'to'], reference_coverage: ['sourceId'] } as const;
+export function contentReportQueryError(report: ContentReport, query: unknown): string | null {
+  if (!Object.hasOwn(REPORT_FILTERS, report)) return 'Choose a supported Content report.';
+  const allowed: readonly string[] = [...REPORT_FILTERS[report], 'limit', 'offset'];
+  if (!isRecord(query) || Reflect.ownKeys(query).some(key => typeof key !== 'string' || !allowed.includes(key))) return 'Use only supported filters for this Content report.';
+  return contentQueryError(query);
+}
+export function contentReportQueryParameters(report: ContentReport, query: ContentQuery): URLSearchParams {
+  if (contentReportQueryError(report, query)) throw new ContentError('invalid-argument');
+  return contentQueryParameters({ ...query, limit: query.limit ?? (report === 'catalog' ? 10 : 100) });
+}
+function reportEnvelope(value: unknown, report: Exclude<ContentReport, 'catalog'>, query: ContentQuery): asserts value is Record<string, unknown> & { data: unknown[]; reference: ContentIdentity['reference'] } {
+  contentReportQueryParameters(report, query);
+  record(value); fields(value, ['publication', 'productId', 'goldPublication', 'reference', 'filters', 'data', 'meta', ...(report === 'reference_coverage' ? ['totals'] : [])]);
+  need(matches(value.publication, HEX) && matches(value.goldPublication, HEX) && value.productId === 'content-intelligence');
+  record(value.reference); fields(value.reference, ['referenceId', 'revision', 'snapshotFingerprint']);
+  need(matches(value.reference.referenceId, /^[a-z0-9][a-z0-9_-]{0,63}$/) && matches(value.reference.revision, /^[a-z0-9][a-z0-9_-]{0,31}$/) && matches(value.reference.snapshotFingerprint, HEX));
+  record(value.filters); fields(value.filters, REPORT_FILTERS[report]);
+  for (const field of REPORT_FILTERS[report]) need(value.filters[field] === (query[field] ?? null));
+  record(value.meta); fields(value.meta, ['returned', 'limit', 'offset', 'hasMore']);
+  need(Array.isArray(value.data) && value.data.length <= (query.limit ?? 100));
+  need(value.meta.limit === (query.limit ?? 100) && value.meta.offset === (query.offset ?? 0) && value.meta.returned === value.data.length);
+  need(typeof value.meta.hasMore === 'boolean' && (!value.meta.hasMore || value.data.length === value.meta.limit));
+}
+function metric(value: unknown): bigint {
+  need(matches(value, /^(0|[1-9][0-9]{0,18})$/));
+  const count = BigInt(value); need(count <= 9223372036854775807n); return count;
+}
+export function parseContentDiscoveryDaily(value: unknown, query: ContentQuery): ContentDailyResponse {
+  reportEnvelope(value, 'source_discovery_daily', query);
+  let previous = '';
+  const missingBySource = new Map<string, boolean>();
+  for (const row of value.data) {
+    record(row); fields(row, ['sourceId', 'discoveryDate', 'discoveredArticleCount', 'articlesMissingReferenceCount']);
+    need(matches(row.sourceId, SOURCE) && date(row.discoveryDate));
+    need(!query.sourceId || row.sourceId === query.sourceId);
+    need((!query.from || row.discoveryDate >= query.from) && (!query.to || row.discoveryDate <= query.to));
+    const key = `${row.sourceId}\0${row.discoveryDate}`; need(key > previous); previous = key;
+    const count = metric(row.discoveredArticleCount), missing = metric(row.articlesMissingReferenceCount);
+    need(count > 0n && (missing === 0n || missing === count));
+    need(!missingBySource.has(row.sourceId) || missingBySource.get(row.sourceId) === (missing > 0n));
+    missingBySource.set(row.sourceId, missing > 0n);
+  }
+  return value as unknown as ContentDailyResponse;
+}
+export function parseContentReferenceCoverage(value: unknown, query: ContentQuery): ContentCoverageResponse {
+  reportEnvelope(value, 'reference_coverage', query);
+  record(value.totals); fields(value.totals, CONTENT_COVERAGE_TOTALS);
+  const totals = Object.fromEntries(CONTENT_COVERAGE_TOTALS.map(key => [key, metric(value.totals && (value.totals as Record<string, unknown>)[key])])) as Record<typeof CONTENT_COVERAGE_TOTALS[number], bigint>;
+  need(totals.articleCount === totals.matchedArticleCount + totals.missingArticleCount);
+  need(totals.catalogSourceCount === totals.matchedSourceCount + totals.missingSourceCount);
+  need(totals.referenceSourceCount === totals.matchedSourceCount + totals.unusedReferenceSourceCount);
+  need(totals.matchedSourcesMissingOptionalAttributesCount <= totals.matchedSourceCount);
+  need(totals.matchedArticleCount >= totals.matchedSourceCount && totals.missingArticleCount >= totals.missingSourceCount);
+  need((totals.matchedArticleCount === 0n) === (totals.matchedSourceCount === 0n));
+  need((totals.missingArticleCount === 0n) === (totals.missingSourceCount === 0n));
+  const domain = totals.catalogSourceCount + totals.unusedReferenceSourceCount;
+  if (query.sourceId) need(domain <= 1n);
+  const offset = BigInt(query.offset ?? 0), limit = BigInt(query.limit ?? 100);
+  const remaining = domain > offset ? domain - offset : 0n;
+  need(BigInt(value.data.length) === (remaining < limit ? remaining : limit));
+  record(value.meta); need(value.meta.hasMore === (remaining > limit));
+  const sums = Object.fromEntries(CONTENT_COVERAGE_TOTALS.map(key => [key, 0n])) as typeof totals;
+  let previous = '';
+  for (const row of value.data) {
+    record(row); fields(row, ['sourceId', 'referenceStatus', 'referenceUsage', 'publisherName', 'publisherCategory', 'declaredLanguage', 'countryCode', 'articleCount', 'articlesMissingReferenceCount', 'missingOptionalAttributes']);
+    need(matches(row.sourceId, SOURCE) && row.sourceId > previous && (!query.sourceId || row.sourceId === query.sourceId)); previous = row.sourceId;
+    const count = metric(row.articleCount), missing = metric(row.articlesMissingReferenceCount);
+    need(['USED', 'UNUSED', 'ABSENT'].includes(String(row.referenceUsage)));
+    const absent = row.referenceUsage === 'ABSENT', used = row.referenceUsage === 'USED';
+    need(row.referenceStatus === (absent ? 'MISSING' : 'MATCHED'));
+    need(row.referenceUsage === 'UNUSED' ? count === 0n : count > 0n);
+    need(missing === (absent ? count : 0n));
+    for (const key of ['publisherCategory', 'declaredLanguage', 'countryCode'] as const) need(row[key] === null || (CONTENT_VOCABULARY[key] as readonly unknown[]).includes(row[key]));
+    need(absent ? ['publisherName', 'publisherCategory', 'declaredLanguage', 'countryCode'].every(key => row[key] === null) : scalarName(row.publisherName));
+    const optional = [['publisherCategory', 'publisher_category'], ['declaredLanguage', 'declared_language'], ['countryCode', 'country_code']] as const;
+    const expected = absent ? [] : optional.filter(([key]) => row[key] === null).map(([, name]) => name);
+    need(Array.isArray(row.missingOptionalAttributes) && row.missingOptionalAttributes.length === expected.length && expected.every((name, i) => (row.missingOptionalAttributes as unknown[])[i] === name));
+    sums.articleCount += count; sums.matchedArticleCount += absent ? 0n : count; sums.missingArticleCount += missing;
+    sums.catalogSourceCount += count > 0n ? 1n : 0n; sums.matchedSourceCount += used ? 1n : 0n; sums.missingSourceCount += absent ? 1n : 0n;
+    sums.matchedSourcesMissingOptionalAttributesCount += used && expected.length ? 1n : 0n;
+    sums.referenceSourceCount += absent ? 0n : 1n; sums.unusedReferenceSourceCount += row.referenceUsage === 'UNUSED' ? 1n : 0n;
+  }
+  for (const key of CONTENT_COVERAGE_TOTALS) need(offset === 0n && !value.meta.hasMore ? sums[key] === totals[key] : sums[key] <= totals[key]);
+  return value as unknown as ContentCoverageResponse;
+}
+export async function fetchContentReport(report: ContentReport, query: ContentQuery, signal: AbortSignal): Promise<ContentReportResponse> {
+  if (report === 'catalog') return fetchContentCatalog(query, signal);
+  const search = contentReportQueryParameters(report, query);
+  const path = report === 'source_discovery_daily' ? 'source-discovery-daily' : 'reference-coverage';
+  let response: Response;
+  try { response = await fetch(`/api/v1/content/${path}?${search}`, { signal, cache: 'no-store', credentials: 'omit', headers: { Accept: 'application/json' } }); }
+  catch (error) { if (signal.aborted) throw error; throw new ContentError('network'); }
+  if (response.status !== 200) {
+    if (response.status === 503) {
+      let body: unknown; try { body = await response.json(); } catch { /* A proxy may return non-JSON. */ }
+      throw new ContentError(isRecord(body) && body.code === 'ANALYTICS_CAPACITY_EXCEEDED' ? 'capacity' : 'unavailable');
+    }
+    throw new ContentError(response.status === 400 ? 'invalid-argument' : response.status === 504 ? 'timeout' : 'execution');
+  }
+  try {
+    need(response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() === 'application/json');
+    const value: unknown = await response.json();
+    return report === 'source_discovery_daily' ? parseContentDiscoveryDaily(value, query) : parseContentReferenceCoverage(value, query);
   } catch (error) { if (signal.aborted) throw error; throw new ContentError('invalid-response'); }
 }

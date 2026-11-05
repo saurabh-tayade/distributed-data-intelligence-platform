@@ -809,3 +809,19 @@ the existing HTTP(S)-only safe-link checks and never fetches article resources.
 Deterministic contract and UI coverage lives in `src/contentApi.test.ts` and
 `src/ContentCatalog.test.tsx`. Browser walkthrough and visual polish remain separate
 from this bounded implementation.
+
+### Daily discovery and reference coverage
+
+The Content workspace now has fixed report buttons for catalog, daily discovery and
+reference coverage. Switching reports resets filters/offset and cancels stale work without
+resetting the Content identity pin. Discovery supports exact source and inclusive UTC dates;
+coverage supports exact source only. Both use plain-text tables and exact decimal-string
+counts. Coverage shows all nine native totals for the entire source-filtered domain before
+pagination, including on a valid empty page; UNUSED references are distinct from ABSENT ones.
+
+`src/contentReportsApi.test.ts` and `src/ContentReports.test.tsx` cover malformed envelopes,
+whole-domain totals, pagination, report races, navigation interruptions and all five identity
+changes. `src/contentNativeParity.test.ts` validates all generated native-backed HTTP scenarios
+when `DDIP_CONTENT_HTTP_FIXTURES` is supplied; the analytics HTTP CI job supplies it. The
+[report contract](../docs/architecture/content-discovery-api.md) documents reproduction and
+scope. Report selection is mounted-session state, not an added browser-history route.

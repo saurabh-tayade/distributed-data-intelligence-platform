@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -92,10 +93,16 @@ class ContentApiIT {
     }
 
     private static HttpResponse<String> get(ConfigurableApplicationContext context, String query) throws Exception {
+        return get(context, "catalog", query);
+    }
+
+    private static HttpResponse<String> get(ConfigurableApplicationContext context, String report, String query) throws Exception {
+        String endpoint = switch (report) { case "source_discovery_daily" -> "source-discovery-daily";
+            case "reference_coverage" -> "reference-coverage"; default -> "catalog"; };
         int port = ((WebServerApplicationContext) context).getWebServer().getPort();
         try (var client = HttpClient.newHttpClient()) {
             return client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port
-                            + "/api/v1/content/catalog" + query)).timeout(Duration.ofSeconds(40))
+                            + "/api/v1/content/" + endpoint + query)).timeout(Duration.ofSeconds(40))
                     .GET().build(), HttpResponse.BodyHandlers.ofString());
         }
     }
@@ -134,10 +141,20 @@ class ContentApiIT {
         var filters = rest.putObject("filters");
         for (var field : nativeEnvelope.path("filters").properties())
             filters.set(httpName(field.getKey()), field.getValue());
+        Set<String> expectedFields = switch (nativeEnvelope.path("report").asString()) {
+            case "source_discovery_daily" -> Set.of("source_id", "discovery_date", "discovered_article_count", "articles_missing_reference_count");
+            case "reference_coverage" -> Set.of("source_id", "reference_status", "reference_usage", "publisher_name", "publisher_category", "declared_language", "country_code", "article_count", "articles_missing_reference_count", "missing_optional_attributes");
+            default -> Set.copyOf(ROW_FIELDS);
+        };
         var rows = rest.putArray("data");
         for (JsonNode nativeRow : nativeEnvelope.path("rows")) {
+            assertEquals(expectedFields, nativeRow.properties().stream().map(Map.Entry::getKey).collect(java.util.stream.Collectors.toSet()));
             var row = rows.addObject();
-            for (String name : ROW_FIELDS) row.set(camel(name), nativeRow.get(name));
+            for (var field : nativeRow.properties()) row.set(camel(field.getKey()), field.getValue());
+        }
+        if (nativeEnvelope.has("totals")) {
+            var totals = rest.putObject("totals");
+            for (var field : nativeEnvelope.path("totals").properties()) totals.set(camel(field.getKey()), field.getValue());
         }
         rest.putObject("meta").put("returned", rows.size())
                 .put("limit", Integer.parseInt(nativeEnvelope.path("limit").asString()))
@@ -155,21 +172,27 @@ class ContentApiIT {
                     int seen = 0;
                     for (JsonNode scenario : reference.path("scenarios")) {
                         if (!kind.equals(scenario.path("kind").asString())) continue;
-                        var response = get(context, query(scenario.path("options")));
+                        String report = scenario.path("report").asString();
+                        var response = get(context, report, query(scenario.path("options")));
                         assertEquals(200, response.statusCode(), scenario.path("name").asString() + ": " + response.body());
                         JsonNode actual = JSON.readTree(response.body());
                         assertEquals(restEnvelope(scenario.path("envelope")), actual, scenario.path("name").asString());
                         for (JsonNode row : actual.path("data")) {
-                            assertTrue(row.path("observationCount").isString());
-                            assertTrue(row.path("distinctIngestionCount").isString());
-                            assertTrue(row.path("qualityWarnings").isArray());
+                            if (report.equals("catalog")) {
+                                assertTrue(row.path("observationCount").isString());
+                                assertTrue(row.path("distinctIngestionCount").isString());
+                                assertTrue(row.path("qualityWarnings").isArray());
+                            } else {
+                                assertTrue(row.path(report.equals("reference_coverage") ? "articleCount" : "discoveredArticleCount").isString());
+                                assertTrue(row.path("articlesMissingReferenceCount").isString());
+                            }
                         }
                         for (String number : List.of("returned", "limit", "offset"))
                             assertTrue(actual.path("meta").path(number).isIntegralNumber());
                         assertTrue(actual.path("meta").path("hasMore").isBoolean());
                         seen++;
                     }
-                    assertEquals(20, seen, "Do not silently omit a parity scenario");
+                    assertEquals(50, seen, "Do not silently omit a parity scenario");
                     assertEquals(100, JSON.readTree(get(context, "").body()).path("meta").path("limit").asInt());
                 }
             }));
@@ -183,9 +206,11 @@ class ContentApiIT {
         for (JsonNode failure : reference.path("failures")) {
             tests.add(DynamicTest.dynamicTest("Safe native failure: " + failure.path("case").asString(), () -> {
                 try (var context = start(fixtures.resolve(failure.path("root").asString()), failure.path("publication").asString(), processing)) {
-                    assertError(get(context, "?limit=1"), 500, "ANALYTICS_EXECUTION_FAILED");
-                    assertError(get(context, "?sourceId=absent"), 500, "ANALYTICS_EXECUTION_FAILED");
-                    assertError(get(context, "?offset=1000000"), 500, "ANALYTICS_EXECUTION_FAILED");
+                    for (String report : List.of("catalog", "source_discovery_daily", "reference_coverage")) {
+                        assertError(get(context, report, "?limit=1"), 500, "ANALYTICS_EXECUTION_FAILED");
+                        assertError(get(context, report, "?sourceId=absent"), 500, "ANALYTICS_EXECUTION_FAILED");
+                        assertError(get(context, report, "?offset=1000000"), 500, "ANALYTICS_EXECUTION_FAILED");
+                    }
                 }
             }));
         }
@@ -207,18 +232,37 @@ class ContentApiIT {
     }
 
     @Test
+    void newReportsRejectUnsupportedHttpFiltersWithoutFallback() throws Exception {
+        try (var context = start(root("standard"), publication("standard"), processing)) {
+            for (String report : List.of("source_discovery_daily", "reference_coverage"))
+                for (String query : List.of("?sourceId=", "?sourceId=alpha&sourceId=beta", "?limit=1&limit=2", "?offset=1000001",
+                        "?referenceStatus=MATCHED", "?publisherCategory=science", "?declaredLanguage=en", "?countryCode=CA",
+                        "?publication=" + publication("standard"), "?root=/private", "?report=catalog", "?sql=SELECT"))
+                    assertError(get(context, report, query), 400, "INVALID_ARGUMENT");
+            for (String query : List.of("?from=2026-10-12", "?to=2026-10-13"))
+                assertError(get(context, "reference_coverage", query), 400, "INVALID_ARGUMENT");
+            for (String query : List.of("?from=2026-02-30", "?from=2026-10-13&to=2026-10-12", "?from=0000-01-01"))
+                assertError(get(context, "source_discovery_daily", query), 400, "INVALID_ARGUMENT");
+        }
+    }
+
+    @Test
     void missingConfiguredPublicationAndRuntimeFailuresNeverReturnRows() throws Exception {
         try (var context = start(root("standard"), "", processing)) {
-            assertError(get(context, ""), 503, "PUBLICATION_UNAVAILABLE");
+            for (String report : List.of("catalog", "source_discovery_daily", "reference_coverage"))
+                assertError(get(context, report, ""), 503, "PUBLICATION_UNAVAILABLE");
         }
         try (var context = start(root("standard"), "0".repeat(64), processing)) {
-            assertError(get(context, ""), 500, "ANALYTICS_EXECUTION_FAILED");
+            for (String report : List.of("catalog", "source_discovery_daily", "reference_coverage"))
+                assertError(get(context, report, ""), 500, "ANALYTICS_EXECUTION_FAILED");
         }
         try (var context = start(root("standard"), publication("standard"), fixtures.resolve("missing native dependency"))) {
-            assertError(get(context, ""), 500, "ANALYTICS_EXECUTION_FAILED");
+            for (String report : List.of("catalog", "source_discovery_daily", "reference_coverage"))
+                assertError(get(context, report, ""), 500, "ANALYTICS_EXECUTION_FAILED");
         }
         try (var context = start(root("standard"), publication("standard"), fixtures.resolve("missing processing directory"))) {
-            assertError(get(context, ""), 503, "ANALYTICS_RUNTIME_UNAVAILABLE");
+            for (String report : List.of("catalog", "source_discovery_daily", "reference_coverage"))
+                assertError(get(context, report, ""), 503, "ANALYTICS_RUNTIME_UNAVAILABLE");
         }
     }
 
