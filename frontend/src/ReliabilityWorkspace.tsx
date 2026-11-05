@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { ReliabilityCoverage } from './ReliabilityCoverage';
+import type { ReliabilityIdentity } from './reliabilityCoverageApi';
 import { RELIABILITY_LABEL, RELIABILITY_MAX_OFFSET, reliabilityQueryError } from './reliabilityApi';
 import type { ReliabilityQuery, ReliabilityResponse } from './reliabilityApi';
 import type { useReliability } from './useReliability';
@@ -7,8 +9,8 @@ import { TableScroll } from './components/ReportParts';
 import { Timestamp } from './components/Timestamp';
 import { formatCount } from './metrics';
 
-function ReliabilityFilters({ onApply }: { onApply: (query: ReliabilityQuery) => void }) {
-  const [draft, setDraft] = useState({ start: '', end: '', serviceId: '', environment: '', limit: 100 });
+function ReliabilityFilters({ onApply, query }: { onApply: (query: ReliabilityQuery) => void; query: ReliabilityQuery | null }) {
+  const [draft, setDraft] = useState({ start: query?.start ?? '', end: query?.end ?? '', serviceId: query?.serviceId ?? '', environment: query?.environment ?? '', limit: query?.limit ?? 100 });
   const [error, setError] = useState<string | null>(null);
   return <form className="reliability-filters source-filters execution-filters" aria-label="Reliability window filters" noValidate onSubmit={(event) => {
     event.preventDefault();
@@ -47,7 +49,7 @@ function ReliabilityFilters({ onApply }: { onApply: (query: ReliabilityQuery) =>
   </form>;
 }
 
-function ReliabilityProvenance({ response }: { response: ReliabilityResponse }) {
+export function ReliabilityProvenance({ response }: { response: ReliabilityIdentity }) {
   return <details className="reliability-provenance"><summary>Publication and service-reference details</summary>
     <dl className="article-detail-grid">
       <div><dt>Product</dt><dd>{response.productId}</dd></div>
@@ -96,16 +98,22 @@ export function ReliabilityWorkspace({ model }: { model: ReturnType<typeof useRe
   const nextOffset = offset + limit;
   return <section aria-label="Reliability analytics">
     <div className="page-heading"><div><p className="eyebrow">ANALYTICS WORKSPACE <span aria-hidden="true">/</span> APPLICATION RELIABILITY</p>
-      <h1>Reliability request windows<span className="title-period">.</span></h1>
-      <p className="page-description">Recorded requests at their native five-minute grain, from one verified Reliability publication.</p></div>
+      <h1>{model.report === 'request-windows' ? 'Reliability request windows' : model.report === 'input-coverage' ? 'Reliability input coverage' : 'Reliability reference coverage'}<span className="title-period">.</span></h1>
+      <p className="page-description">Request windows and coverage reports from one verified Reliability publication.</p></div>
       <span className="workspace-label">Read-only analytics</span></div>
     <p className="scope-notice reliability-origin" role="note"><strong>{RELIABILITY_LABEL}</strong></p>
     <section className="publication-panel" aria-label="Reliability publication">
       <div className="publication-label"><span>RELIABILITY PUBLICATION<span className="publication-note">Pinned independently for this session</span></span></div>
       <div className="publication-value">{publication ? <code aria-label="Reliability publication fingerprint">{publication}</code> : <span>Awaiting a verified Reliability publication</span>}
-        <span className="publication-description">{publication ? 'Snapshot identity · SHA-256' : 'Choose a UTC interval to request verified data.'}</span></div>
+        <span className="publication-description">{publication ? 'Snapshot identity · SHA-256' : blocked ? 'Session invalidated. Reload to verify a new publication.' : 'Choose a report to request verified data.'}</span></div>
     </section>
-    {!blocked && <ReliabilityFilters onApply={model.apply} />}
+    <nav aria-label="Reliability reports" className="pagination-controls">
+      {(['request-windows', 'input-coverage', 'reference-coverage'] as const).map(report => <button key={report} type="button"
+        className="secondary-button" aria-current={model.report === report ? 'page' : undefined} disabled={blocked}
+        onClick={() => model.selectReport(report)}>{report === 'request-windows' ? 'Request windows' : report === 'input-coverage' ? 'Input coverage' : 'Reference coverage'}</button>)}
+    </nav>
+    {model.report !== 'request-windows' ? <ReliabilityCoverage model={model} /> : <>
+    {!blocked && <ReliabilityFilters onApply={model.apply} query={query} />}
     <p className="metric-explanation reliability-semantics">5xx responses / recorded requests is a ratio from 0 to 1, not a percentage or availability score.
       4xx responses remain in the request denominator. Unrecorded requests and transport failures are not represented.
       Each window is [start, start + 5 minutes). Missing reference metadata does not remove recorded requests.</p>
@@ -134,5 +142,6 @@ export function ReliabilityWorkspace({ model }: { model: ReturnType<typeof useRe
         <ReliabilityProvenance response={response} />
       </>}
     </div>
+    </>}
   </section>;
 }

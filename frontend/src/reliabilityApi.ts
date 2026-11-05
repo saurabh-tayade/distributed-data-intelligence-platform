@@ -58,10 +58,10 @@ export class ReliabilityError extends Error {
   }
 }
 
-const SERVICE_ID = /^[a-z0-9][a-z0-9_-]{0,127}$/;
-const REFERENCE_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-const REFERENCE_REVISION = /^[a-z0-9][a-z0-9_-]{0,31}$/;
-const HEX = /^[0-9a-f]{64}$/;
+export const SERVICE_ID = /^[a-z0-9][a-z0-9_-]{0,127}$/;
+export const REFERENCE_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+export const REFERENCE_REVISION = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+export const HEX = /^[0-9a-f]{64}$/;
 const UTC = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z$/;
 const END_OF_TIME = '10000-01-01T00:00:00.000000Z';
 const END_OF_TIME_MS = Date.parse('+010000-01-01T00:00:00.000Z');
@@ -71,16 +71,16 @@ const BOUNDARY_WHITESPACE = new Set([9, 10, 11, 12, 13, 32, 133, 160, 5760,
   8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288]);
 
 // Comparing the entire match also rejects the trailing newline accepted by JS's $ anchor.
-function matches(value: unknown, pattern: RegExp): value is string {
+export function matches(value: unknown, pattern: RegExp): value is string {
   return typeof value === 'string' && pattern.exec(value)?.[0] === value;
 }
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 function isEnvironment(value: unknown): value is ReliabilityEnvironment {
   return value === 'dev' || value === 'test' || value === 'production';
 }
-function timestampMs(value: unknown, allowEnd = false): number | null {
+export function timestampMs(value: unknown, allowEnd = false): number | null {
   if (allowEnd && value === END_OF_TIME) return END_OF_TIME_MS;
   if (!matches(value, UTC) || value.startsWith('0000')) return null;
   // Date checks the calendar only. The original six-digit timestamp is never reformatted.
@@ -128,16 +128,16 @@ export function reliabilityQueryParameters(query: ReliabilityQuery): URLSearchPa
   return result;
 }
 
-function requireValid(condition: unknown): asserts condition {
+export function requireValid(condition: unknown): asserts condition {
   if (!condition) throw new ReliabilityError('invalid-response');
 }
-function record(value: unknown): asserts value is Record<string, unknown> {
+export function record(value: unknown): asserts value is Record<string, unknown> {
   requireValid(isRecord(value));
 }
-function fields(value: Record<string, unknown>, expected: string[]) {
+export function fields(value: Record<string, unknown>, expected: string[]) {
   requireValid(Reflect.ownKeys(value).length === expected.length && expected.every((key) => Object.hasOwn(value, key)));
 }
-function decimal(value: unknown, maximum: bigint): string {
+export function decimal(value: unknown, maximum: bigint): string {
   requireValid(matches(value, /^(0|[1-9][0-9]{0,37})$/) && BigInt(value) <= maximum);
   return value;
 }
@@ -148,11 +148,11 @@ function boundedNumber(value: unknown, maximum: number): number {
 function agreesWithRatio(actual: number, expected: number): boolean {
   return Math.abs(actual - expected) <= Math.max(1e-12, Math.abs(expected) * 1e-12);
 }
-function nullableText(value: unknown): string | null {
+export function nullableText(value: unknown): string | null {
   requireValid(value === null || typeof value === 'string');
   return value;
 }
-function serviceName(value: string | null) {
+export function serviceName(value: string | null) {
   requireValid(value !== null);
   const scalars = Array.from(value);
   requireValid(scalars.length >= 1 && scalars.length <= 200);

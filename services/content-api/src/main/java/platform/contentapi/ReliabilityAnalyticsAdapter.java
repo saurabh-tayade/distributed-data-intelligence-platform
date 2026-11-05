@@ -78,6 +78,36 @@ public class ReliabilityAnalyticsAdapter {
         }
     }
 
+    public ReliabilityCoverageResponse coverage(ReliabilityCoverageQuery query) {
+        long start = System.nanoTime();
+        String outcome = "OK", correlation = UUID.randomUUID().toString();
+        try {
+            if (properties.publication().isEmpty()) throw new ApiFailure(PUBLICATION_UNAVAILABLE);
+            if (executable == null || !Files.isExecutable(executable) || !Files.isRegularFile(script)
+                    || !Files.isReadable(script)) throw new ApiFailure(ANALYTICS_RUNTIME_UNAVAILABLE);
+            return new ReliabilityCoverageDecoder(properties.publication()).decode(runner.run(command(query), script.getParent()), query);
+        } catch (ApiFailure failure) {
+            outcome = failure.code().name(); throw failure;
+        } catch (RuntimeException ignored) {
+            outcome = ANALYTICS_EXECUTION_FAILED.name(); throw new ApiFailure(ANALYTICS_EXECUTION_FAILED);
+        } finally {
+            LOG.info("report={} executionId={} durationMs={} outcome={}", query.report(), correlation,
+                    (System.nanoTime() - start) / 1_000_000, outcome);
+        }
+    }
+
+    List<String> command(ReliabilityCoverageQuery query) {
+        var args = new ArrayList<>(List.of(executable.toString(), "-E", "-s", "-B", "-X", "utf8", script.toString(),
+                "--root", properties.root().toAbsolutePath().normalize().toString(), "--publication", properties.publication(),
+                "--batch-root", properties.batchRoot().toAbsolutePath().normalize().toString(),
+                "--reference-root", properties.referenceRoot().toAbsolutePath().normalize().toString(),
+                "--report", query.report(), "--limit", Integer.toString(query.limit()), "--offset", Integer.toString(query.offset())));
+        if (query.sourceId() != null) args.addAll(List.of("--source-id", query.sourceId()));
+        if (query.batchId() != null) args.addAll(List.of("--batch-id", query.batchId()));
+        if (query.serviceId() != null) args.addAll(List.of("--service-id", query.serviceId()));
+        return List.copyOf(args);
+    }
+
     List<String> command(ReliabilityRequestQuery query) {
         var args = new ArrayList<>(List.of(executable.toString(), "-E", "-s", "-B", "-X", "utf8", script.toString(),
                 "--root", properties.root().toAbsolutePath().normalize().toString(), "--publication", properties.publication(),

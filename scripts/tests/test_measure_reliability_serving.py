@@ -63,6 +63,24 @@ class ServingMeasurementTests(unittest.TestCase):
             file.write_bytes(b'cd')
             self.assertNotEqual(before['fixture']['sha256'], measurement.inventory(root)['fixture']['sha256'])
 
+    def test_coverage_workload_does_not_inherit_window_filters(self):
+        for report in ('input_coverage', 'reference_coverage'):
+            self.assertEqual(measurement.options(1, report), dict(limit=1, offset=1))
+            command = measurement.cli_command(Path('/fixture'), 'a' * 64, 1, report)
+            self.assertEqual(command[command.index('--report') + 1], report)
+            self.assertNotIn('--start', command)
+            self.assertNotIn('--end', command)
+
+    def test_native_totals_and_reason_names_survive_rest_projection(self):
+        native = dict(product_id='application-reliability', product_contract_version=2, processor_revision=2,
+            input_format='JSONL', origin='synthetic', label='Synthetic', product_fingerprint='a'*64,
+            reference=dict(reference_id='ref'), filters=dict(source_id=None, batch_id=None),
+            rows=[dict(rejected_reason_counts=dict(FIELD_NULL='1'))], totals=dict(duplicate_excess_in_scope='0'),
+            limit='1', offset='0', has_more=False)
+        rest = measurement.rest_envelope(native)
+        self.assertEqual(rest['totals'], dict(duplicateExcessInScope='0'))
+        self.assertEqual(rest['data'], [dict(rejectedReasonCounts=dict(FIELD_NULL='1'))])
+
     def test_documented_workload_requires_real_first_and_final_pages(self):
         pages = {
             'first_page': dict(limit='1', offset='0', has_more=True,

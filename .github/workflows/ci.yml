@@ -286,16 +286,18 @@ jobs:
           export PATH="$JAVA_HOME/bin:$PATH"
           mvn -B -ntp -f services/content-api/pom.xml verify -Pintegration -Danalytics.python="$(command -v python)"
 
-      - name: Set up Node for native Content frontend parity
+      - name: Set up Node for native frontend parity
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - name: Install pinned frontend dependencies for native parity
+        run: npm ci --prefix frontend --ignore-scripts --no-audit --no-fund
       - name: Verify native Content reports through the frontend parsers
-        run: |
-          npm ci --prefix frontend
-          DDIP_CONTENT_HTTP_FIXTURES=../services/content-api/target/content-fixtures/http-reports.json npm --prefix frontend test -- contentNativeParity.test.ts
+        run: DDIP_CONTENT_HTTP_FIXTURES=../services/content-api/target/content-fixtures/http-reports.json npm --prefix frontend test -- contentNativeParity.test.ts
+      - name: Verify native Reliability reports through the frontend parsers
+        run: DDIP_RELIABILITY_HTTP_FIXTURES=../services/content-api/target/reliability-frontend-parity.json npm --prefix frontend test -- reliabilityNativeParity.test.ts
 
   processing:
     # Required by the main ruleset: retain this exact, unique check name.

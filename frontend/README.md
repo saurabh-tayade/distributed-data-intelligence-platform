@@ -534,17 +534,26 @@ npm run check
 git diff --check
 ```
 
-## Reliability request-window analytics (#58)
+## Reliability analytics (#58)
 
 Open **Analytics → Application Reliability**, or `#/analytics/reliability`, for a separate
 read-only view of `GET /api/v1/reliability/request-windows`. The existing Content views and
 their Gold publication pin remain independent. Reliability retains its own pin, applied
 filters, draft inputs and page position across workspace navigation. A verified response
-with a different Reliability publication permanently blocks that product's results until
+with a different publication, product version, input format or reference ID/revision/fingerprint permanently blocks that product's results until
 browser reload, including after navigation away and back; it does not block Content or
 Operations. The synthetic-origin notice remains visible during loading, empty and error states.
 
-Enter an explicit start and end before the first read. Inputs use exact UTC
+The workspace has Request windows, Input coverage and Reference coverage views. Only the
+active report fetches, and all three share one complete Reliability identity pin. Input
+coverage accepts exact source/batch filters; reference coverage accepts an exact service
+filter. Neither inherits window-time or environment filters. Their native totals describe
+the full filtered scope before pagination, including when the current page is empty.
+Input shows all per-batch provenance/count/reason/time/delay fields and distinguishes stored
+duplicate disposition from scoped duplicate excess. Reference shows used/unused/absent
+states, unique event counts and optional-attribute nulls. No page-derived totals are invented.
+
+Enter an explicit start and end before the first request-window read. Inputs use exact UTC
 `YYYY-MM-DDTHH:mm:ss.ffffffZ` timestamps on five-minute boundaries, with inclusive start,
 exclusive end and a positive interval no longer than 31 days. End also accepts the native
 `10000-01-01T00:00:00.000000Z` sentinel. No current-day default, inclusive calendar-date

@@ -1,7 +1,7 @@
 """Bounded local #58 evidence, not a load test or production benchmark.
 
-Use the existing independent ten-occurrence G1 fixture and unchanged native/HTTP
-consumers. All generated fixtures, logs and raw samples stay in a new output root.
+Use the independent ten-occurrence G1 request-window fixture or its fourteen-occurrence
+coverage extension with unchanged native reports and fixed HTTP consumers. All generated fixtures, logs and raw samples stay in a new output root.
 """
 import argparse
 from functools import wraps
@@ -31,11 +31,11 @@ def elapsed(start):
     return (time.perf_counter_ns() - start) / 1_000_000
 
 
-def options(offset):
-    return dict(start=START, end=END, limit=1, offset=offset)
+def options(offset, report='requests_5m'):
+    return (dict(start=START, end=END) if report == 'requests_5m' else {}) | dict(limit=1, offset=offset)
 
 
-def native_sample(root, publication):
+def native_sample(root, publication, report='requests_5m'):
     # Start before native imports, after Python and this standard-library harness load.
     start = time.perf_counter_ns()
     sys.path.insert(0, str(REPO / 'processing'))
@@ -63,7 +63,7 @@ def native_sample(root, publication):
     with session:
         for name, offset in PAGES:
             start = time.perf_counter_ns()
-            envelope = session.report('requests_5m', **options(offset))
+            envelope = session.report(report, **options(offset, report))
             result['pages'][name] = dict(report_ms=elapsed(start), envelope=envelope)
     return result
 
@@ -82,6 +82,8 @@ def rest_envelope(native):
                   filters=convert(native['filters']), data=[convert(row) for row in native['rows']],
                   meta=dict(returned=len(native['rows']), limit=int(native['limit']),
                             offset=int(native['offset']), hasMore=native['has_more']))
+    if 'totals' in native:
+        result['totals'] = convert(native['totals'])
     return result
 
 
@@ -91,7 +93,20 @@ def require_equal(actual, expected):
         raise RuntimeError('Consumer output or primitive types differ from the native reference')
 
 
-def check_workload(pages):
+def check_workload(pages, report='requests_5m'):
+    if report != 'requests_5m':
+        for name, offset in PAGES:
+            page = pages[name]
+            require_equal([page['limit'], page['offset'], page['has_more'], len(page['rows'])], ['1', str(offset), True, 1])
+            row = page['rows'][0]
+            if report == 'input_coverage':
+                require_equal([row['batch_id'], row['physical_occurrence_count']], ['b00', '10'] if offset == 0 else ['b01', '2'])
+                require_equal(page['totals']['physical_occurrence_count'], '14')
+            else:
+                require_equal([row['service_id'], row['reference_usage']], ['svc-unused', 'UNUSED'] if offset == 0 else ['svc00', 'USED'])
+                require_equal(page['totals']['event_count'], '4')
+        require_equal(pages['first_page']['totals'], pages['later_page']['totals'])
+        return
     # Fail if the shared fixture no longer represents this documented two-page workload.
     for name, offset in PAGES:
         page = pages[name]
@@ -130,12 +145,12 @@ def child_env():
     return env
 
 
-def cli_command(root, publication, offset):
+def cli_command(root, publication, offset, report='requests_5m'):
     command = [sys.executable, str(REPO / 'processing/reliability_format_analytics.py'),
                '--root', str(root / 'output'), '--publication', publication,
                '--batch-root', str(root / 'batches'), '--reference-root', str(root / 'references'),
-               '--report', 'requests_5m']
-    for key, value in options(offset).items():
+               '--report', report]
+    for key, value in options(offset, report).items():
         command.extend(['--' + key, str(value)])
     return command
 
@@ -151,7 +166,7 @@ def http_get(connection, path):
     return dict(elapsed_ms=milliseconds, response_bytes=len(body)), json.loads(body)
 
 
-def http_sample(java, jar, root, publication, expected, log, env):
+def http_sample(java, jar, root, publication, expected, log, env, report='requests_5m'):
     with socket.socket() as reserved:
         reserved.bind(('127.0.0.1', 0))
         port = reserved.getsockname()[1]
@@ -190,7 +205,8 @@ def http_sample(java, jar, root, publication, expected, log, env):
             connection = http.client.HTTPConnection('127.0.0.1', port, timeout=40)
             try:
                 for name, offset in PAGES:
-                    path = '/api/v1/reliability/request-windows?' + urlencode(options(offset))
+                    endpoint = {'requests_5m': 'request-windows', 'input_coverage': 'input-coverage', 'reference_coverage': 'reference-coverage'}[report]
+                    path = '/api/v1/reliability/' + endpoint + '?' + urlencode(options(offset, report))
                     timing, actual = http_get(connection, path)
                     require_equal(actual, rest_envelope(expected[name]))
                     result['pages'][name] = timing
@@ -247,40 +263,42 @@ def measure(args):
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     env = child_env()
-    sys.path[:0] = [str(REPO / 'processing'), str(REPO / 'processing/tests')]
+    sys.path[:0] = [str(REPO / 'processing'), str(REPO / 'processing/tests'), str(REPO / 'services/content-api/tests')]
     from reliability_format_fixtures import completed
+    from reliability_coverage_fixtures import completed_coverage
+    report = getattr(args, 'report', 'requests_5m')
     result = dict(schema_version=1, measured_at_utc=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
-                  environment=environment(java, jar, env), samples_per_format=args.samples, formats={})
+                  environment=environment(java, jar, env), samples_per_format=args.samples, report=report, formats={})
     for fmt in ('JSONL', 'PARQUET'):
         root = output / fmt.lower()
         root.mkdir()
-        _, publication, _, _ = completed(root, fmt)
+        _, publication, _, _ = (completed if report == 'requests_5m' else completed_coverage)(root, fmt)
         before = inventory(root)
         data = dict(fixture=fixture_description(root, publication), native_samples=[], cli_samples=[], http_samples=[])
         expected = None
         for _ in range(args.samples):
             command = [sys.executable, str(Path(__file__).resolve()), '--native-root', str(root),
-                       '--publication', publication]
+                       '--publication', publication, '--report', report]
             child = subprocess.run(command, capture_output=True, text=True, check=True, timeout=60, env=env)
             sample = json.loads(child.stdout)
             envelopes = {name: sample['pages'][name].pop('envelope') for name, _ in PAGES}
             if expected is None:
                 expected = envelopes
-                check_workload(expected)
+                check_workload(expected, report)
             require_equal(envelopes, expected)
             data['native_samples'].append(sample)
         for _ in range(args.samples):
             sample = {}
             for name, offset in PAGES:
                 start = time.perf_counter_ns()
-                child = subprocess.run(cli_command(root, publication, offset), capture_output=True,
+                child = subprocess.run(cli_command(root, publication, offset, report), capture_output=True,
                                        check=True, timeout=60, env=env)
                 sample[name] = dict(elapsed_ms=elapsed(start), response_bytes=len(child.stdout))
                 require_equal(json.loads(child.stdout), expected[name])
             data['cli_samples'].append(sample)
         for index in range(args.samples):
             data['http_samples'].append(http_sample(java, jar, root, publication, expected,
-                output / f'{fmt.lower()}-jvm-{index}.log', env))
+                output / f'{fmt.lower()}-jvm-{index}.log', env, report))
         if before != inventory(root):
             raise RuntimeError('Measurement changed a fixture file or timestamp')
         data['retained_inventory'] = before
@@ -303,13 +321,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--samples', type=int, default=5)
+    parser.add_argument('--report', choices=('requests_5m', 'input_coverage', 'reference_coverage'), default='requests_5m')
     parser.add_argument('--jar', type=Path, default=REPO / 'services/content-api/target/content-api-0.1.0-SNAPSHOT.jar')
     parser.add_argument('--java', default=shutil.which('java'))
     parser.add_argument('--native-root', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--publication', help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.native_root is not None:
-        print(json.dumps(native_sample(args.native_root, args.publication)))
+        print(json.dumps(native_sample(args.native_root, args.publication, args.report)))
     elif args.output is None or args.java is None:
         parser.error('--output and an available Java 21 executable are required')
     else:
