@@ -51,7 +51,7 @@ DECLARE
     admission jsonb; ready jsonb; frozen jsonb; selected jsonb; profile jsonb; runtime jsonb;
     runtime_id text; runtime_sha text; registered_sha text; raw bytea; family text; next_family text; fields text[];
     cp bytea; writer jsonb; expected_writer jsonb; frozen_identity jsonb; current_frozen_identity jsonb;
-    profile_sha text; content_sha text; fetch jsonb; command jsonb; bootstrap jsonb;
+    profile_sha text; content_sha text; fetch_facts jsonb; command jsonb; bootstrap jsonb;
 BEGIN
     -- Lock serialization needs fresh statement snapshots after a competing insert commits.
     -- Snapshot isolation can otherwise miss consumption in the other journal.
@@ -154,10 +154,10 @@ BEGIN
        OR (runtime->>'httpTimeoutMillis')::numeric NOT BETWEEN 1 AND 30000 THEN
         RAISE EXCEPTION USING MESSAGE='CONTENT_NATIVE_OPERATION_RUNTIME_INVALID',ERRCODE='23514';
     END IF;
-    fetch:=jsonb_build_object('revision',selected->'revision','capturedConfigSha256',selected->'configurationSha256',
+    fetch_facts:=jsonb_build_object('revision',selected->'revision','capturedConfigSha256',selected->'configurationSha256',
         'endpointSha256',selected->'endpointSha256','feedUri',selected->'endpoint'->'uri','runtimeSha256',runtime_sha,
         'javaRuntime',runtime->'manifest'->'javaRuntime','testEndpoint',runtime->'testEndpoint','httpTimeoutMillis',runtime->'httpTimeoutMillis');
-    command:=fetch || jsonb_build_object('protocolVersion',1,'runId',a.run_id::text,'attemptId',a.attempt_id::text,
+    command:=fetch_facts || jsonb_build_object('protocolVersion',1,'runId',a.run_id::text,'attemptId',a.attempt_id::text,
         'ownerEpoch',a.owner_epoch,'stage','FETCH_SOURCE','itemOrdinal',0,'checkpointId',NEW.checkpoint_id::text,'sourceId',admission->'sourceId');
     writer:=jsonb_build_object('installationId',c.installation_id::text,'workerInstanceId',a.instance_id::text,'epoch',a.owner_epoch::text,
         'runId',a.run_id::text,'attemptId',a.attempt_id::text,'stage','FETCH_SOURCE','ordinal',0,
@@ -178,7 +178,7 @@ BEGIN
             'rootIdentity',jsonb_build_object('device',ready->'rootDevice','inode',ready->'rootInode'),
             'lockIdentity',jsonb_build_object('device',ready->'lockDevice','inode',ready->'lockInode'),
             'ledgerSha256',ready->'ledgerSha256','frozen',frozen_identity,'writer',expected_writer),
-        'current',jsonb_build_object('policy',a.content_admission_policy,'frozen',current_frozen_identity,'writer',writer),'fetch',fetch);
+        'current',jsonb_build_object('policy',a.content_admission_policy,'frozen',current_frozen_identity,'writer',writer),'fetch',fetch_facts);
     IF NOT native_reservation_json_matches(convert_from(NEW.command_bytes,'UTF8')::json,command)
        OR NOT native_reservation_json_matches(convert_from(NEW.bootstrap_bytes,'UTF8')::json,bootstrap) THEN
         RAISE EXCEPTION USING MESSAGE='CONTENT_NATIVE_OPERATION_BINDING_INVALID',ERRCODE='23514';

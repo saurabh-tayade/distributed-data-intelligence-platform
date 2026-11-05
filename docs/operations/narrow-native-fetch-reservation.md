@@ -39,7 +39,7 @@ bounded defensive byte snapshots.
 Added actual PostgreSQL acceptance covers populated V11 upgrade without backfill, immutable
 rows, independent command/bootstrap identity binding, simultaneous reservations, native/probe
 exclusion races, owner/control changes, commit acknowledgment loss, occupied directories, forced
-writer-JVM death, and fresh-JVM facts inspection. Tests assert unchanged filesystem and legacy
+writer-JVM death, actual disposable PostgreSQL restart, and fresh-JVM facts inspection. Tests assert unchanged filesystem and legacy
 metadata, occupied attempts, no completion and no stage execution. The core CI partition includes
 the new integration class, and its report verifier requires actual passing test results.
 

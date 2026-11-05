@@ -129,6 +129,33 @@ class NarrowContentFetchReservationIT extends NarrowContentAdmissionFixtures {
         assertThat(facts()).isEqualTo(history);assertThat(filesystem()).isEqualTo(files);ready();assertThat(session.status()).isEqualTo("RECOVERY_ONLY");
         assertThatThrownBy(()->NarrowContentAdmissionTestSupport.claim(workers,guard,session,UUID.randomUUID(),run)).hasMessage("WORKER_NOT_READY");noExecution();assertThat(count("content_native_operations")).isEqualTo(1);
     }
+    @Test void actualPostgresRestartAndFreshJvmInspectionPreserveOnlyReservationFacts()throws Exception{
+        prepared();var history=reserve(b->{});guard.close();guard=null;
+        var before=metadata();var files=filesystem();
+        var nativeRows=jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_native_operations t ORDER BY operation_id",String.class);
+        var started=jdbc.queryForObject("SELECT pg_postmaster_start_time()",java.time.OffsetDateTime.class);
+        // The CI harness names its disposable PostgreSQL service. Never discover or choose a host database.
+        String container=System.getenv("DDIP_TEST_POSTGRES_CONTAINER_ID");assertThat(container).matches("[0-9a-f]{12,64}");
+        var restart=new ProcessBuilder("docker","restart",container).redirectOutput(ProcessBuilder.Redirect.DISCARD).redirectError(ProcessBuilder.Redirect.INHERIT).start();
+        try{assertThat(restart.waitFor(60,TimeUnit.SECONDS)).isTrue();assertThat(restart.exitValue()).isZero();}
+        finally{if(restart.isAlive()){restart.destroyForcibly();restart.waitFor(5,TimeUnit.SECONDS);}}
+        long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(45);
+        while(true){
+            try{
+                var after=jdbc.queryForObject("SELECT pg_postmaster_start_time()",java.time.OffsetDateTime.class);assertThat(after).isAfter(started);
+                System.out.println("NARROW_FETCH_RESERVATION_POSTGRES_RESTART before="+started+" after="+after+" operation="+operation);break;
+            }catch(org.springframework.dao.DataAccessException ex){if(System.nanoTime()>deadline)throw ex;Thread.sleep(100);}
+        }
+        var lookup=operationChild("inspect",owner.runId(),owner.attemptId());
+        try{
+            assertThat(lookup.pid()).isNotEqualTo(ProcessHandle.current().pid());
+            assertThat(operationLine(lookup)).isEqualTo("NARROW_OPERATION "+lookup.pid()+" "+history.commandSha256());
+            assertThat(lookup.waitFor(10,TimeUnit.SECONDS)).isTrue();assertThat(lookup.exitValue()).isZero();
+        }finally{if(lookup.isAlive()){lookup.destroyForcibly();lookup.waitFor(5,TimeUnit.SECONDS);}}
+        assertThat(facts()).isEqualTo(history);assertThat(facts().nativeLaunchCompatible()).isFalse();
+        assertThat(jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_native_operations t ORDER BY operation_id",String.class)).isEqualTo(nativeRows);
+        assertThat(metadata()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);retained();
+    }
     @Test void preexistingEmptyFetchDirectoryIsNotAdopted()throws Exception{
         prepared();var payload=NarrowContentFetchReservationTestSupport.payload(jdbc,tx,workers,guard,owner,operation);
         Files.createDirectories(attemptRoot().resolve("fetch-source/demo-feed/"+payload.checkpoint()));
