@@ -64,7 +64,7 @@ flowchart LR
 | content_postgres_gold | Native Gold/Content publication and finalization integration | 90 minutes |
 | content_postgres_content_recovery | Content recovery, explicit RESUME and inherited recovery integration | 90 minutes |
 | content_postgres | Original PostgreSQL check; requires every selected partition to succeed | 5 minutes |
-| analytics_http | Fresh Gold and Spark-free Reliability fixtures, content API unit/component tests, GoldApiIT and ReliabilityApiIT HTTP/native compatibility | 15 minutes |
+| analytics_http | Fresh Gold, Reliability and Content fixtures; Content API units; GoldApiIT, ReliabilityApiIT and ContentApiIT HTTP/native compatibility; generated Content envelopes through actual frontend parsers | 15 minutes |
 | processing | Existing required backend context; classification and five-suite aggregate | 5 minutes |
 | documentation | Existing Markdown/link/hygiene checks plus focused CI policy tests | 5 minutes |
 | frontend | Existing typecheck, lint, component tests and production build | 10 minutes |
@@ -77,7 +77,10 @@ Content partitions (`ingestion`, `gold`, `content_recovery`) build the ingestion
 start pinned SeaweedFS, with cleanup guarded by `always()`. Core/import
 fixtures supply their own synthetic Bronze HTTP server and need no SeaweedFS service. Unit tests
 run once in core; other PostgreSQL partitions skip only Surefire units, never Failsafe integration.
-The analytics HTTP job retains its existing unit/integration command.
+The analytics HTTP job retains its existing unit/integration command. It also installs the pinned
+frontend dependencies under Node.js 24 and checks all generated Content report envelopes through
+the actual frontend parsers, with `DDIP_CONTENT_HTTP_FIXTURES` set explicitly. This parity check
+does not skip in that job. Its source dependencies are listed below.
 
 The original `content_postgres` name is now a small fail-closed fan-in job. A selected missing,
 failed, cancelled, skipped or timed-out partition cannot produce PostgreSQL success. If PostgreSQL
@@ -130,7 +133,8 @@ adds no backend suite unless a shared rule also applies.
 | JDBC compatibility | services/api source/tests, except the shared fixture generator directory | JDBC. |
 | Shared JDBC/HTTP fixtures | services/api/tests, including generate_fixtures.py | JDBC and HTTP; each independently executes this generator. PostgreSQL owns separate native fixtures. |
 | PostgreSQL backend and analytics HTTP/native | services/content-api source, tests and resources | PostgreSQL and HTTP; both compile the same module and run its complete unit/component suite as well as their retained integration profile. These categories cannot safely be separated by Java package. |
-| React frontend | frontend source, tests and configuration other than shared/dependency rules | None; the always-running frontend job validates these changes. |
+| Content native/frontend parity | frontend/src/contentApi.ts, frontend/src/api.ts, frontend/src/contentNativeParity.test.ts | HTTP; the actual Content parser and its shared Gold/date parser consume native-generated envelopes in that job. |
+| React frontend | Other frontend source, tests and configuration, except shared/dependency rules | None; the always-running frontend job validates these changes. |
 | Shared configuration/infrastructure | .github, config, infrastructure, .env.example, repository-level tests; schema/schemas/contracts directories anywhere; migrations under content-api resources/db | All five; workflow policy, registered vocabularies, schemas and infrastructure cross component boundaries. |
 | Dependency/runtime definitions | Maven POMs, package manifests/locks, requirements files, pyproject.toml, uv.lock, poetry.lock and runtime version files anywhere | All five, including frontend-only dependency updates; broad regression is deliberate. |
 | Unknown | Any path not explicitly accounted for above | All five. Add a narrower rule only with dependency evidence and negative tests. |

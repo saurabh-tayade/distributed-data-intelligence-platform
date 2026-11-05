@@ -93,3 +93,10 @@ Visual polish and browser walkthrough remain deferred. No hosted CI result or ne
 integration run is claimed here. The endpoint retains the service's existing local-only default
 binding and analytics-enabled roles; no public multi-user authorization, deployment, Content
 worker dispatch or publication activation is added.
+
+## Discovery and reference coverage extension
+
+The same configured Content selection also serves fixed daily discovery and reference
+coverage endpoints, documented in the [additional report contract](content-discovery-api.md).
+The catalog response and filters remain unchanged. All three views share the mounted
+Content identity pin; coverage totals remain whole-domain values before pagination.

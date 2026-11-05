@@ -22,6 +22,7 @@ from urllib.parse import urlencode
 REPO = Path(__file__).resolve().parents[1]
 PAGES = (('first_page', 0), ('later_page', 1))
 PHASES = ('verify_dependencies', 'connection', 'register', 'validate_tables')
+REPORTS = ('catalog', 'source_discovery_daily', 'reference_coverage')
 
 
 def elapsed(start):
@@ -32,7 +33,7 @@ def options(offset):
     return dict(limit=1, offset=offset)
 
 
-def native_sample(root, publication):
+def native_sample(root, publication, report="catalog"):
     # Start before native imports, after Python and this standard-library harness load.
     start = time.perf_counter_ns()
     sys.path.insert(0, str(REPO / 'processing'))
@@ -60,11 +61,11 @@ def native_sample(root, publication):
     with session:
         for name, offset in PAGES:
             start = time.perf_counter_ns()
-            envelope = session.report('catalog', **options(offset))
+            envelope = session.report(report, **options(offset))
             report_ms = elapsed(start)
             # Diagnostic query only, on an already verified session; never a serving bypass.
-            values, where, limit, position = analytics.filters('catalog', **options(offset))
-            table, columns, order, _ = analytics.REPORTS['catalog']
+            values, where, limit, position = analytics.filters(report, **options(offset))
+            table, columns, order, _ = analytics.REPORTS[report]
             begin = time.perf_counter_ns()
             session._conn.execute(f'SELECT {",".join(columns)} FROM {table} WHERE {where} '
                 f'ORDER BY {order} LIMIT $limit OFFSET $offset', values | dict(limit=limit+1, offset=position)).fetchall()
@@ -83,12 +84,15 @@ def rest_envelope(native):
 
     filters = convert(native['filters'])
     for old, new in (('source', 'sourceId'), ('startDate', 'from'), ('endDate', 'to')):
-        filters[new] = filters.pop(old)
+        if old in filters:
+            filters[new] = filters.pop(old)
     result = dict(productId=native['product_id'], publication=native['product_fingerprint'],
                   goldPublication=native['gold_fingerprint'], reference=convert(native['reference']),
                   filters=filters, data=[convert(row) for row in native['rows']],
                   meta=dict(returned=len(native['rows']), limit=int(native['limit']),
                             offset=int(native['offset']), hasMore=native['has_more']))
+    if 'totals' in native:
+        result['totals'] = convert(native['totals'])
     return result
 
 
@@ -98,12 +102,15 @@ def require_equal(actual, expected):
         raise RuntimeError('Consumer output or primitive types differ from the native reference')
 
 
-def check_workload(pages):
+def check_workload(pages, report="catalog"):
     for name, offset in PAGES:
         page = pages[name]
         require_equal([page['limit'], page['offset'], page['has_more'], len(page['rows'])],
                       ['1', str(offset), True, 1])
-    require_equal([pages[name]['rows'][0]['source_id'] for name, _ in PAGES], ['gamma', 'alpha'])
+    require_equal([pages[name]['rows'][0]['source_id'] for name, _ in PAGES],
+                  ['gamma', 'alpha'] if report == 'catalog' else ['alpha', 'beta'])
+    if report == 'reference_coverage':
+        require_equal(pages['first_page']['totals'], pages['later_page']['totals'])
 
 
 def inventory(root):
@@ -133,11 +140,11 @@ def child_env():
     return env
 
 
-def cli_command(root, publication, offset):
+def cli_command(root, publication, offset, report="catalog"):
     command = [sys.executable, str(REPO / 'processing/content_analytics.py'),
                '--root', str(root / 'output'), '--publication', publication,
                '--gold-root', str(root / 'gold'), '--reference-root', str(root / 'references'),
-               '--report', 'catalog']
+               '--report', report]
     for key, value in options(offset).items():
         command.extend(['--' + key, str(value)])
     return command
@@ -154,7 +161,7 @@ def http_get(connection, path):
     return dict(elapsed_ms=milliseconds, response_bytes=len(body)), json.loads(body)
 
 
-def http_sample(java, jar, root, publication, expected, log, env):
+def http_sample(java, jar, root, publication, expected, log, env, report="catalog"):
     with socket.socket() as reserved:
         reserved.bind(('127.0.0.1', 0))
         port = reserved.getsockname()[1]
@@ -193,7 +200,7 @@ def http_sample(java, jar, root, publication, expected, log, env):
             connection = http.client.HTTPConnection('127.0.0.1', port, timeout=40)
             try:
                 for name, offset in PAGES:
-                    path = '/api/v1/content/catalog?' + urlencode(options(offset))
+                    path = '/api/v1/content/' + report.replace('_', '-') + '?' + urlencode(options(offset))
                     timing, actual = http_get(connection, path)
                     require_equal(actual, rest_envelope(expected[name]))
                     result['pages'][name] = timing
@@ -249,11 +256,14 @@ def measure(args):
         raise ValueError('Build the content-api JAR and select an existing Java 21 executable first')
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
+    report = getattr(args, 'report', 'catalog')
+    if report not in REPORTS:
+        raise ValueError('Choose a fixed native Content report')
     env = child_env()
     sys.path[:0] = [str(REPO / 'processing'), str(REPO / 'processing/tests')]
     reference = json.loads((args.fixture / 'reference.json').read_text())['publications']['standard']
     result = dict(schema_version=1, measured_at_utc=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
-                  environment=environment(java, jar, env), samples=args.samples, formats={})
+                  environment=environment(java, jar, env), report=report, samples=args.samples, formats={})
     for fmt in ('CONTENT',):
         root = (args.fixture / reference['root']).resolve()
         publication = reference['publication']
@@ -262,27 +272,27 @@ def measure(args):
         expected = None
         for _ in range(args.samples):
             command = [sys.executable, str(Path(__file__).resolve()), '--native-root', str(root),
-                       '--publication', publication]
+                       '--publication', publication, '--report', report]
             child = subprocess.run(command, capture_output=True, text=True, check=True, timeout=60, env=env)
             sample = json.loads(child.stdout)
             envelopes = {name: sample['pages'][name].pop('envelope') for name, _ in PAGES}
             if expected is None:
                 expected = envelopes
-                check_workload(expected)
+                check_workload(expected, report)
             require_equal(envelopes, expected)
             data['native_samples'].append(sample)
         for _ in range(args.samples):
             sample = {}
             for name, offset in PAGES:
                 start = time.perf_counter_ns()
-                child = subprocess.run(cli_command(root, publication, offset), capture_output=True,
+                child = subprocess.run(cli_command(root, publication, offset, report), capture_output=True,
                                        check=True, timeout=60, env=env)
                 sample[name] = dict(elapsed_ms=elapsed(start), response_bytes=len(child.stdout))
                 require_equal(json.loads(child.stdout), expected[name])
             data['cli_samples'].append(sample)
         for index in range(args.samples):
             data['http_samples'].append(http_sample(java, jar, root, publication, expected,
-                output / f'{fmt.lower()}-jvm-{index}.log', env))
+                output / f'{fmt.lower()}-jvm-{index}.log', env, report))
         if before != inventory(root):
             raise RuntimeError('Measurement changed a fixture file or timestamp')
         data['retained_inventory'] = before
@@ -307,13 +317,14 @@ def main():
     parser.add_argument('--output', type=Path)
     parser.add_argument('--fixture', type=Path, help='Generated ContentApiIT fixture root')
     parser.add_argument('--samples', type=int, default=5)
+    parser.add_argument('--report', choices=REPORTS, default='catalog')
     parser.add_argument('--jar', type=Path, default=REPO / 'services/content-api/target/content-api-0.1.0-SNAPSHOT.jar')
     parser.add_argument('--java', default=shutil.which('java'))
     parser.add_argument('--native-root', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--publication', help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.native_root is not None:
-        print(json.dumps(native_sample(args.native_root, args.publication)))
+        print(json.dumps(native_sample(args.native_root, args.publication, args.report)))
     elif args.output is None or args.java is None or args.fixture is None:
         parser.error('--output, --fixture and an available Java 21 executable are required')
     else:

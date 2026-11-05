@@ -88,6 +88,29 @@ class ServingMeasurementTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             measurement.check_workload(pages)
 
+    def test_coverage_projection_retains_full_totals_and_omits_unsupported_dates(self):
+        native = dict(product_id='content-intelligence', product_fingerprint='c', gold_fingerprint='g',
+            reference=dict(reference_id='publishers', revision='r1', snapshot_fingerprint='r'), filters=dict(source=None),
+            rows=[dict(article_count='9007199254740993', missing_optional_attributes=['country_code'])],
+            totals=dict(article_count='9223372036854775807'), limit='1', offset='1', has_more=True)
+        projected = measurement.rest_envelope(native)
+        self.assertEqual(projected['filters'], dict(sourceId=None))
+        self.assertEqual(projected['totals'], dict(articleCount='9223372036854775807'))
+        self.assertEqual(projected['data'][0]['missingOptionalAttributes'], ['country_code'])
+
+    def test_additional_reports_use_fixed_native_command_and_separate_workloads(self):
+        for report in ('source_discovery_daily', 'reference_coverage'):
+            command = measurement.cli_command(Path('/fixture'), 'a' * 64, 1, report)
+            self.assertEqual(command[command.index('--report') + 1], report)
+            pages = {name: dict(limit='1', offset=str(offset), has_more=True,
+                rows=[dict(source_id=source)], totals=dict(article_count='4'))
+                for (name, offset), source in zip(measurement.PAGES, ('alpha', 'beta'))}
+            measurement.check_workload(pages, report)
+            if report == 'reference_coverage':
+                pages['later_page']['totals']['article_count'] = '1'
+                with self.assertRaises(RuntimeError):
+                    measurement.check_workload(pages, report)
+
 
 if __name__ == '__main__':
     unittest.main()

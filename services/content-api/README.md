@@ -1779,3 +1779,13 @@ its own session pin. A different base Gold fingerprint from the existing Gold da
 explicitly allowed and labeled; the UI never joins those two selections or replaces one silently.
 Each page reopens and fully verifies the selected native dependencies. Missing or damaged
 artifacts fail closed, including when filters would otherwise return no rows.
+
+## Content discovery and reference coverage (#58)
+
+The same configured verified Content selection now serves fixed
+`GET /api/v1/content/source-discovery-daily` and `GET /api/v1/content/reference-coverage`
+reports. Daily discovery allows exact source and inclusive UTC first-discovery date filters;
+coverage allows only source and returns full source-filtered totals before pagination.
+Both preserve native exact counters, source/reference identities and ordering. The existing
+`#/content` UI offers tables for both reports under its shared Content session pin.
+See the [complete contract, safe states and native/HTTP/UI parity evidence](../../docs/architecture/content-discovery-api.md).
