@@ -24,6 +24,10 @@ class NarrowContentFetchReservationIT extends NarrowContentAdmissionFixtures {
         if(content)NarrowContentFetchReservationTestSupport.registerChain(jdbc,id,RunFixtures.profile(true,source),CONTENT);
         else super.profile(id,false,source);
     }
+    @Override void ready(){
+        guard=InstallationHostGuard.acquire(binding);workers=WorkerTestSupport.enabled(jdbc,tx,INSTALL);
+        session=workers.register(guard,CONTENT_PROFILE,digest(CONTENT_PROFILE),NarrowContentFetchReservationTestSupport.deploymentDigest(jdbc,CONTENT_PROFILE));
+    }
     @Override void storage(String id,String product,String role){
         if(!role.equals("BRONZE")){super.storage(id,product,role);return;}
         byte[] bytes=SourceJson.canonical(SourceJson.object().put("importBronzeVersion",1).put("endpoint","http://127.0.0.1:9000").put("region","local").put("bucket","bronze").put("credentialsFile","/never/read/credentials"));
@@ -69,7 +73,9 @@ class NarrowContentFetchReservationIT extends NarrowContentAdmissionFixtures {
     }
     @Test void reservationIsImmutableAndCannotBeRetriedWithFreshRepositoryOrOperation(){
         prepared();var original=reserve(b->{});workers=WorkerTestSupport.enabled(jdbc,tx,INSTALL);
-        assertThatThrownBy(()->reserve(b->{})).hasMessage("STATE_CONFLICT");operation=UUID.randomUUID();assertThatThrownBy(()->reserve(b->{})).hasMessage("STATE_CONFLICT");operation=original.operation();
+        assertThatThrownBy(()->reserve(b->{})).hasMessage("STATE_CONFLICT");
+        workers=WorkerTestSupport.enabled(jdbc,tx,INSTALL);operation=UUID.randomUUID();
+        assertThatThrownBy(()->reserve(b->{})).hasMessage("STATE_CONFLICT");operation=original.operation();
         for(String sql:List.of("UPDATE ddip_management.content_native_operations SET operation_id=operation_id","DELETE FROM ddip_management.content_native_operations","TRUNCATE ddip_management.content_native_operations CASCADE"))assertThatThrownBy(()->jdbc.execute(sql)).isInstanceOf(RuntimeException.class);
         assertThat(facts()).isEqualTo(original);retained();
     }
@@ -82,15 +88,25 @@ class NarrowContentFetchReservationIT extends NarrowContentAdmissionFixtures {
     }
     @ParameterizedTest @ValueSource(booleans={false,true})
     void simultaneousReservationsHaveExactlyOneWinnerIncludingProbeRace(boolean probeRace)throws Exception{
-        prepared();var files=filesystem();var barrier=new CyclicBarrier(2);var winners=new AtomicInteger();
+        prepared();var files=filesystem();var barrier=new CyclicBarrier(2);var winners=new AtomicInteger();var conflicts=new AtomicInteger();
         try(var pool=Executors.newFixedThreadPool(2)){
             var futures=new ArrayList<Future<?>>();for(int i=0;i<2;i++){final boolean probe=probeRace && i==1;futures.add(pool.submit(()->{
-                try{barrier.await(5,TimeUnit.SECONDS);var fresh=WorkerTestSupport.enabled(jdbc,tx,INSTALL);java.util.function.Consumer<String> stop=b->{if(b.equals("RESERVED")){winners.incrementAndGet();throw new IllegalStateException("TEST_BOUNDARY");}};
+                try{barrier.await(5,TimeUnit.SECONDS);}catch(Exception ex){throw new CompletionException(ex);}
+                var fresh=WorkerTestSupport.enabled(jdbc,tx,INSTALL);
+                java.util.function.Consumer<String> stop=b->{if(b.equals("RESERVED"))throw new IllegalStateException("TEST_BOUNDARY");};
+                try{
                     if(probe)NarrowContentOperationTestSupport.probe(jdbc,tx,fresh,guard,owner,UUID.randomUUID(),stop);else NarrowContentFetchReservationTestSupport.reserve(jdbc,tx,fresh,guard,owner,UUID.randomUUID(),stop);
-                }catch(Exception expected){}
+                    throw new AssertionError("Reservation returned without reaching RESERVED");
+                }catch(ManagementFailure ex){
+                    if(ex.code()!=ManagementFailure.Code.STATE_CONFLICT)throw ex;
+                    conflicts.incrementAndGet();
+                }catch(IllegalStateException ex){
+                    if(!"TEST_BOUNDARY".equals(ex.getMessage()))throw ex;
+                    winners.incrementAndGet();
+                }
             }));}for(var future:futures)future.get(15,TimeUnit.SECONDS);
         }
-        assertThat(winners).hasValue(1);assertThat(count("content_native_operations")+count("content_operations")).isEqualTo(1);assertThat(count("content_operation_phases")).isZero();assertThat(filesystem()).isEqualTo(files);noExecution();
+        assertThat(winners).hasValue(1);assertThat(conflicts).hasValue(1);assertThat(count("content_native_operations")+count("content_operations")).isEqualTo(1);assertThat(count("content_operation_phases")).isZero();assertThat(filesystem()).isEqualTo(files);noExecution();
     }
     @Test void lostCommitAcknowledgementConsumesReservationAndInvalidatesOwner()throws Exception{
         prepared();var wrapped=loseReservationCommit();var wrappedTx=transactions(wrapped);var uncertain=WorkerTestSupport.enabled(wrapped,wrappedTx,INSTALL);var files=filesystem();

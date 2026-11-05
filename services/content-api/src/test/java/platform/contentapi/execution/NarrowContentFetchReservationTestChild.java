@@ -20,7 +20,7 @@ public final class NarrowContentFetchReservationTestChild {
         }
         try(var guard=InstallationHostGuard.acquire(binding)){
             String digest=jdbc.queryForObject("SELECT configuration_sha256 FROM ddip_management.execution_profiles WHERE profile_id=?",String.class,args[2]);
-            var session=workers.register(guard,args[2],digest,"a".repeat(64));
+            var session=workers.register(guard,args[2],digest,NarrowContentFetchReservationTestSupport.deploymentDigest(jdbc,args[2]));
             var claim=NarrowContentAdmissionTestSupport.claim(workers,guard,session,UUID.fromString(args[4]),UUID.fromString(args[3]));
             NarrowContentAdmissionTestSupport.prepare(jdbc,tx,workers,guard,claim.owner());
             NarrowContentFetchReservationTestSupport.reserve(jdbc,tx,workers,guard,claim.owner(),operation,b->{

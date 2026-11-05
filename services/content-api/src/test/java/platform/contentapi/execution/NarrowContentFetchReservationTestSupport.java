@@ -18,6 +18,11 @@ public final class NarrowContentFetchReservationTestSupport {
     public record Payload(UUID checkpoint,byte[] commandBytes,byte[] bootstrapBytes) {}
     public static Payload payload(JdbcTemplate jdbc,ManagementTransactions tx,WorkerRepository workers,InstallationHostGuard guard,WorkerRepository.Owner owner,UUID operation){var p=new NarrowContentFetchReservation(jdbc,tx,workers).prepare(guard,owner,operation);return new Payload(p.checkpoint(),p.commandBytes(),p.bootstrapBytes());}
 
+    public static String deploymentDigest(JdbcTemplate jdbc,String profileId){
+        byte[] bytes=jdbc.queryForObject("SELECT configuration_bytes FROM ddip_management.execution_profiles WHERE profile_id=?",byte[].class,profileId);
+        return SourceJson.parse(bytes).get("runtime").get("deploymentSha256").stringValue();
+    }
+
     /** Fully hash-linked runtime registrations, with deliberately nonexistent executable/JAR paths. */
     public static void registerChain(JdbcTemplate jdbc,String profileId,ObjectNode profile,String product){
         var fixture=new NarrowContentRuntimeQualificationTest.Fixture();
