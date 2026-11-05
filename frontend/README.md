@@ -779,3 +779,33 @@ All **10 retained Gold files** have identical SHA-256 hashes, sizes and modifica
 Each analytical request starts and verifies a publication in Python. Only the active view fetches; browser abort does not guarantee immediate cancellation of already-running server work, so rapid navigation can still receive the existing capacity response. Retry is manual. Default process/output bounds may reject unusually large article metadata even at ten rows. There is no result cache, URL-based view/history state, engagement report, authentication, deployment routing or publication switching. The bounded source selector and chart limits are intentional, not global completeness guarantees.
 
 Before M6 closeout: restore browser automation or perform owner-led desktop/narrow checks for all views, traverse all article pages and inspect safe links without fetching publisher data, run hosted CI after owner publication, and review accessibility plus deployment/runtime operating limits. M6 remains in progress until that end-to-end acceptance and closeout review are recorded.
+
+## Enriched Content catalog
+
+The separate `#/content` Analytics route reads `GET /api/v1/content/catalog`.
+It does not replace the existing Gold views or Reliability request windows.
+Only the visible workspace fetches. The Content session independently pins its
+Content publication, base Gold publication, and publisher-reference ID, revision
+and fingerprint. A change to any identity blocks further Content requests until
+reload, including after navigating away and back. Aborted or obsolete completions
+cannot pin the session, replace rows or trigger that latch.
+
+The catalog has exact-source, inclusive UTC discovery-date, reference-status,
+publisher-category, declared-language and country-code filters. Reference options
+use the native fixed vocabulary. Page sizes are 10, 25 or 100; the HTTP boundary
+accepts limits 1–1000 and offsets 0–1000000. Applying filters resets the offset.
+Page/filter changes clear old rows immediately. Pages preserve native ordering:
+last observed descending, then article ID ascending. No global total is inferred.
+
+Discovery is the first observation in the selected history, not the original
+publication date or first internet appearance. Counts describe recorded ingestion
+observations, not readership. Missing reference rows retain articles with explicit
+null metadata. Counts remain exact decimal strings and timestamps retain six
+fractional digits. The client verifies exact field sets, identities, filter echoes,
+row/filter agreement, ordering, reference null semantics and native vocabulary.
+Titles, summaries and publisher metadata render as text; article navigation reuses
+the existing HTTP(S)-only safe-link checks and never fetches article resources.
+
+Deterministic contract and UI coverage lives in `src/contentApi.test.ts` and
+`src/ContentCatalog.test.tsx`. Browser walkthrough and visual polish remain separate
+from this bounded implementation.

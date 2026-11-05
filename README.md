@@ -16,7 +16,7 @@ Statuses describe scoped capabilities and evidence, not production readiness.
 | Capability | Status | Scope and remaining boundary |
 | --- | --- | --- |
 | Standalone Content Processing | ✓ Implemented and locally tested | RSS/Atom ingestion, SeaweedFS Bronze, Spark Silver and Gold |
-| Publisher Enrichment and Content Reports | ✓ Implemented and locally tested | Versioned publisher-reference enrichment and standalone DuckDB reports |
+| Publisher Enrichment and Content Reports | ✓ Implemented and locally tested | Versioned publisher-reference enrichment, standalone DuckDB reports and a bounded [REST/React enriched catalog](docs/architecture/content-catalog-api.md) |
 | Gold REST APIs and React Analytics | ✓ Implemented and locally tested | Four analytical endpoints and dashboard views; final browser acceptance and closeout remain pending |
 | Managed Reliability Processing | ✓ Implemented and locally tested | JSONL/Parquet inputs, fixed-profile worker execution, Spark publication and independent output verification |
 | Durable Source and Run Management | ✓ Implemented and locally tested | Source revisions, verified imports, frozen run submissions and bounded execution history |
@@ -30,7 +30,7 @@ Statuses describe scoped capabilities and evidence, not production readiness.
 | Data product | Selected inputs | Resulting datasets and information | Current consumers |
 | --- | --- | --- | --- |
 | Content: feed history and Gold analytics | RSS/Atom XML snapshots, preserved with Bronze ingestion metadata in SeaweedFS | Silver accepted/rejected observations; Gold article catalog and source/day activity, with quality diagnostics | Content analysts through DuckDB SQL, Spring Boot REST and the React dashboard |
-| Content: publisher enrichment | One completed Gold publication and one versioned publisher-reference CSV snapshot | Immutable `content_catalog_v1` and `content_source_discovery_daily_v1` Parquet; publisher context, first discovery within selected history and reference coverage | Standalone DuckDB reports/CLI; no enriched Content REST or dashboard integration yet |
+| Content: publisher enrichment | One completed Gold publication and one versioned publisher-reference CSV snapshot | Immutable `content_catalog_v1` and `content_source_discovery_daily_v1` Parquet; publisher context, first discovery within selected history and reference coverage | Standalone DuckDB reports/CLI and a separately pinned, paged enriched catalog through REST and React |
 | Application Reliability v2 | Explicitly registered synthetic JSONL v2 or Parquet v1 request batches, plus one versioned service-reference CSV snapshot | Immutable event, occurrence and five-minute aggregate Parquet; request counts, 5xx error rates, mean latency, rank-qualified approximate p95, duplicate/rejection accounting and reference coverage | Service/data engineers through independent DuckDB reports/CLI; operators inspect managed execution through REST |
 
 Content observation counts describe retained feed observations, **not readership or engagement**. Discovery is scoped to the selected history. Reliability inputs are **synthetic request events, not real production monitoring**. Each Reliability publication uses one homogeneous input format.
@@ -63,6 +63,7 @@ flowchart TB
     end
 
     goldSQL --> api
+    contentSQL -->|"bounded enriched catalog"| api
     worker -->|"fixed publisher"| spark
     worker -->|"independent verification"| reliabilitySQL
     worker -.-> managedContent["Managed Content internal success path<br/>production dispatch disabled"]
@@ -76,7 +77,7 @@ flowchart TB
     class managedContent planned;
 ```
 
-Solid arrows show implemented paths; dashed arrows show planned managed Content execution. Content batches already work independently of the worker. The current React application consumes Gold analytics, while enriched Content and Reliability reports have standalone readers. PostgreSQL stores control and qualification metadata; native files remain the data authority. A newly verified worker result does not automatically replace the API's selected analytics publication.
+Solid arrows show implemented paths; dashed arrows show planned managed Content execution. Content batches already work independently of the worker. The current React application consumes Gold analytics, the separately pinned enriched Content catalog and bounded Reliability request windows; native report readers remain authoritative. PostgreSQL stores control and qualification metadata; native files remain the data authority. A newly verified worker result does not automatically replace the API's selected analytics publication.
 
 One worker startup is pinned to one approved execution profile and deployment digest. JSONL and Parquet use separate reviewed startups; stop the worker before changing profiles. It processes compatible runs in submission order. Content and other-profile runs remain queued. Ambiguous execution retains occupied ownership and blocks further dispatch; an expired heartbeat is never permission to take over.
 
