@@ -169,6 +169,10 @@ therefore supplements, and does not replace, pinned native CI or operational int
 
 ## Remaining Gate B0 work
 
+The later [inactive whole-publication helpers](narrow-publication-envelopes.md) qualify supplied
+complete projected objects with the existing slots/readers. They do not yet implement a
+precompletion projection or close the runtime/recovery gates below.
+
 1. Determine producer-reachable Gold/Content metadata bounds and all first rejected boundaries,
    including real Spark output names, sidecars, directories, maximum rows and resource cost.
 2. Establish complete allocations across commands, proofs, reference snapshots, observation packets,
