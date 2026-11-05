@@ -1823,3 +1823,8 @@ local root identities, executable availability and the existing space floors, th
 observations and registrations. It does not read credentials, run native code or establish
 interpreter/package versions or strict-sink compatibility. Results remain non-launchable; no
 registration, migration, operation journal, recovery or dispatch behavior changes.
+
+The [V12 native fetch reservation record](../../docs/operations/narrow-native-fetch-reservation.md)
+adds only an inactive, single-use FETCH_SOURCE/0 reservation and facts-only historical inspection.
+It preserves the V11 probe, rejects probe-used attempts and introduces no launch, completion,
+stage success or dispatch capability.

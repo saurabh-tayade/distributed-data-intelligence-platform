@@ -104,3 +104,7 @@ Native execution, explicit narrow recovery and dispatch remain unqualified and d
 [ADR 0029](0029-inactive-strict-fetch-child.md) records the inactive Java ledger-v2
 FETCH_SOURCE child, bounded EOF-gated bootstrap and existing-slot one-shot evidence prefix.
 It creates candidates only, without SQL reservation, parent completion or production dispatch.
+
+[ADR 0030](0030-inactive-native-fetch-reservation.md) adds a separate immutable, inactive
+FETCH_SOURCE/0 native reservation with exact command/bootstrap facts and facts-only inspection.
+It preserves the V11 probe and excludes probe-used attempts, without child launch or completion.
