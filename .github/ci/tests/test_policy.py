@@ -58,6 +58,14 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual({job for job, value in result["jobs"].items() if value == "true"}, set(required))
         return result
 
+    def test_reliability_frontend_native_parity_is_mandatory(self):
+        self.assertIn("Set up Node for native frontend parity", block("analytics_http"))
+        self.assertIn("DDIP_RELIABILITY_HTTP_FIXTURES=../services/content-api/target/reliability-frontend-parity.json npm --prefix frontend test -- reliabilityNativeParity.test.ts", block("analytics_http"))
+        self.assertLess(block("analytics_http").index("verify -Pintegration"), block("analytics_http").index("DDIP_RELIABILITY_HTTP_FIXTURES"))
+        self.assertEqual(1, block("analytics_http").count("uses: actions/setup-node@"))
+        self.assertEqual(1, block("analytics_http").count("npm ci --prefix frontend"))
+        self.assertLess(block("analytics_http").index("verify -Pintegration"), block("analytics_http").index("DDIP_CONTENT_HTTP_FIXTURES"))
+
     def test_dependency_table(self):
         cases = [
             ("README.md", ()), ("docs/operations/ci.md", ()),
@@ -67,6 +75,9 @@ class ClassificationTests(unittest.TestCase):
             ("frontend/src/contentApi.ts", ("analytics_http",)),
             ("frontend/src/api.ts", ("analytics_http",)),
             ("frontend/src/contentNativeParity.test.ts", ("analytics_http",)),
+            ("frontend/src/reliabilityApi.ts", ("analytics_http",)),
+            ("frontend/src/reliabilityCoverageApi.ts", ("analytics_http",)),
+            ("frontend/src/reliabilityNativeParity.test.ts", ("analytics_http",)),
             ("frontend/src/App.tsx", ()), ("frontend/src/test/fixtures.ts", ()),
             ("ingestion/src/test/java/ExampleTest.java", ("ingestion",)),
             ("ingestion/src/test/java/platform/ingestion/managed/BronzeFixture.java", ("ingestion", "content_postgres")),

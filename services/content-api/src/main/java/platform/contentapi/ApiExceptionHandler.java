@@ -18,7 +18,7 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(ApiFailure.class)
     public ResponseEntity<ErrorResponse> failure(ApiFailure failure) {
-        return ResponseEntity.status(failure.code().status()).body(new ErrorResponse(failure.code().name()));
+        return ResponseEntity.status(failure.code().status()).cacheControl(org.springframework.http.CacheControl.noStore()).body(new ErrorResponse(failure.code().name()));
     }
 
     @ExceptionHandler({MethodArgumentTypeMismatchException.class, HandlerMethodValidationException.class})

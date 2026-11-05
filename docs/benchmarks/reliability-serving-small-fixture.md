@@ -1,10 +1,10 @@
 # Reliability consumer: bounded serving evidence
 
 This closes the measurement/documentation gap in [#58](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/issues/58)
-for the implemented [request-window consumer](../architecture/reliability-analytics-api.md).
+for the implemented [Reliability consumers](../architecture/reliability-analytics-api.md).
 It measures the unchanged verified native reader, native CLI and real loopback Spring HTTP
 endpoint. It is a small synthetic fixture experiment, not a throughput, scale, production,
-Spark-producer or hosted-deployment benchmark. No endpoint or native contract changes are made.
+Spark-producer or hosted-deployment benchmark. The original request-window experiment and later coverage extension below preserve native contracts.
 
 ## Workload and environment
 
@@ -151,8 +151,8 @@ latency/concurrency requirement or representative workload here that justifies a
 A future evaluation should compare verified ingest/refresh cost, exact numeric/null/timestamp
 parity, atomic publication selection, storage and operational overhead under an agreed workload.
 The present measurements do not establish a benefit, so neither PostgreSQL nor a reader cache
-is introduced. Adding Reliability input/reference reports or enriched Content REST contracts is
-optional follow-on consumer scope, not needed to satisfy #58's minimum of one additional consumer.
+is introduced. Coverage reports were optional follow-on scope at the time of this original measurement; the
+implemented extension and separate measurements are recorded below. No new serving store is added.
 
 Freshness and consistency are publication-scoped:
 
@@ -225,3 +225,75 @@ Markdown/relative-link, repository-hygiene and whitespace checks passed. The mea
 passed all 60 page comparisons across native/CLI/HTTP and left their fixture inventories unchanged.
 Full Gold/Spark, PostgreSQL, frontend/browser, hosted CI, large-data and load testing are separate
 scopes; these timings do not substitute for them.
+
+## Coverage extension: November 5, 2026
+
+The same harness now accepts `--report input_coverage` or `--report reference_coverage`.
+These are separate five-sample runs for both raw input formats, using the new fixed HTTP
+endpoints and the unchanged native reports. Source base is `47fb83f896698b7e5576de1581452341e149d1de`
+plus the reviewed, uncommitted coverage slice. Each raw result records the built JAR and harness
+SHA-256, exact publication identity, envelopes, timings and retained file inventory.
+
+The [coverage fixture](../../services/content-api/tests/reliability_coverage_fixtures.py) extends
+hand-authored G1 to five batches/files: 14 physical occurrences, 8 valid deliveries, 4 unique
+events, 4 stored duplicates and 6 rejected occurrences. It includes an empty batch, a rejected
+occurrence with two reasons, duplicate-only scope, zero delay and negative delay beyond the
+JavaScript exact-integer range. Three metric groups and three selected reference keys remain.
+Fixture construction retains the original G1 seed publication; raw `retained_sizes.output`
+includes both seed and selected publications and must not be called selected-only output size.
+Only the selected publication is queried and verified. All retained hashes, sizes and mtimes
+remain unchanged after every measured path.
+
+Input uses no filters, `limit=1`, offsets 0 and 1, yielding batches b00 and b01. Both pages
+have more rows and identical complete-scope totals (14 physical / 8 valid / 4 distinct events).
+Reference uses no service filter, `limit=1`, offsets 0 and 1, yielding svc-unused then svc00.
+Both pages have more rows and the same total of 4 unique events. These queries have no time
+or environment filter. Every session, CLI and HTTP envelope matches exactly, including reason
+keys, signed strings, nulls, identity and types. Two reports together execute 40 native reports,
+40 CLI calls and 40 HTTP calls across 20 fresh JVMs.
+
+The environment, measurement boundaries and no-scale-claim limitations above still apply:
+Python 3.12.14 / DuckDB 1.4.5, Corretto 21.0.13, Linux x86_64, 9 visible CPUs and approximately
+10 GB reported host memory. Five serial samples have no discarded warmup; filesystem caches
+are warm and uncontrolled. This task ran no builds/tests during timing, but the shared host
+was not isolated. Results are observed medians/ranges, not throughput, tail latency or an SLA.
+
+Milliseconds, median (minimum–maximum), **n=5 per cell**:
+
+| Boundary | Input JSONL | Input Parquet | Reference JSONL | Reference Parquet |
+| --- | ---: | ---: | ---: | ---: |
+| Native import | 52.7 (47.2–58.8) | 54.6 (49.4–68.8) | 54.8 (50.9–56.8) | 54.1 (47.7–58.2) |
+| Fully verified session open | 112.0 (104.0–135.6) | 274.3 (253.6–298.4) | 130.4 (104.6–132.0) | 271.7 (269.8–306.4) |
+| First native report | 18.9 (17.4–19.4) | 19.5 (18.2–21.6) | 14.5 (11.7–19.1) | 15.4 (15.0–16.7) |
+| Later native report | 18.1 (16.8–19.7) | 19.5 (18.0–22.8) | 14.6 (10.8–18.5) | 13.1 (12.9–16.5) |
+| Fresh CLI, first page | 257.3 (250.7–267.1) | 395.2 (388.1–428.7) | 264.0 (234.5–280.2) | 394.2 (382.3–486.0) |
+| Fresh CLI, later page | 275.1 (243.9–280.3) | 419.3 (378.7–453.9) | 259.3 (243.7–267.3) | 409.1 (399.1–458.0) |
+| HTTP, first request | 304.4 (284.7–311.8) | 501.9 (442.0–570.4) | 311.5 (272.5–312.7) | 456.0 (427.7–506.6) |
+| HTTP, later page | 267.8 (255.6–286.5) | 440.8 (402.8–490.6) | 268.2 (236.0–319.0) | 432.1 (407.5–443.3) |
+| JVM health readiness, separate | 3006.4 (2845.3–3194.5) | 3005.5 (2784.2–3736.3) | 3278.5 (3169.2–3413.2) | 2903.5 (2855.3–3121.4) |
+
+Nested open-phase medians, milliseconds; these are already included in session open:
+
+| Existing phase | Input JSONL | Input Parquet | Reference JSONL | Reference Parquet |
+| --- | ---: | ---: | ---: | ---: |
+| verify_dependencies | 12.6 | 93.2 | 13.8 | 93.6 |
+| connection | 8.0 | 7.5 | 9.3 | 7.2 |
+| register_table | 10.0 | 10.3 | 10.5 | 9.2 |
+| validate_tables | 67.0 | 70.0 | 75.0 | 70.4 |
+| verify_raw | 4.5 | 79.9 | 5.0 | 82.2 |
+| prepare_reports | 2.4 | 2.4 | 2.9 | 2.8 |
+
+These tiny-fixture results continue to show verification/startup dominating repeated same-session
+reports. They do not justify caching verification, introducing PostgreSQL projections, weakening
+dependency checks or making a general raw-format performance claim. No browser/remote-network
+latency, concurrency, worst-case response or production workload was measured.
+
+Reproduce after the API build, using a new output directory for each run:
+
+```sh
+python scripts/measure-reliability-serving.py --report input_coverage \
+  --output outputs/reliability-input-serving --samples 5 --java "$JAVA_HOME/bin/java"
+python scripts/measure-reliability-serving.py --report reference_coverage \
+  --output outputs/reliability-reference-serving --samples 5 --java "$JAVA_HOME/bin/java"
+python -I -B -m unittest discover -s scripts/tests -p test_measure_reliability_serving.py -v
+```

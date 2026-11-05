@@ -173,7 +173,8 @@ describe('Reliability filtering and bounded pages', () => {
     const response = page(); response.meta.offset = 1_000_000; response.meta.hasMore = true;
     const movePage = vi.fn();
     const model: ReturnType<typeof useReliability> = { query: { ...query, offset: 1_000_000 }, offset: 1_000_000, limit: 100,
-      current: { key: '', status: 'ready', response }, publication: PIN, blocked: false, movePage, apply: vi.fn(), retry: vi.fn() };
+      current: { status: 'ready', response }, publication: PIN, blocked: false, movePage, apply: vi.fn(), retry: vi.fn(),
+      report: 'request-windows', selectReport: vi.fn(), coverageQuery: {}, coverageCurrent: null, applyCoverage: vi.fn() };
     render(<ReliabilityWorkspace model={model} />);
     expect(screen.getByRole('button', { name: 'Next windows' })).toBeDisabled();
     expect(screen.getByText(/API maximum offset has been reached/)).toBeVisible();
@@ -266,7 +267,7 @@ describe('Reliability safe failures and session isolation', () => {
     await user.click(workspace('Analytics')); await screen.findByRole('heading', { name: 'Publisher breakdown' });
     await user.click(productLink('Application Reliability'));
     expect(await screen.findByRole('heading', { name: 'Publication changed' })).toBeVisible();
-    expect(screen.getByLabelText('Reliability publication fingerprint')).toHaveTextContent(PIN);
+    expect(screen.queryByLabelText('Reliability publication fingerprint')).not.toBeInTheDocument();
     expect(fetch.mock.calls.filter(([path]) => path.startsWith('/api/v1/reliability/'))).toHaveLength(reliabilityCount);
   });
 

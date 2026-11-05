@@ -33,14 +33,12 @@ class ReliabilityApiIT {
     private static final String START = "2026-10-01T00:00:00.000000Z";
     private static final String END = "2026-10-01T00:10:00.000000Z";
     private static final String WINDOW = "?start=" + START + "&end=" + END;
-    private static final List<String> ROW_FIELDS = List.of("window_start", "service_id", "environment",
-            "request_count", "server_error_count", "server_error_rate", "duration_sum_ms", "mean_duration_ms",
-            "p95_duration_ms_approx", "service_name", "owner_team", "service_tier", "reference_status");
     private static Path fixtures;
     private static Path processing;
     private static String python;
     private static JsonNode reference;
     private static Map<String, String> baseline;
+    private static final List<JsonNode> frontendParity = new ArrayList<>();
 
     @BeforeAll
     static void load() throws Exception {
@@ -70,6 +68,8 @@ class ReliabilityApiIT {
     @AfterAll
     static void inputsAndPublicationsAreReadOnly() throws Exception {
         if (baseline != null) assertEquals(baseline, inventory());
+        assertEquals(258, frontendParity.size(), "Every successful native/HTTP scenario must reach frontend parity");
+        Files.writeString(fixtures.resolveSibling("reliability-frontend-parity.json"), JSON.writeValueAsString(frontendParity));
     }
 
     private static Path root(String format) {
@@ -93,10 +93,20 @@ class ReliabilityApiIT {
     }
 
     private static HttpResponse<String> get(ConfigurableApplicationContext context, String query) throws Exception {
+        return get(context, "requests_5m", query);
+    }
+
+    private static HttpResponse<String> get(ConfigurableApplicationContext context, String report, String query) throws Exception {
+        String endpoint = switch (report) {
+            case "requests_5m" -> "request-windows";
+            case "input_coverage" -> "input-coverage";
+            case "reference_coverage" -> "reference-coverage";
+            default -> throw new AssertionError("Unknown report " + report);
+        };
         int port = ((WebServerApplicationContext) context).getWebServer().getPort();
         try (var client = HttpClient.newHttpClient()) {
             return client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port
-                            + "/api/v1/reliability/request-windows" + query)).timeout(Duration.ofSeconds(40))
+                            + "/api/v1/reliability/" + endpoint + query)).timeout(Duration.ofSeconds(40))
                     .GET().build(), HttpResponse.BodyHandlers.ofString());
         }
     }
@@ -130,13 +140,15 @@ class ReliabilityApiIT {
             ref.set(camel(name), nativeEnvelope.path("reference").get(name));
         }
         var filters = rest.putObject("filters");
-        for (String name : List.of("service_id", "environment", "start", "end")) {
-            filters.set(camel(name), nativeEnvelope.path("filters").get(name));
+        for (var field : nativeEnvelope.path("filters").properties()) filters.set(camel(field.getKey()), field.getValue());
+        if (nativeEnvelope.has("totals")) {
+            var totals = rest.putObject("totals");
+            for (var field : nativeEnvelope.path("totals").properties()) totals.set(camel(field.getKey()), field.getValue());
         }
         var rows = rest.putArray("data");
         for (JsonNode nativeRow : nativeEnvelope.path("rows")) {
             var row = rows.addObject();
-            for (String name : ROW_FIELDS) row.set(camel(name), nativeRow.get(name));
+            for (var field : nativeRow.properties()) row.set(camel(field.getKey()), field.getValue());
         }
         rest.putObject("meta").put("returned", rows.size())
                 .put("limit", Integer.parseInt(nativeEnvelope.path("limit").asString()))
@@ -148,30 +160,34 @@ class ReliabilityApiIT {
     @TestFactory
     List<DynamicTest> everyFieldAndTypeMatchesNativeCliForBothFormats() {
         List<DynamicTest> tests = new ArrayList<>();
-        for (String format : List.of("JSONL", "PARQUET")) {
-            tests.add(DynamicTest.dynamicTest("Native HTTP parity, filters, pages and pre-epoch UTC: " + format, () -> {
-                try (var context = start(root(format), publication(format), processing)) {
-                    int seen = 0;
-                    for (JsonNode scenario : reference.path("scenarios")) {
-                        if (!format.equals(scenario.path("input_format").asString())) continue;
-                        var response = get(context, query(scenario.path("options")));
-                        assertEquals(200, response.statusCode(), scenario.path("name").asString() + ": " + response.body());
+        Map<String, List<JsonNode>> groups = new TreeMap<>();
+        for (JsonNode scenario : reference.path("scenarios")) {
+            groups.computeIfAbsent(scenario.path("root").asString(), ignored -> new ArrayList<>()).add(scenario);
+        }
+        for (var group : groups.entrySet()) {
+            tests.add(DynamicTest.dynamicTest("Native HTTP field/type parity: " + group.getKey(), () -> {
+                var first = group.getValue().getFirst();
+                try (var context = start(fixtures.resolve(group.getKey()), first.path("publication").asString(), processing)) {
+                    for (JsonNode scenario : group.getValue()) {
+                        String report = scenario.path("report").asString();
+                        var response = get(context, report, query(scenario.path("options")));
+                        String name = group.getKey() + "/" + report + "/" + scenario.path("name").asString();
+                        assertEquals(200, response.statusCode(), name + ": " + response.body());
+                        assertEquals("no-store", response.headers().firstValue("Cache-Control").orElse(null));
                         JsonNode actual = JSON.readTree(response.body());
-                        assertEquals(restEnvelope(scenario.path("envelope")), actual, scenario.path("name").asString());
-                        for (JsonNode row : actual.path("data")) {
-                            for (String metric : List.of("requestCount", "serverErrorCount", "durationSumMs", "p95DurationMsApprox")) {
-                                assertTrue(row.get(metric).isString(), metric);
-                            }
-                            assertTrue(row.get("serverErrorRate").isNumber());
-                            assertTrue(row.get("meanDurationMs").isNumber());
-                        }
+                        assertEquals(restEnvelope(scenario.path("envelope")), actual, name);
                         assertTrue(actual.path("productContractVersion").isIntegralNumber());
                         assertTrue(actual.path("processorRevision").isIntegralNumber());
                         for (String number : List.of("returned", "limit", "offset")) assertTrue(actual.path("meta").path(number).isIntegralNumber());
                         assertTrue(actual.path("meta").path("hasMore").isBoolean());
-                        seen++;
+                        var parity = JSON.createObjectNode().put("report", report).put("name", name);
+                        var frontendQuery = parity.putObject("query");
+                        for (var field : scenario.path("options").properties()) frontendQuery.set(camel(field.getKey()), field.getValue());
+                        parity.set("response", actual);
+                        frontendParity.add(parity);
                     }
-                    assertEquals(17, seen, "Do not silently omit a parity scenario");
+                    assertEquals(first.path("variant").asString().equals("g1") ? 17 : 28, group.getValue().size(),
+                            "Do not silently omit a parity scenario");
                 }
             }));
         }
@@ -188,6 +204,11 @@ class ReliabilityApiIT {
                     assertError(get(context, WINDOW), 500, "ANALYTICS_EXECUTION_FAILED");
                     // An empty filter cannot bypass the full native publication/dependency verifier.
                     assertError(get(context, WINDOW + "&serviceId=absent-service"), 500, "ANALYTICS_EXECUTION_FAILED");
+                    for (String report : List.of("input_coverage", "reference_coverage")) {
+                        assertError(get(context, report, ""), 500, "ANALYTICS_EXECUTION_FAILED");
+                        assertError(get(context, report, report.equals("input_coverage") ? "?sourceId=absent" : "?serviceId=absent"),
+                                500, "ANALYTICS_EXECUTION_FAILED");
+                    }
                 }
             }));
         }
@@ -214,18 +235,41 @@ class ReliabilityApiIT {
     }
 
     @Test
+    void coverageParametersRejectUnsupportedAndAmbiguousQueries() throws Exception {
+        try (var context = start(root("JSONL"), publication("JSONL"), processing)) {
+            for (String report : List.of("input_coverage", "reference_coverage")) {
+                for (String bad : List.of("?limit=0", "?limit=1001", "?offset=1000001", "?limit=01", "?offset=-1",
+                        "?limit=2&limit=2", "?start=" + START, "?end=" + END, "?environment=test", "?report=input_coverage",
+                        "?root=/tmp", "?publication=" + publication("JSONL"))) {
+                    assertError(get(context, report, bad), 400, "INVALID_ARGUMENT");
+                }
+            }
+            for (String bad : List.of("?serviceId=svc00", "?sourceId=", "?batchId=", "?sourceId=UPPER", "?batchId=a/b", "?sourceId=a&sourceId=a")) {
+                assertError(get(context, "input_coverage", bad), 400, "INVALID_ARGUMENT");
+            }
+            for (String bad : List.of("?sourceId=bench-source", "?batchId=b00", "?serviceId=", "?serviceId=UPPER", "?serviceId=a&serviceId=a")) {
+                assertError(get(context, "reference_coverage", bad), 400, "INVALID_ARGUMENT");
+            }
+        }
+    }
+
+    @Test
     void missingConfiguredPublicationAndRuntimeFailuresNeverReturnRows() throws Exception {
         try (var context = start(root("JSONL"), "", processing)) {
             assertError(get(context, WINDOW), 503, "PUBLICATION_UNAVAILABLE");
+            for (String report : List.of("input_coverage", "reference_coverage")) assertError(get(context, report, ""), 503, "PUBLICATION_UNAVAILABLE");
         }
         try (var context = start(root("JSONL"), "0".repeat(64), processing)) {
             assertError(get(context, WINDOW), 500, "ANALYTICS_EXECUTION_FAILED");
+            for (String report : List.of("input_coverage", "reference_coverage")) assertError(get(context, report, ""), 500, "ANALYTICS_EXECUTION_FAILED");
         }
         try (var context = start(root("JSONL"), publication("JSONL"), fixtures.resolve("missing native dependency"))) {
             assertError(get(context, WINDOW), 500, "ANALYTICS_EXECUTION_FAILED");
+            for (String report : List.of("input_coverage", "reference_coverage")) assertError(get(context, report, ""), 500, "ANALYTICS_EXECUTION_FAILED");
         }
         try (var context = start(root("JSONL"), publication("JSONL"), fixtures.resolve("missing processing directory"))) {
             assertError(get(context, WINDOW), 503, "ANALYTICS_RUNTIME_UNAVAILABLE");
+            for (String report : List.of("input_coverage", "reference_coverage")) assertError(get(context, report, ""), 503, "ANALYTICS_RUNTIME_UNAVAILABLE");
         }
     }
 

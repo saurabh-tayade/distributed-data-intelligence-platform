@@ -1745,7 +1745,7 @@ run is implemented. Content reconciliation remains unsupported by the Reliabilit
 command. See the [D3 operator contract and measured tests](../../docs/operations/managed-rss-fetch.md#d3-managed-silver-lifecycle)
 and [ADR 0015 implementation record](../../docs/adr/0015-managed-silver-receipt-adapter.md).
 
-## Reliability request-window analytics (#58)
+## Reliability analytics (#58)
 
 The read-only `GET /api/v1/reliability/request-windows` endpoint exposes the existing verified
 Reliability v2 report beside Content analytics. Required `start`/`end` select a five-minute-aligned,
@@ -1753,7 +1753,15 @@ exclusive-end UTC interval of at most 31 days; optional `serviceId`, `environmen
 `offset` retain native filter and pagination semantics. Exact metrics remain decimal strings and
 all results are explicitly synthetic. See the [contract, configuration and reproduction guide](../../docs/architecture/reliability-analytics-api.md).
 
-The endpoint invokes the fixed native `reliability_format_analytics.py` through the same bounded
+The same publication also serves `GET /api/v1/reliability/input-coverage` (optional exact
+`sourceId` and `batchId`) and `GET /api/v1/reliability/reference-coverage` (optional exact
+`serviceId`). Both accept only their permitted filters plus `limit`/`offset`, use native
+whole-filtered-scope totals before pagination, and do not inherit request-window filters.
+Input preserves stored duplicate dispositions separately from scoped duplicate excess,
+per-batch overlapping rejection reasons and signed exact receipt delays. Reference coverage
+counts unique valid events and includes unused reference keys.
+
+The endpoints invoke the fixed native `reliability_format_analytics.py` through the same bounded
 process runner as Content. Configure `reliability.analytics.publication` independently; no
 Operations result is automatically activated. Native CLI failures are generic safe execution
 failures because stderr is discarded, not parsed or returned. No publication switching, exports,
