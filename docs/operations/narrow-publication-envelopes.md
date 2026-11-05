@@ -56,6 +56,10 @@ No successful helper call reserves space or writes any output.
 
 ## Projection boundary and next design review
 
+The later [inactive temporary-marker projection](narrow-publication-projection.md) uses actual
+`complete.tmp` capture rather than guessed future stamp widths. It is pure and does not yet
+connect these checks to publication or select a new command transport.
+
 The caller must supply complete values, including actual reference evidence, bindings, original
 command, artifact identities, receipts, Gold/Content preparation and native verification.
 There are no default roots, zero-filled hashes, assumed UUIDs, sample receipts, file-count
