@@ -689,6 +689,14 @@ public final class WorkerRepository {
             return metadata.get();
         });
     }
+    /** Inactive operation fence. Never perform filesystem/process work inside this transaction. */
+    <T> T narrowOperationTransaction(InstallationHostGuard guard,Owner owner,java.util.function.Supplier<T> metadata){
+        return narrowAdmissionTransaction(guard,owner,()->{
+            contentControls(owner);
+            require(jdbc.queryForObject("SELECT count(*) FROM ddip_management.content_admission_milestones WHERE attempt_id=? AND phase='READY'",Long.class,owner.attemptId())==1,WORKER_NOT_READY);
+            return metadata.get();
+        });
+    }
     private void legacyExecution(Owner owner){
         require(!NarrowContentAdmission.hasHistory(jdbc,owner.runId()),WORKER_NOT_READY);
     }

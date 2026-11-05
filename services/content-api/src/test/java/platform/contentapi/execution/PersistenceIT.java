@@ -233,10 +233,11 @@ class PersistenceIT {
         assertThatThrownBy(() -> context("api")).hasMessage("MANAGEMENT_INCOMPATIBLE");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM pg_namespace WHERE nspname='ddip_management'",Integer.class)).isZero();
     }
-    @Test void missingOperationalTableIsRejectedWithoutRecreation() {
-        migrate(); jdbc.execute("DROP TABLE ddip_management.stage_artifacts");
+    @ParameterizedTest @ValueSource(strings={"stage_artifacts","content_operations","content_operation_phases"})
+    void missingOperationalTableIsRejectedWithoutRecreation(String table) {
+        migrate(); jdbc.execute("DROP TABLE ddip_management."+table+" CASCADE");
         assertThatThrownBy(() -> context("api")).hasMessage("MANAGEMENT_INCOMPATIBLE");
-        assertThat(jdbc.queryForObject("SELECT to_regclass('ddip_management.stage_artifacts')",String.class)).isNull();
+        assertThat(jdbc.queryForObject("SELECT to_regclass(?)",String.class,"ddip_management."+table)).isNull();
     }
     @Test void missingCoordinatorIsNotReinitializedOnRepeatedMigration() {
         migrate();

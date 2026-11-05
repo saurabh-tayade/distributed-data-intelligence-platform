@@ -60,6 +60,7 @@ class VerifierProcessTest {
         public static void main(String[] args)throws Exception {
             switch(args[0]) {
                 case "environment"->{if(System.getenv().containsKey("AWS_ACCESS_KEY_ID") || System.getenv().containsKey("HTTPS_PROXY") || System.getenv().containsKey("PYTHONPATH") || System.in.read()!=-1)System.exit(2);}
+                case "bootstrap"->{byte[] bytes=System.in.readNBytes(65537);if(!Arrays.equals(bytes,"READY".getBytes(java.nio.charset.StandardCharsets.US_ASCII)))System.exit(1);Files.write(Path.of(args[1]),bytes);}
                 case "marker"->Files.writeString(Path.of(args[1]),"STARTED");
                 case "failed"->System.exit(1);
                 case "invalid-result","malformed-result"->{var file=Path.of(args[1]).resolveSibling("result.json");Files.writeString(file,args[0].equals("invalid-result")?"{}":"{");Files.setPosixFilePermissions(file,java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));}

@@ -17,6 +17,11 @@ class ReadOnlyVerifierProcess {
         void started(InstallationHostGuard.ProcessIdentity child);
         void heartbeat();
     }
+    /** Optional bounded startup lane; ordinary native launches still receive immediate stdin EOF. */
+    interface BootstrapObserver extends Observer {
+        byte[] release(InstallationHostGuard.ProcessIdentity child);
+        default void beforeDelivery(){}
+    }
     record Result(int exitCode,InstallationHostGuard.ProcessIdentity child,long stdoutBytes,long stderrBytes,Set<String> descendants) { }
     private record Observed(ProcessHandle handle,Instant start) { }
     private java.util.function.BooleanSupplier stopping=()->false;
@@ -36,7 +41,7 @@ class ReadOnlyVerifierProcess {
     Result run(List<String> command,Map<String,String> environment,Path directory,Duration timeout,Observer observer) {
         PreflightFailure.need(!timeout.isNegative() && !timeout.isZero() && timeout.compareTo(Duration.ofMinutes(spark?30:15))<=0,RUNTIME_MISMATCH);
         Process p=null;Drain out=null,err=null;InstallationHostGuard.ProcessIdentity identity=null;boolean uncertain=false,interrupted=false;
-        RuntimeException failure=null;Result result=null;Map<Long,Observed> observed=new HashMap<>();
+        RuntimeException failure=null;Result result=null;Map<Long,Observed> observed=new HashMap<>();Thread[] bootstrapWriter={null};
         long deadline=System.nanoTime()+timeout.toNanos();
         try {
             if(stopping.getAsBoolean() || Thread.currentThread().isInterrupted())throw new InterruptedException();
@@ -44,11 +49,17 @@ class ReadOnlyVerifierProcess {
             observer.beforeStart(); // Last fenced transaction. Its failure must precede ProcessBuilder.start().
             if(stopping.getAsBoolean() || Thread.currentThread().isInterrupted())throw new InterruptedException();
             if(System.nanoTime()>=deadline)throw new PreflightFailure(STAGE_TIMEOUT);
-            p=builder.start();p.getOutputStream().close();
+            p=builder.start();if(!(observer instanceof BootstrapObserver))p.getOutputStream().close();
             out=new Drain(p.getInputStream(),outputLimit);err=new Drain(p.getErrorStream(),outputLimit);out.start();err.start();
             Instant start=p.info().startInstant().orElseThrow(()->new PreflightFailure(TERMINATION_UNCONFIRMED,false));
             identity=new InstallationHostGuard.ProcessIdentity(UUID.randomUUID(),p.pid(),start.truncatedTo(java.time.temporal.ChronoUnit.MICROS));
             observer.started(identity);
+            if(observer instanceof BootstrapObserver bootstrap){
+                // The observer acknowledges durable child identity and release BEFORE any bytes.
+                byte[] packet=bootstrap.release(identity);
+                PreflightFailure.need(packet!=null && packet.length>0 && packet.length<65536,RESOURCE_LIMIT);
+                sendBootstrap(p,packet,deadline,bootstrap::beforeDelivery,bootstrapWriter);
+            }
             long nextHeartbeat=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);
             while(true) {
                 if(stopping.getAsBoolean() || Thread.currentThread().isInterrupted())throw new InterruptedException();
@@ -82,16 +93,23 @@ class ReadOnlyVerifierProcess {
                         if(child.start()==null || !child.handle().info().startInstant().equals(Optional.of(child.start()))){uncertain=true;continue;}
                         child.handle().destroy();
                     }
-                    if(p.isAlive())p.destroy();
-                    if(!p.waitFor(graceful.toMillis(),TimeUnit.MILLISECONDS)){p.destroyForcibly();if(!p.waitFor(forced.toMillis(),TimeUnit.MILLISECONDS))uncertain=true;}
+                    if(p.isAlive())p.toHandle().destroy();
+                    if(!p.waitFor(graceful.toMillis(),TimeUnit.MILLISECONDS)){p.toHandle().destroyForcibly();if(!p.waitFor(forced.toMillis(),TimeUnit.MILLISECONDS))uncertain=true;}
                     for(var child:observed.values())if(child.handle().isAlive() && child.start()!=null && child.handle().info().startInstant().equals(Optional.of(child.start())))child.handle().destroyForcibly();
                     long until=System.nanoTime()+drain.toNanos();
                     for(var child:observed.values())while(child.handle().isAlive() && System.nanoTime()<until)TimeUnit.MILLISECONDS.sleep(5);
                     if(observed.values().stream().anyMatch(c->c.handle().isAlive()))uncertain=true;
+                    if(bootstrapWriter[0]!=null){
+                        bootstrapWriter[0].join(Duration.ofNanos(Math.max(0,until-System.nanoTime())));
+                        if(bootstrapWriter[0].isAlive()){uncertain=true;bootstrapWriter[0].interrupt();}
+                    }
                     for(Drain d:List.of(out==null?Drain.EMPTY:out,err==null?Drain.EMPTY:err))if(d.thread!=null){long remaining=Math.max(0,until-System.nanoTime());d.thread.join(Duration.ofNanos(remaining));if(d.thread.isAlive())uncertain=true;}
                 }catch(InterruptedException ex){interrupted=true;uncertain=true;}
                 catch(RuntimeException ex){uncertain=true;}
-                try{p.getInputStream().close();p.getErrorStream().close();p.getOutputStream().close();}catch(IOException ex){uncertain=true;}
+                try{p.getInputStream().close();p.getErrorStream().close();
+                    // Process.destroy closes stdin synchronously and can deadlock behind a blocked writer.
+                    // Signals above use ProcessHandle; never close this stream while that writer may own it.
+                    if(bootstrapWriter[0]==null || !bootstrapWriter[0].isAlive())p.getOutputStream().close();}catch(IOException ex){uncertain=true;}
                 if(out!=null && out.thread!=null)out.thread.interrupt();if(err!=null && err.thread!=null)err.thread.interrupt();
             }
             if(interrupted)Thread.currentThread().interrupt();
@@ -100,6 +118,38 @@ class ReadOnlyVerifierProcess {
         if(failure!=null)throw failure;
         if(result==null)throw new PreflightFailure(RESULT_INVALID,false);
         return result;
+    }
+    private void sendBootstrap(Process process,byte[] packet,long deadline,Runnable beforeDelivery,Thread[] bootstrapWriter)throws InterruptedException {
+        Thread parent=Thread.currentThread();
+        var deliveryAborted=new java.util.concurrent.atomic.AtomicBoolean();
+        long startupDeadline=Math.min(deadline,System.nanoTime()+TimeUnit.SECONDS.toNanos(5));
+        Runnable gate=()->{
+            if(deliveryAborted.get() || stopping.getAsBoolean() || parent.isInterrupted() || Thread.currentThread().isInterrupted())throw new PreflightFailure(INTERRUPTED,false);
+            if(System.nanoTime()>=startupDeadline)throw new PreflightFailure(STAGE_TIMEOUT,false);
+        };
+        gate.run();
+        var result=new java.util.concurrent.CompletableFuture<Void>();
+        Thread writer=Thread.ofVirtual().name("narrow-bootstrap-writer").unstarted(()->{
+            try{
+                try(var pipe=process.getOutputStream()){beforeDelivery.run();gate.run();pipe.write(packet);pipe.flush();}
+                result.complete(null);
+            }catch(IOException|RuntimeException ex){result.completeExceptionally(ex);}
+        });
+        bootstrapWriter[0]=writer;writer.start();boolean delivered=false;
+        try{
+            long remaining=startupDeadline-System.nanoTime();
+            if(remaining<=0)throw new java.util.concurrent.TimeoutException();
+            result.get(remaining,TimeUnit.NANOSECONDS);
+            writer.join(Duration.ofNanos(Math.max(0,startupDeadline-System.nanoTime())));
+            if(writer.isAlive())throw new java.util.concurrent.TimeoutException();
+            delivered=true;
+        }catch(java.util.concurrent.TimeoutException ex){throw new PreflightFailure(STAGE_TIMEOUT,false);}
+        catch(java.util.concurrent.ExecutionException ex){if(ex.getCause() instanceof RuntimeException failure)throw failure;throw new PreflightFailure(RESULT_INVALID,false);}
+        finally{
+            // Thread flags can be consumed by callbacks or cleared for cleanup. Revocation cannot be.
+            if(!delivered)deliveryAborted.set(true);
+            if(writer.isAlive())writer.interrupt();
+        }
     }
     List<ProcessHandle> descendants(Process process){return process.descendants().limit(33).toList();}
     private static final class Drain implements Runnable {

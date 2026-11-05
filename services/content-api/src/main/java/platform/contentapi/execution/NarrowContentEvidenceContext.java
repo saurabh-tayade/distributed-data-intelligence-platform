@@ -45,6 +45,7 @@ final class NarrowContentEvidenceContext {
         return ContentEvidenceBudget.inspect(this,guard,independentlySupplied);
     }
     Path root(){return root;}
+    FrozenIdentities frozen(){return expected.frozen();}
     void check(InstallationHostGuard guard,FrozenIdentities independentlySupplied) {
         need(guard!=null && expected.frozen().equals(independentlySupplied),RUNTIME_MISMATCH);
         need(expected.host().equals(guard.binding()),RUNTIME_MISMATCH);
