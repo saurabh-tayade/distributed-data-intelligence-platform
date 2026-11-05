@@ -100,3 +100,7 @@ current-writer identity, recovery adoption or dispatch. Gate B0 remains closed.
 separate durable operation journal and bounded startup-pipe direction. The inactive integration
 is one original read-only probe with permanent reservation consumption and facts-only history.
 Native execution, explicit narrow recovery and dispatch remain unqualified and disabled.
+
+[ADR 0029](0029-inactive-strict-fetch-child.md) records the inactive Java ledger-v2
+FETCH_SOURCE child, bounded EOF-gated bootstrap and existing-slot one-shot evidence prefix.
+It creates candidates only, without SQL reservation, parent completion or production dispatch.
