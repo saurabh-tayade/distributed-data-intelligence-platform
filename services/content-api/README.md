@@ -1814,3 +1814,12 @@ separates original ledger coordinates from historical SQL stages and native comm
 Its registered runtime-chain and command-identity inspectors are read-only and return no execution
 authority. Existing runtime-v2 adapters still consume ledger-v1, not the READY strict-sink plan.
 No native routing policy, publisher launch, journal consumption, recovery or dispatch is enabled.
+
+## Inactive installed Content runtime observations (#49)
+
+The [installed-runtime observer](../../docs/operations/narrow-installed-runtime-observations.md)
+reconstructs READY and registered configuration correspondence, verifies bounded JAR/module bytes,
+local root identities, executable availability and the existing space floors, then rechecks the
+observations and registrations. It does not read credentials, run native code or establish
+interpreter/package versions or strict-sink compatibility. Results remain non-launchable; no
+registration, migration, operation journal, recovery or dispatch behavior changes.
