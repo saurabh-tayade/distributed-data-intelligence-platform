@@ -17,6 +17,9 @@ public final class NarrowContentFetchLaunchTestChild {
         UUID operation=UUID.fromString(args[5]);
         if(args[1].equals("inspect")){
             var facts=NarrowContentFetchLaunchTestSupport.inspect(jdbc,tx,workers,operation);
+            var assessment=NarrowContentFetchRecoveryAssessmentTestSupport.inspect(jdbc,tx,null,UUID.fromString(args[3]),UUID.fromString(args[4]));
+            if(assessment.authorization() || assessment.quiescenceEstablished() || assessment.nativeLaunchCompatible())throw new AssertionError("ASSESSMENT_GRANTED_AUTHORITY");
+            if(!assessment.durable().prefix().equals(facts.phases().getLast()) || !assessment.integrity().equals("NOT_INSPECTED_NO_CHECKPOINT"))throw new AssertionError("INVALID_ASSESSMENT");
             System.out.println("NARROW_LAUNCH_HISTORY "+ProcessHandle.current().pid()+" "+String.join(",",facts.phases())+" "+facts.candidateSha256());
             if(facts.completed() || facts.nativeLaunchCompatible())throw new AssertionError("HISTORY_MUST_NOT_AUTHORIZE_EXECUTION");
             return;

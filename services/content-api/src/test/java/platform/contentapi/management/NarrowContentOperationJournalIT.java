@@ -35,6 +35,13 @@ class NarrowContentOperationJournalIT extends NarrowContentAdmissionFixtures {
         assertThat(jdbc.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isEqualTo(owner.attemptId());
     }
     void stopAt(String point){assertThatThrownBy(()->probe(b->{if(b.equals(point))throw new IllegalStateException("TEST_BOUNDARY");})).hasMessage("TEST_BOUNDARY");}
+    @ParameterizedTest @ValueSource(strings={"RESERVED","PROBE_COMPLETED"})
+    void nativeFetchAssessmentRejectsIncompatibleProbeHistoryWithoutMutation(String prefix)throws Exception{
+        prepared();if(prefix.equals("RESERVED"))stopAt(prefix);else probe(b->{});
+        var before=metadata();var files=filesystem();var facts=facts();
+        assertThatThrownBy(()->NarrowContentFetchRecoveryAssessmentTestSupport.inspect(jdbc,tx,guard,owner.runId(),owner.attemptId())).hasMessage("WORKER_NOT_READY");
+        assertThat(metadata()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);assertThat(facts()).isEqualTo(facts);retained();noExecution();
+    }
     @Test void reservationPrecedesEveryFileAndChildAndCompletionPreservesTheRunModel()throws Exception{
         prepared();var events=new ArrayList<String>();var before=filesystem();
         var result=probe(b->{

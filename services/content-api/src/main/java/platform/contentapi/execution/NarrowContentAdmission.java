@@ -24,7 +24,7 @@ final class NarrowContentAdmission {
         Objects.requireNonNull(fault);
         // Commit the tracked, single-use preparation intent BEFORE the first directory or file effect.
         var enrollment=workers.narrowAdmissionTransaction(guard,owner,()->{
-            var n=readEnrollment(jdbc,guard,owner.runId(),owner.attemptId());
+            var n=readEnrollment(jdbc,guard.binding(),owner.runId(),owner.attemptId());
             require(jdbc.queryForObject("SELECT count(*) FROM ddip_management.content_admission_milestones WHERE attempt_id=?",Long.class,owner.attemptId())==0,WORKER_NOT_READY);
             milestone(jdbc,owner.attemptId(),"PREPARING",receipt(n));return n;
         });
@@ -35,7 +35,7 @@ final class NarrowContentAdmission {
         new NarrowContentEvidenceContext(prepared.expected()).inspect(guard,prepared.independentlySupplied());
         fault.accept(Boundary.BEFORE_READY);
         workers.narrowAdmissionTransaction(guard,owner,()->{
-            var current=readEnrollment(jdbc,guard,owner.runId(),owner.attemptId());
+            var current=readEnrollment(jdbc,guard.binding(),owner.runId(),owner.attemptId());
             require(Arrays.equals(SourceJson.canonical(enrollment),SourceJson.canonical(current)),RUNTIME_MISMATCH);
             readMilestone(jdbc,owner.attemptId(),"PREPARING",current);
             var e=prepared.expected();var ready=receipt(current).put("rootDevice",Long.toString(e.rootIdentity().device()))
@@ -51,7 +51,7 @@ final class NarrowContentAdmission {
         require(!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive(),WORKER_CONFIGURATION_INVALID);
         guard.checkHeld(guard.binding().installationId());
         var expected=tx.required(()->{
-            var n=readEnrollment(jdbc,guard,run,attempt);readMilestone(jdbc,attempt,"PREPARING",n);
+            var n=readEnrollment(jdbc,guard.binding(),run,attempt);readMilestone(jdbc,attempt,"PREPARING",n);
             var ready=readMilestone(jdbc,attempt,"READY",n);
             return new NarrowContentEvidenceContext.Expected(NarrowContentProfile.POLICY,run,attempt,NarrowContentEvidenceContext.PlanKind.ORIGINAL,
                     n.get("sourceId").stringValue(),guard.binding(),identity(ready,"root"),identity(ready,"lock"),identities(n),ready.get("ledgerSha256").stringValue());
@@ -60,18 +60,42 @@ final class NarrowContentAdmission {
     }
     /** Called only inside the same claim transaction after the owner pointers have been written. */
     static void enroll(JdbcTemplate jdbc,InstallationHostGuard guard,UUID run,UUID attempt){
-        byte[] bytes=SourceJson.canonical(independent(jdbc,guard,run,attempt));require(bytes.length<=65536,RUNTIME_MISMATCH);
+        byte[] bytes=SourceJson.canonical(independent(jdbc,guard.binding(),run,attempt));require(bytes.length<=65536,RUNTIME_MISMATCH);
         jdbc.update("INSERT INTO ddip_management.content_attempt_admissions(attempt_id,policy,admission_bytes,admission_sha256) VALUES (?,?,?,?)",attempt,NarrowContentProfile.POLICY,bytes,SourceJson.sha(bytes));
+    }
+    /** SQL-only immutable admission prefix. No installed runtime or filesystem access. */
+    record Historical(List<String> phases,String admissionSha256,NarrowContentEvidenceContext.Expected ready) {
+        Historical {phases=List.copyOf(phases);}
+        @Override public String toString(){return "AdmissionHistory[detached]";}
+    }
+    static Historical inspectHistorical(JdbcTemplate jdbc,UUID run,UUID attempt){
+        var row=one(jdbc.queryForList("SELECT admission_bytes,admission_sha256 FROM ddip_management.content_attempt_admissions WHERE attempt_id=?",attempt));
+        var n=canonical((byte[])row.get("admission_bytes"),(String)row.get("admission_sha256"));
+        var host=n.get("controlBinding");
+        var binding=new InstallationHostGuard.Binding(SourceJson.text(host.get("bindingId")),UUID.fromString(SourceJson.text(host.get("installationId"))),
+                java.nio.file.Path.of(SourceJson.text(host.get("root"))),identity(host,"root"),identity(host,"guard"),identity(host,"installation"));
+        require(Arrays.equals(binding.descriptor(),SourceJson.canonical(host)),RUNTIME_MISMATCH);
+        n=readEnrollment(jdbc,binding,run,attempt);
+        var phases=jdbc.queryForList("SELECT phase FROM ddip_management.content_admission_milestones WHERE attempt_id=? ORDER BY CASE phase WHEN 'PREPARING' THEN 1 ELSE 2 END LIMIT 3",String.class,attempt);
+        var ordered=List.of("PREPARING","READY");require(phases.size()<=2 && phases.equals(ordered.subList(0,phases.size())),RUNTIME_MISMATCH);
+        if(!phases.isEmpty())readMilestone(jdbc,attempt,"PREPARING",n);
+        NarrowContentEvidenceContext.Expected ready=null;
+        if(phases.size()==2){
+            var r=readMilestone(jdbc,attempt,"READY",n);
+            ready=new NarrowContentEvidenceContext.Expected(NarrowContentProfile.POLICY,run,attempt,NarrowContentEvidenceContext.PlanKind.ORIGINAL,
+                    n.get("sourceId").stringValue(),binding,identity(r,"root"),identity(r,"lock"),identities(n),r.get("ledgerSha256").stringValue());
+        }
+        return new Historical(phases,(String)row.get("admission_sha256"),ready);
     }
     static boolean hasHistory(JdbcTemplate jdbc,UUID run){
         return jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.attempts WHERE run_id=? AND content_admission_policy IS NOT NULL)",Boolean.class,run);
     }
-    private static ObjectNode independent(JdbcTemplate jdbc,InstallationHostGuard guard,UUID run,UUID attempt){
+    private static ObjectNode independent(JdbcTemplate jdbc,InstallationHostGuard.Binding binding,UUID run,UUID attempt){
         try{
             var row=one(jdbc.queryForList("SELECT a.content_admission_policy,a.kind,a.attempt_no,a.instance_id,a.owner_epoch,r.captured_selection,r.selection_sha256,r.execution_profile_id,r.pipeline,w.installation_id,w.profile_sha256,w.host_binding_sha256,w.execution_profile_id AS worker_profile,p.configuration_bytes,p.configuration_sha256 FROM ddip_management.attempts a JOIN ddip_management.runs r USING(run_id) JOIN ddip_management.worker_instances w USING(instance_id) JOIN ddip_management.execution_profiles p ON p.profile_id=r.execution_profile_id WHERE a.attempt_id=? AND a.run_id=?",attempt,run));
             require(NarrowContentProfile.POLICY.equals(row.get("content_admission_policy")) && "EXECUTE".equals(row.get("kind"))
                     && ((Number)row.get("attempt_no")).intValue()<=19 && "CONTENT_RSS_V1".equals(row.get("pipeline"))
-                    && guard.binding().installationId().equals(row.get("installation_id")) && guard.binding().digest().equals(row.get("host_binding_sha256"))
+                    && binding.installationId().equals(row.get("installation_id")) && binding.digest().equals(row.get("host_binding_sha256"))
                     && row.get("execution_profile_id").equals(row.get("worker_profile")) && row.get("configuration_sha256").equals(row.get("profile_sha256")),RUNTIME_MISMATCH);
             var frozen=FrozenRunSelection.canonical((byte[])row.get("captured_selection"),(String)row.get("selection_sha256"),256*1024);
             var profile=FrozenRunSelection.canonical((byte[])row.get("configuration_bytes"),(String)row.get("configuration_sha256"),65536);
@@ -80,25 +104,25 @@ final class NarrowContentAdmission {
                     && frozen.get("executionProfile").get("profileId").stringValue().equals(row.get("execution_profile_id"))
                     && frozen.get("executionProfile").get("configurationSha256").stringValue().equals(row.get("configuration_sha256"))
                     && frozen.get("executionProfile").get("configuration").equals(profile),RUNTIME_MISMATCH);
-            require(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.execution_profile_storage p JOIN ddip_management.storage_bindings b USING(binding_id) WHERE p.profile_id=? AND b.binding_id=? AND b.installation_id=? AND b.role='CONTROL' AND b.configuration_sha256=? AND b.configuration_bytes=?)",Boolean.class,row.get("execution_profile_id"),guard.binding().id(),guard.binding().installationId(),guard.binding().digest(),guard.binding().descriptor()),RUNTIME_MISMATCH);
+            require(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.execution_profile_storage p JOIN ddip_management.storage_bindings b USING(binding_id) WHERE p.profile_id=? AND b.binding_id=? AND b.installation_id=? AND b.role='CONTROL' AND b.configuration_sha256=? AND b.configuration_bytes=?)",Boolean.class,row.get("execution_profile_id"),binding.id(),binding.installationId(),binding.digest(),binding.descriptor()),RUNTIME_MISMATCH);
             String runtimeId=SourceJson.text(profile.get("contentRuntimeId"));
             var runtime=one(jdbc.queryForList("SELECT configuration_bytes,configuration_sha256 FROM ddip_management.execution_profiles WHERE profile_id=?",runtimeId));
             FrozenRunSelection.canonical((byte[])runtime.get("configuration_bytes"),(String)runtime.get("configuration_sha256"),65536);
             String source=SourceJson.text(frozen.get("sources").get(0).get("sourceId"));
             require(source.matches("[a-z0-9][a-z0-9_-]{0,127}"),RUNTIME_MISMATCH);
             var n=SourceJson.object().put("admissionVersion",1).put("policy",NarrowContentProfile.POLICY)
-                    .put("installationId",guard.binding().installationId().toString()).put("runId",run.toString()).put("attemptId",attempt.toString())
+                    .put("installationId",binding.installationId().toString()).put("runId",run.toString()).put("attemptId",attempt.toString())
                     .put("workerInstanceId",row.get("instance_id").toString()).put("ownerEpoch",row.get("owner_epoch").toString())
-                    .put("planKind","ORIGINAL").put("sourceId",source).put("controlBindingSha256",guard.binding().digest())
+                    .put("planKind","ORIGINAL").put("sourceId",source).put("controlBindingSha256",binding.digest())
                     .put("selectionSha256",(String)row.get("selection_sha256")).put("profileId",(String)row.get("execution_profile_id"))
                     .put("profileSha256",(String)row.get("configuration_sha256")).put("runtimeId",runtimeId)
                     .put("runtimeSha256",(String)runtime.get("configuration_sha256"));
-            n.set("controlBinding",SourceJson.parse(guard.binding().descriptor()));identities(n);return n;
+            n.set("controlBinding",SourceJson.parse(binding.descriptor()));identities(n);return n;
         }catch(org.springframework.dao.DataAccessException|WorkerFailure ex){throw ex;}
         catch(RuntimeException ex){throw new WorkerFailure(RUNTIME_MISMATCH);}
     }
-    private static ObjectNode readEnrollment(JdbcTemplate jdbc,InstallationHostGuard guard,UUID run,UUID attempt){
-        var current=independent(jdbc,guard,run,attempt);
+    private static ObjectNode readEnrollment(JdbcTemplate jdbc,InstallationHostGuard.Binding binding,UUID run,UUID attempt){
+        var current=independent(jdbc,binding,run,attempt);
         var row=one(jdbc.queryForList("SELECT policy,admission_bytes,admission_sha256 FROM ddip_management.content_attempt_admissions WHERE attempt_id=?",attempt));
         require(NarrowContentProfile.POLICY.equals(row.get("policy")),RUNTIME_MISMATCH);
         var n=canonical((byte[])row.get("admission_bytes"),(String)row.get("admission_sha256"));

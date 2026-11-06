@@ -17,6 +17,11 @@ public final class NarrowContentFetchCompletionTestChild {
         if(args[1].equals("inspect")){
             var result=NarrowContentFetchCompletionTestSupport.inspect(jdbc,tx,null,operation);
             if(result.isPresent() && (!result.get().checkpointed() || result.get().nativeLaunchCompatible()))throw new AssertionError("INVALID_RECEIPT");
+            var assessment=NarrowContentFetchRecoveryAssessmentTestSupport.inspect(jdbc,tx,null,UUID.fromString(args[3]),UUID.fromString(args[4]));
+            if(assessment.authorization() || assessment.quiescenceEstablished() || assessment.nativeLaunchCompatible())throw new AssertionError("ASSESSMENT_GRANTED_AUTHORITY");
+            String expected=result.isPresent()?"CHECKPOINT":jdbc.queryForObject("SELECT count(*) FROM ddip_management.content_fetch_completion_intents WHERE operation_id=?",Long.class,operation)>0?"COMPLETION_INTENT":"CANDIDATE_EXITED";
+            if(!assessment.durable().prefix().equals(expected))throw new AssertionError("INCORRECT_DURABLE_PREFIX "+assessment);
+            if(!assessment.integrity().equals(result.isPresent()?"NOT_REQUESTED":"NOT_INSPECTED_NO_CHECKPOINT"))throw new AssertionError("UNREQUESTED_FILE_INSPECTION");
             System.out.println("NARROW_COMPLETION_HISTORY "+result.isPresent());return;
         }
         var workers=WorkerTestSupport.enabled(jdbc,tx,binding.installationId());

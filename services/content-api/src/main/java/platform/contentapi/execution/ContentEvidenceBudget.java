@@ -172,8 +172,18 @@ final class ContentEvidenceBudget {
     }
     /** Completed FETCH scope only; it does not relax launch or candidate inspection. */
     static Totals inspectFetchCompletion(NarrowContentEvidenceContext context,InstallationHostGuard guard,Path directory){
+        return inspect(context,guard,context.frozen(),fetchCompletionScope(context,directory));
+    }
+    /** Optimistic read-only observation: no lock wait or channel that could disturb another writer's lock. */
+    static Totals inspectFetchRecovery(NarrowContentEvidenceContext context,InstallationHostGuard guard,Path directory){
+        try{return inspectSnapshot(context,guard,context.frozen(),fetchCompletionScope(context,directory));}
+        catch(PreflightFailure ex){throw ex;}
+        catch(java.io.IOException ex){throw new PreflightFailure(INPUT_UNAVAILABLE);}
+        catch(RuntimeException ex){throw new PreflightFailure(INPUT_CHANGED);}
+    }
+    private static Runnable fetchCompletionScope(NarrowContentEvidenceContext context,Path directory){
         need(directory!=null && directory.getParent().getParent().getParent().equals(context.root()),INPUT_INVALID);
-        return inspect(context,guard,context.frozen(),()->{
+        return ()->{
             var names=new HashSet<>(RssJournalFiles.CANDIDATE);names.add("complete.json");
             try(var walk=Files.walk(context.root(),4)){
                 for(Path p:walk.limit(ENTRIES+1).toList()){
@@ -182,7 +192,7 @@ final class ContentEvidenceBudget {
                     else need(p.getParent().equals(directory) && names.contains(p.getFileName().toString()),INPUT_CHANGED);
                 }
             }catch(java.io.IOException ex){throw new PreflightFailure(INPUT_UNAVAILABLE);}
-        });
+        };
     }
     private static Totals inspect(NarrowContentEvidenceContext context,InstallationHostGuard guard,
                                   NarrowContentEvidenceContext.FrozenIdentities independentlySupplied,Runnable scope){
@@ -194,26 +204,30 @@ final class ContentEvidenceBudget {
                     context.check(guard,independentlySupplied);
                     try(var lock=channel.lock()){
                         // Recheck pathname identities after waiting; the lock is not an identity seal.
-                        context.check(guard,independentlySupplied);
-                        need(!Files.exists(root.resolve(PENDING),LinkOption.NOFOLLOW_LINKS),INPUT_CHANGED);
-                        PreflightFiles.privateEntry(root.resolve(MANIFEST),false);
-                        var identity=InstallationHostGuard.identity(root.resolve(MANIFEST));
-                        var modified=Files.getLastModifiedTime(root.resolve(MANIFEST),LinkOption.NOFOLLOW_LINKS);
-                        byte[] bytes=PreflightFiles.read(root.resolve(MANIFEST),LEDGER,true);
-                        var value=parse(root,bytes);context.ledger(bytes,value);
-                        var result=validate(root,value);scope.run();
-                        byte[] after=PreflightFiles.read(root.resolve(MANIFEST),LEDGER,true);
-                        need(Arrays.equals(bytes,after) && identity.equals(InstallationHostGuard.identity(root.resolve(MANIFEST)))
-                                && modified.equals(Files.getLastModifiedTime(root.resolve(MANIFEST),LinkOption.NOFOLLOW_LINKS))
-                                && !Files.exists(root.resolve(PENDING),LinkOption.NOFOLLOW_LINKS),INPUT_CHANGED);
-                        context.check(guard,independentlySupplied);
-                        return result;
+                        return inspectSnapshot(context,guard,independentlySupplied,scope);
                     }
                 }
             }catch(PreflightFailure ex){throw ex;}
             catch(java.io.IOException ex){throw new PreflightFailure(INPUT_UNAVAILABLE);}
             catch(RuntimeException ex){throw new PreflightFailure(INPUT_CHANGED);}
         }
+    }
+    private static Totals inspectSnapshot(NarrowContentEvidenceContext context,InstallationHostGuard guard,
+                                          NarrowContentEvidenceContext.FrozenIdentities independentlySupplied,Runnable scope)throws java.io.IOException{
+        context.check(guard,independentlySupplied);Path root=context.root();
+        need(!Files.exists(root.resolve(PENDING),LinkOption.NOFOLLOW_LINKS),INPUT_CHANGED);
+        PreflightFiles.privateEntry(root.resolve(MANIFEST),false);
+        var identity=InstallationHostGuard.identity(root.resolve(MANIFEST));
+        var modified=Files.getLastModifiedTime(root.resolve(MANIFEST),LinkOption.NOFOLLOW_LINKS);
+        byte[] bytes=PreflightFiles.read(root.resolve(MANIFEST),LEDGER,true);
+        var value=parse(root,bytes);context.ledger(bytes,value);
+        var result=validate(root,value);scope.run();
+        byte[] after=PreflightFiles.read(root.resolve(MANIFEST),LEDGER,true);
+        need(Arrays.equals(bytes,after) && identity.equals(InstallationHostGuard.identity(root.resolve(MANIFEST)))
+                && modified.equals(Files.getLastModifiedTime(root.resolve(MANIFEST),LinkOption.NOFOLLOW_LINKS))
+                && !Files.exists(root.resolve(PENDING),LinkOption.NOFOLLOW_LINKS),INPUT_CHANGED);
+        context.check(guard,independentlySupplied);
+        return result;
     }
     static void require(InstallationHostGuard guard,UUID run,UUID attempt){
         Path root=guard.binding().root().resolve("runs/"+run+"/attempts/"+attempt);REQUIRED.add(root);inspect(root);

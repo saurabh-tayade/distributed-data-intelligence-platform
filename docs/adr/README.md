@@ -118,3 +118,4 @@ observation of an exited native FETCH candidate. It validates raw HTTP journal i
 XML parsing, durable verification, completion, slot release or continuation authority.
 
 - [0033: Inactive native FETCH completion checkpoint](0033-inactive-fetch-completion-checkpoint.md)
+- [0034: Inactive native FETCH recovery assessment](0034-inactive-native-fetch-recovery-assessment.md)

@@ -1855,3 +1855,12 @@ This is not a legacy stage or delivery: attempts stay CLAIMED, runs stay RUNNING
 slot remains reserved. Partial/uncertain completion is not resumed, repaired or refetched.
 Historical read-only confirmation grants no authority. [ADR 0033](../../docs/adr/0033-inactive-fetch-completion-checkpoint.md)
 records the boundary; #49, Gate B0, later stages, recovery and ordinary Content dispatch remain open.
+
+### Inactive native FETCH recovery assessment
+
+The [read-only assessment](../../docs/operations/native-fetch-recovery-assessment.md) separates
+immutable SQL prefixes and durable native checkpoints from current file integrity and recorded
+process observations. It never grants quiescence or continuation authority. Missing or changed files
+do not erase historical checkpoints; incomplete intents are never promoted. Legacy recovery handoff
+and its qualification diagnostic reject narrow histories. [ADR 0034](../../docs/adr/0034-inactive-native-fetch-recovery-assessment.md)
+records this inactive boundary. Recovery actions, #49, Gate B0 and Content dispatch remain open.

@@ -403,6 +403,7 @@ class NarrowContentAdmissionIT extends NarrowContentAdmissionFixtures {
         jdbc.update("INSERT INTO ddip_management.controls(control_id,run_id,type,idempotency_key,normalized_request,request_sha256,expected_version,target_attempt_id,quiescence_confirmed,state,requester) VALUES (?,?,'RECONCILE','narrow-reconcile',?,?,?,?,true,'REQUESTED','local-operator')",
                 control,owner.runId(),request,SourceJson.sha(request),owner.runVersion(),owner.attemptId());
         guard.close();guard=null;ready();assertThat(session.status()).isEqualTo("RECOVERY_ONLY");var db=metadata();var fs=filesystem();
+        assertThat(canQualifyLegacyRecovery(jdbc,tx,INSTALL,control)).isFalse();
         assertThatThrownBy(()->inspectLegacyRecovery(jdbc,tx,guard,session,control)).hasMessage("EVIDENCE_UNAVAILABLE");
         assertThatThrownBy(()->tx.required(()->{ContentResumePlan.gates(jdbc,INSTALL,jdbc.queryForMap("SELECT * FROM ddip_management.runs WHERE run_id=?",owner.runId()));return null;}))
                 .hasMessage("RESUME_CHECKPOINT_UNSUPPORTED");

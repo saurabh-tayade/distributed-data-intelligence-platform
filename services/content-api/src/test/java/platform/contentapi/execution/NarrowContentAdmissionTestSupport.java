@@ -30,6 +30,9 @@ public final class NarrowContentAdmissionTestSupport {
     public static Facts inspect(JdbcTemplate jdbc,ManagementTransactions tx,InstallationHostGuard guard,UUID run,UUID attempt) {
         return facts(NarrowContentAdmission.inspectReady(jdbc,tx,guard,run,attempt));
     }
+    public static boolean canQualifyLegacyRecovery(JdbcTemplate jdbc,ManagementTransactions tx,UUID installation,UUID control) {
+        return new RecoveryOperatorInspection(jdbc,tx,installation).inspect(control).get("canQualify").booleanValue();
+    }
     public static void inspectLegacyRecovery(JdbcTemplate jdbc,ManagementTransactions tx,InstallationHostGuard guard,
                                              WorkerRepository.Session recovery,UUID control) {
         new RecoveryHandoff(jdbc,tx,guard.binding().installationId()).inspect(guard,recovery,control);
