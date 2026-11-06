@@ -19,7 +19,8 @@ prefix, consumed completion intent and durable checkpoint. An intent without a c
 incomplete regardless of whether marker bytes exist. Only durable SQL checkpoint correspondence
 permits optional read-only filesystem verification. V11 transport-probe history is incompatible
 with this native-only assessment and fails closed rather than being mislabeled as unused READY.
-No migration, historical rewrite, new path or reservation allowance is introduced.
+Mixed legacy stage history also fails closed, including a schema-valid direct SQL stage insert
+after a checkpoint. No migration, historical rewrite, new path or reservation allowance is introduced.
 
 ## Separate observations
 

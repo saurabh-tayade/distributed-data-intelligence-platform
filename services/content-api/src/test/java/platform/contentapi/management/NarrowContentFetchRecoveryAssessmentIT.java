@@ -90,9 +90,19 @@ class NarrowContentFetchRecoveryAssessmentIT extends NarrowContentFetchLaunchFix
     @ParameterizedTest @ValueSource(strings={"INTENT_COMMITTED","PREFIX_WRITTEN","MARKER_WRITTEN"})
     void intentWithoutCheckpointNeverTouchesHostileTree(String boundary)throws Exception{
         prepared();launch(b->{});assertThatThrownBy(()->NarrowContentFetchCompletionTestSupport.complete(jdbc,tx,workers,guard,owner,operation,b->{if(b.equals(boundary))throw new IllegalStateException("TEST_BOUNDARY");})).isInstanceOf(RuntimeException.class);
-        Files.move(attemptRoot(),temp.resolve("removed-intent-tree"));Files.createSymbolicLink(attemptRoot(),temp.resolve("missing-target"));
+        Files.move(attemptRoot(),temp.resolve("removed-intent-tree-"+UUID.randomUUID()));Files.createSymbolicLink(attemptRoot(),temp.resolve("missing-target"));
         var before=history();var a=NarrowContentFetchRecoveryAssessmentTestSupport.inspect(jdbc,tx,guard,owner.runId(),owner.attemptId(),"ABSENT",b->{throw new AssertionError("UNEXPECTED_FILE_ACCESS");});
         inert(a);assertThat(a.durable().prefix()).isEqualTo("COMPLETION_INTENT");assertThat(a.integrity()).isEqualTo("NOT_INSPECTED_NO_CHECKPOINT");assertThat(a.reviewTargets()).contains("INCOMPLETE_COMPLETION");assertThat(history()).isEqualTo(before);assertThat(Files.isSymbolicLink(attemptRoot())).isTrue();assertThat(requests).hasValue(1);
+    }
+    @ParameterizedTest @ValueSource(strings={"READY","CHECKPOINT"})
+    void mixedLegacyStageHistoryFailsClosedWithoutOmittingItsProcess(String prefix)throws Exception{
+        if(prefix.equals("CHECKPOINT"))checkpoint();else prepared();
+        // This direct SQL shape is schema-valid, though supported execution APIs already veto it.
+        var process=guard.process();jdbc.update("INSERT INTO ddip_management.stage_invocations(attempt_id,stage,item_ordinal,checkpoint_id,state,input_evidence_sha256,child_pid,child_started_at,child_instance_id) VALUES (?,'CHECK_INPUTS',0,?,'INTENT',?,?,?,?)",
+                owner.attemptId(),UUID.randomUUID(),"a".repeat(64),process.pid(),java.sql.Timestamp.from(process.startedAt()),process.instanceId());
+        var before=history();var files=filesystem();int http=requests.get();
+        assertThatThrownBy(this::assess).hasMessage("WORKER_NOT_READY");
+        assertThat(history()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);assertThat(requests).hasValue(http);
     }
     @ParameterizedTest @ValueSource(strings={"LOCAL","PROCESS"})
     void occupiedBudgetLockNeverBlocksOrEstablishesQuiescence(String holder)throws Exception{

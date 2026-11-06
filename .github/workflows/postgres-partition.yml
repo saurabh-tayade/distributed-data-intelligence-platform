@@ -80,10 +80,10 @@ jobs:
           export PATH="$JAVA_HOME/bin:$PATH"
           export DDIP_TEST_PYTHON="$(command -v python)"
           selection=$(python3 .github/ci/postgres_partitions.py --partition "$POSTGRES_PARTITION")
-          # Exercise the new SQL bridge first; the complete partition below still must pass.
+          # Exercise checkpoint and assessment boundaries first; the complete partition below still must pass.
           if [ "$POSTGRES_PARTITION" = content_recovery ]; then
             mvn -B -ntp -f services/content-api/pom.xml verify -Ppostgres \
-              '-Dit.test=NarrowContentFetchCompletionIT#freshCompletionWritesOnlyNativeMarkerAndImmutableReceipt+sqlIntentGuardRejectsSubstitutionBeforeDuplicateConstraint+sqlCheckpointGuardRejectsSubstitutionBeforeDuplicateConstraint' \
+              '-Dit.test=NarrowContentFetchCompletionIT#freshCompletionWritesOnlyNativeMarkerAndImmutableReceipt+sqlIntentGuardRejectsSubstitutionBeforeDuplicateConstraint+sqlCheckpointGuardRejectsSubstitutionBeforeDuplicateConstraint,NarrowContentFetchRecoveryAssessmentIT' \
               -DskipUnitTests=true
           fi
           # Units execute once in core; Failsafe integration execution is always enabled.

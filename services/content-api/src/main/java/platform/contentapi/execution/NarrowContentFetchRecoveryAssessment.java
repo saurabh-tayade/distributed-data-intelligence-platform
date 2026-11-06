@@ -79,8 +79,8 @@ final class NarrowContentFetchRecoveryAssessment {
     }
     private static Snapshot snapshot(JdbcTemplate jdbc,ManagementTransactions tx,UUID run,UUID attempt){
         var admission=NarrowContentAdmission.inspectHistorical(jdbc,run,attempt);
-        // V11 transport probes are incompatible history, never an empty native FETCH prefix.
-        require(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.content_operations WHERE attempt_id=?)",Boolean.class,attempt),WORKER_NOT_READY);
+        // Probe or mixed legacy-stage history is not an empty or adoptable native FETCH prefix.
+        require(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.content_operations WHERE attempt_id=?) OR EXISTS(SELECT 1 FROM ddip_management.stage_invocations WHERE attempt_id=?)",Boolean.class,attempt,attempt),WORKER_NOT_READY);
         var worker=one(jdbc.queryForList("SELECT w.pid,w.process_started_at FROM ddip_management.attempts a JOIN ddip_management.worker_instances w USING(instance_id) WHERE a.attempt_id=? AND a.run_id=?",attempt,run));
         var processes=new ArrayList<Recorded>();
         processes.add(new Recorded(Role.WORKER,new RecoveryQuiescence.Identity(((Number)worker.get("pid")).longValue(),((java.sql.Timestamp)worker.get("process_started_at")).toInstant())));

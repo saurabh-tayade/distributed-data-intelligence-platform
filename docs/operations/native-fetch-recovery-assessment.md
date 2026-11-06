@@ -14,7 +14,8 @@ There is no operator command, HTTP endpoint, production worker route or automati
 - A completion intent stays consumed and incomplete even if a valid-looking marker exists.
 - Worker and child PID/start observations and explicit launch gaps are review targets, not proof
   that all writers are gone. Every result retains manual-review requirements and zero authority.
-- V11 read-only transport probes are incompatible with this native-only seam and fail closed.
+- V11 read-only transport probes and mixed legacy stage history are incompatible with this
+  native-only seam and fail closed.
 
 The summary contains fixed enums, UUIDs, digests, bounded phase lists and at most two recorded
 processes. It contains no command/bootstrap/receipt bytes, endpoint, arbitrary path, owner or token.
