@@ -151,6 +151,26 @@ final class ContentEvidenceBudget {
     /** Explicit narrow read: never discover a root, initialize state or fall back to legacy. */
     static Totals inspect(NarrowContentEvidenceContext context,InstallationHostGuard guard,
                           NarrowContentEvidenceContext.FrozenIdentities independentlySupplied){
+        return inspect(context,guard,independentlySupplied,()->{});
+    }
+    /** Only the live native launcher uses this scope. A result prefix is an active/uncertain
+     * write, never READY evidence, a successful result or permission for a new invocation. */
+    static Totals inspectFetch(NarrowContentEvidenceContext context,InstallationHostGuard guard,Path directory,boolean released){
+        need(directory!=null && directory.getParent().getParent().getParent().equals(context.root()),INPUT_INVALID);
+        return inspect(context,guard,context.frozen(),()->{
+            Set<String> names=released?Set.of("command.json","result.json","result.json.preparing","payload.xml","payload.xml.preparing",
+                    "metadata.json","metadata.json.preparing","descriptor.json","descriptor.json.preparing"):Set.of("command.json");
+            try(var walk=Files.walk(context.root(),4)){
+                for(Path p:walk.limit(ENTRIES+1).toList()){
+                    if(Files.isDirectory(p,LinkOption.NOFOLLOW_LINKS))need(Set.of(context.root(),directory.getParent().getParent(),directory.getParent(),directory).contains(p),INPUT_CHANGED);
+                    else if(p.getParent().equals(context.root()))need(Set.of(MANIFEST,LOCK).contains(p.getFileName().toString()),INPUT_CHANGED);
+                    else need(p.getParent().equals(directory) && names.contains(p.getFileName().toString()),INPUT_CHANGED);
+                }
+            }catch(java.io.IOException ex){throw new PreflightFailure(INPUT_UNAVAILABLE);}
+        });
+    }
+    private static Totals inspect(NarrowContentEvidenceContext context,InstallationHostGuard guard,
+                                  NarrowContentEvidenceContext.FrozenIdentities independentlySupplied,Runnable scope){
         need(context!=null,INPUT_INVALID);Path root=context.root();
         synchronized(LOCAL_LOCKS.computeIfAbsent(root,k->new Object())){
             try{
@@ -166,7 +186,7 @@ final class ContentEvidenceBudget {
                         var modified=Files.getLastModifiedTime(root.resolve(MANIFEST),LinkOption.NOFOLLOW_LINKS);
                         byte[] bytes=PreflightFiles.read(root.resolve(MANIFEST),LEDGER,true);
                         var value=parse(root,bytes);context.ledger(bytes,value);
-                        var result=validate(root,value);
+                        var result=validate(root,value);scope.run();
                         byte[] after=PreflightFiles.read(root.resolve(MANIFEST),LEDGER,true);
                         need(Arrays.equals(bytes,after) && identity.equals(InstallationHostGuard.identity(root.resolve(MANIFEST)))
                                 && modified.equals(Files.getLastModifiedTime(root.resolve(MANIFEST),LinkOption.NOFOLLOW_LINKS))
