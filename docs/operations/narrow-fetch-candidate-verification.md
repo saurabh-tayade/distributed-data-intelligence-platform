@@ -10,7 +10,8 @@ an API, operator command, dispatcher or recovery path.
   native reservation and six ordered phases through `CANDIDATE_EXITED`.
 - Repeated original ledger, root/lock identity, FETCH-only scope and exact five-file inventory
   checks, with the immutable candidate digest and bounded identity/mtime/size observations.
-- Existing native raw HTTP journal semantic validation plus canonical metadata/descriptor checks.
+- Existing native raw HTTP journal semantic validation, canonical descriptor and strict metadata
+  parsing/schema checks without changing the native metadata encoding.
 - A detached bounded observation with no owner, packet, launch, checkpoint or storage-write authority.
 
 A valid raw HTTP journal is not XML validity, a successful pipeline step, a completed publication

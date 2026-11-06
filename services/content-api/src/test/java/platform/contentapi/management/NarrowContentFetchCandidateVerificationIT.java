@@ -38,7 +38,11 @@ class NarrowContentFetchCandidateVerificationIT extends NarrowContentFetchLaunch
     static void privateDirectory(Path path)throws Exception{Files.createDirectory(path,PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));}
 
     @Test void genuineCandidateIsVerifiedRepeatedlyWithoutAnyMutationOrAuthority()throws Exception{
-        candidate();var before=allMetadata();var files=filesystem();var boundaries=new ArrayList<String>();var result=verify(boundaries::add);
+        candidate();var before=allMetadata();var files=filesystem();
+        byte[] nativeMetadata=Files.readAllBytes(fetchDirectory().resolve("metadata.json"));
+        assertThat(nativeMetadata).as("Native metadata preserves writer field order, not management canonical ordering")
+                .isNotEqualTo(SourceJson.canonical(SourceJson.parse(nativeMetadata)));
+        var boundaries=new ArrayList<String>();var result=verify(boundaries::add);
         assertThat(result.operation()).isEqualTo(operation);assertThat(result.run()).isEqualTo(owner.runId());assertThat(result.attempt()).isEqualTo(owner.attemptId());
         assertThat(result.checkpoint()).isEqualTo(jdbc.queryForObject("SELECT checkpoint_id FROM ddip_management.content_native_operations WHERE operation_id=?",UUID.class,operation));
         assertThat(result.candidateSha256()).isEqualTo(facts().candidateSha256());assertThat(result.payloadBytes()).isEqualTo(payload.length);
@@ -56,7 +60,7 @@ class NarrowContentFetchCandidateVerificationIT extends NarrowContentFetchLaunch
     @ParameterizedTest @ValueSource(strings={"command.json","result.json","metadata.json","descriptor.json","payload.xml"})
     void changedCandidateBytesFailClosed(String name)throws Exception{candidate();Files.writeString(fetchDirectory().resolve(name),"changed");rejectedWithoutWrites();}
 
-    @ParameterizedTest @ValueSource(strings={"descriptor-identity","descriptor-status","descriptor-length","descriptor-payload-hash","descriptor-key","descriptor-field","metadata-uri","metadata-status","metadata-field","metadata-schema-fraction","metadata-schema-string"})
+    @ParameterizedTest @ValueSource(strings={"descriptor-identity","descriptor-status","descriptor-length","descriptor-payload-hash","descriptor-key","descriptor-field","metadata-uri","metadata-status","metadata-field","metadata-schema-fraction","metadata-schema-string","metadata-duplicate","metadata-trailing","metadata-malformed","metadata-invalid-utf8"})
     void matchingRecordedInventoryDoesNotSubstituteForSemanticVerification(String change)throws Exception{
         prepared();launch(boundary->{if(boundary.equals("BEFORE_CANDIDATE"))try{
             var descriptor=json("descriptor.json");var metadata=json("metadata.json");
@@ -70,10 +74,21 @@ class NarrowContentFetchCandidateVerificationIT extends NarrowContentFetchLaunch
                 case "metadata-uri"->metadata.put("sourceUri","http://127.0.0.1/foreign");
                 case "metadata-status"->metadata.put("httpStatus",201);
                 case "metadata-field"->metadata.put("unexpected",true);
-                case "metadata-schema-fraction"->metadata.put("schemaVersion",1.5);
+                case "metadata-schema-fraction"->metadata.put("schemaVersion",1);
                 case "metadata-schema-string"->metadata.put("schemaVersion","1");
             }
-            byte[] raw=SourceJson.canonical(metadata);write("metadata.json",raw);
+            byte[] raw=SourceJson.canonical(metadata);
+            if(change.equals("metadata-schema-fraction")){
+                // Management canonical encoding rejects fractions; forge native JSON bytes after encoding.
+                String text=new String(raw,java.nio.charset.StandardCharsets.UTF_8);
+                assertThat(text).contains("\"schemaVersion\":1");
+                raw=text.replace("\"schemaVersion\":1","\"schemaVersion\":1.5").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            }
+            if(change.equals("metadata-duplicate"))raw=(new String(raw,java.nio.charset.StandardCharsets.UTF_8).replace("\"schemaVersion\":1","\"schemaVersion\":1,\"schemaVersion\":1")).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            if(change.equals("metadata-trailing"))raw=(new String(raw,java.nio.charset.StandardCharsets.UTF_8)+" {}").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            if(change.equals("metadata-malformed"))raw=Arrays.copyOf(raw,raw.length-1);
+            if(change.equals("metadata-invalid-utf8"))raw=new byte[]{(byte)0xc3,0x28};
+            write("metadata.json",raw);
             ((ObjectNode)descriptor.get("expected")).put("metadataByteLength",raw.length).put("metadataSha256",SourceJson.sha(raw));
             writeJson("descriptor.json",descriptor);
         }catch(Exception ex){throw new IllegalStateException(ex);}});

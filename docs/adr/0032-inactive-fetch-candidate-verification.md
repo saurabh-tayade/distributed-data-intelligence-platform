@@ -24,7 +24,9 @@ even when bytes match. Missing, added, foreign-stage, prefix and completion file
 
 `RssJournalFiles` is opened with creation disabled and validates the native journal's command,
 HTTP result, descriptor, metadata, payload length/hash and derived Bronze keys. The new observer
-also requires canonical descriptor/metadata and the exact metadata schema version. FETCH carries
+also requires a canonical descriptor and the exact metadata schema version. Native Bronze metadata
+retains its insertion-ordered encoding; bounded parsing still rejects duplicate keys, malformed
+UTF-8/JSON, floats and trailing values. FETCH carries
 raw HTTP bytes: malformed XML, non-XML data and empty successful responses are not rejected merely
 for their content. Parsing remains the responsibility of a later native stage.
 

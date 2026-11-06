@@ -43,9 +43,8 @@ final class NarrowContentFetchCandidateVerification {
         // The historical opener creates nothing. Validate native raw HTTP journal semantics,
         // without complete(), checkpoint references, XML parsing, runtime loading or process execution.
         var journal=new RssJournalFiles(guard,ready.run(),ready.attempt(),facts.payload().checkpoint(),ready.source(),address,false);
-        var metadata=PreflightFiles.canonical(journal.read("metadata.json"),RssJournalFiles.SMALL);
+        metadataSchema(journal.read("metadata.json"));
         PreflightFiles.canonical(journal.read("descriptor.json"),RssJournalFiles.SMALL);
-        require(SourceJson.object().put("schemaVersion",1).get("schemaVersion").equals(metadata.get("schemaVersion")),RUNTIME_MISMATCH);
         journal.validateCandidate(facts.payload().commandBytes());fault.accept(Boundary.JOURNAL_VALIDATED);
         ContentEvidenceBudget.inspectFetch(context,guard,directory,true);
         require(before.equals(inventory(context,guard,directory,facts)),RUNTIME_MISMATCH);
@@ -56,6 +55,15 @@ final class NarrowContentFetchCandidateVerification {
         ContentEvidenceBudget.inspectFetch(context,guard,directory,true);
         require(before.equals(inventory(context,guard,directory,facts)),RUNTIME_MISMATCH);
         return new Observation(operation,ready.run(),ready.attempt(),facts.payload().checkpoint(),before.digest(),before.payloadBytes());
+    }
+    /** Native Bronze metadata preserves insertion order; parsing must not require sorted keys.
+     * Full field/command/payload correspondence remains the independent journal validator's job. */
+    static void metadataSchema(byte[] bytes){
+        try{
+            var version=SourceJson.parse(bytes,RssJournalFiles.SMALL).get("schemaVersion");
+            require(version!=null && version.isIntegralNumber() && version.canConvertToInt() && version.intValue()==1,RUNTIME_MISMATCH);
+        }catch(WorkerFailure ex){throw ex;}
+        catch(RuntimeException ex){throw new PreflightFailure(PreflightFailure.Code.INPUT_INVALID);}
     }
     private static Facts facts(JdbcTemplate jdbc,ManagementTransactions tx,InstallationHostGuard guard,UUID operation){
         var rows=tx.required(()->jdbc.queryForList("SELECT a.run_id,o.attempt_id FROM ddip_management.content_native_operations o JOIN ddip_management.attempts a USING(attempt_id) WHERE o.operation_id=?",operation));
