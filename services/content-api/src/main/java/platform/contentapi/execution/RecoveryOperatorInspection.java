@@ -35,7 +35,8 @@ final class RecoveryOperatorInspection {
             var stages=n.putArray("stages");var unresolved=n.putArray("unresolvedCheckpoints");
             var rows=jdbc.queryForList("SELECT stage,checkpoint_id,state,child_pid,child_started_at FROM ddip_management.stage_invocations WHERE attempt_id=? ORDER BY stage,item_ordinal LIMIT 513",r.get("target_attempt_id"));need(rows.size()<=512,CAPACITY_EXCEEDED);
             for(var s:rows){String state=fixed(s,"state",Set.of("INTENT","RUNNING","VERIFIED","FAILED","UNKNOWN"));stages.addObject().put("stage",fixed(s,"stage",r.get("pipeline").equals("CONTENT_RSS_V1")?Set.of("FETCH_SOURCE","STORE_BRONZE","SILVER","PREPARE_GOLD","PUBLISH_GOLD","CHECK_INPUTS","PUBLISH_CONTENT","VERIFY_RESULT"):Set.of("CHECK_INPUTS","PUBLISH_RELIABILITY","VERIFY_RESULT"))).put("checkpointId",s.get("checkpoint_id").toString()).put("state",state);if(Set.of("INTENT","RUNNING","UNKNOWN").contains(state))unresolved.add(s.get("checkpoint_id").toString());if(s.get("child_pid")!=null)ps.add(identity(new RecoveryQuiescence.Identity(number(s,"child_pid"),((Timestamp)s.get("child_started_at")).toInstant())));}
-            n.put("canQualify",exact && r.get("control_state").equals("REQUESTED") && r.get("run_version").equals(r.get("expected_version")));
+            // Match the handoff veto: native admission history is not legacy recovery authority.
+            n.put("canQualify",!NarrowContentAdmission.hasHistory(jdbc,(UUID)r.get("run_id")) && exact && r.get("control_state").equals("REQUESTED") && r.get("run_version").equals(r.get("expected_version")));
             n.put("authorization",false);n.putArray("manualChecks").add("STOP_EXECUTION_HANDLERS").add("REVIEW_ALL_LAUNCH_GAPS_AND_ORPHANS").add("STOP_UNMANAGED_WRITERS").add("REVIEW_KNOWN_DESCENDANT_IDENTITIES");
             return n;
         });

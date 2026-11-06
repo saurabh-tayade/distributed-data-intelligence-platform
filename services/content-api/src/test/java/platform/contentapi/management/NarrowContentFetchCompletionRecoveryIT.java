@@ -40,6 +40,12 @@ class NarrowContentFetchCompletionRecoveryIT extends NarrowContentFetchLaunchFix
         var started=jdbc.queryForObject("SELECT pg_postmaster_start_time()",java.time.OffsetDateTime.class);String container=System.getenv("DDIP_TEST_POSTGRES_CONTAINER_ID");assertThat(container).matches("[0-9a-f]{12,64}");
         Process restart=new ProcessBuilder("docker","restart",container).redirectOutput(ProcessBuilder.Redirect.DISCARD).redirectError(ProcessBuilder.Redirect.INHERIT).start();try{assertThat(restart.waitFor(60,TimeUnit.SECONDS)).isTrue();assertThat(restart.exitValue()).isZero();}finally{stop(restart);}
         long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(45);while(true)try{var after=jdbc.queryForObject("SELECT pg_postmaster_start_time()",java.time.OffsetDateTime.class);assertThat(after).isAfter(started);System.out.println("NARROW_FETCH_COMPLETION_POSTGRES_RESTART before="+started+" after="+after+" operation="+operation);break;}catch(org.springframework.dao.DataAccessException ex){if(System.nanoTime()>deadline)throw ex;Thread.sleep(100);}
-        freshJvm(owner.runId(),owner.attemptId(),true);assertThat(NarrowContentFetchCompletionTestSupport.inspect(jdbc,tx,null,operation)).contains(expected);assertThat(history()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);assertThat(requests).hasValue(1);retained();
+        freshJvm(owner.runId(),owner.attemptId(),true);
+        try(var inspectionGuard=InstallationHostGuard.acquire(binding)){
+            var assessment=NarrowContentFetchRecoveryAssessmentTestSupport.inspect(jdbc,tx,inspectionGuard,owner.runId(),owner.attemptId());
+            assertThat(assessment.durable().prefix()).isEqualTo("CHECKPOINT");assertThat(assessment.integrity()).isEqualTo("UNAVAILABLE_OR_CHANGED");
+            assertThat(assessment.authorization()).isFalse();assertThat(assessment.quiescenceEstablished()).isFalse();assertThat(assessment.nativeLaunchCompatible()).isFalse();
+        }
+        assertThat(NarrowContentFetchCompletionTestSupport.inspect(jdbc,tx,null,operation)).contains(expected);assertThat(history()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);assertThat(requests).hasValue(1);retained();
     }
 }
