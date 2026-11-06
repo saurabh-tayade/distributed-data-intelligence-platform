@@ -1836,3 +1836,12 @@ immutable strict-fetch launch identity and ordered phases through candidate-only
 loopback-only test seam records child identity before EOF-gated release, supervises active
 prefixes, and never reuses an uncertain reservation. Historical runtime-v2 registrations remain
 unchanged. No stage success, completion, recovery release or Content dispatch is enabled.
+
+## Inactive native fetch candidate verification (#49)
+
+The [candidate observer](../../docs/operations/narrow-fetch-candidate-verification.md) independently
+reconstructs the recorded admission, reservation, runtime correspondence and all six launch phases.
+It rechecks original ledger and file identities, exact FETCH-only inventory and native raw HTTP
+journal semantics before returning a detached bounded observation. It does not parse XML, create
+completion evidence, record verification in SQL or authorize execution/recovery. No migration,
+new phase, stage success, reservation release, retry or Content dispatch is added.

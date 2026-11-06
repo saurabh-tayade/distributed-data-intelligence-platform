@@ -27,7 +27,7 @@ abstract class NarrowContentFetchLaunchFixtures extends NarrowContentAdmissionFi
             server.createContext("/feed",exchange->{requests.incrementAndGet();try{
                 if(!exchange.getRequestMethod().equals("GET"))throw new AssertionError("Unexpected HTTP method");
                 responseGate.await(15,TimeUnit.SECONDS);
-                exchange.getResponseHeaders().add("Content-Type","application/atom+xml");exchange.sendResponseHeaders(200,payload.length);exchange.getResponseBody().write(payload);
+                byte[] body=responsePayload();exchange.getResponseHeaders().add("Content-Type","application/atom+xml");exchange.sendResponseHeaders(200,body.length);exchange.getResponseBody().write(body);
             }catch(java.io.IOException ignored){}catch(InterruptedException ex){Thread.currentThread().interrupt();}finally{exchange.close();}});
             serverThreads=Executors.newVirtualThreadPerTaskExecutor();server.setExecutor(serverThreads);server.start();endpoint="http://127.0.0.1:"+server.getAddress().getPort()+"/feed";
         }catch(Exception ex){throw new IllegalStateException(ex);}
@@ -47,6 +47,7 @@ abstract class NarrowContentFetchLaunchFixtures extends NarrowContentAdmissionFi
             jdbc.update("INSERT INTO ddip_management.content_fetch_launch_profiles(launch_profile_id,configuration_bytes,configuration_sha256) VALUES (?,?,?)",LAUNCH_PROFILE,raw,SourceJson.sha(raw));
         }catch(Exception ex){throw new IllegalStateException(ex);}
     }
+    byte[] responsePayload(){return payload;}
     @Override void profile(String id,boolean content,String source){
         if(!content){super.profile(id,false,source);return;}
         try{
