@@ -34,7 +34,11 @@ only the original FETCH namespace. It validates the version-2 ledger, original r
 strict scope and budget, candidate bytes and persisted stamps, completion marker, directory identity,
 raw HTTP journal semantics, descriptor and native reference. It compares filesystem identities
 before and after bounded reads. There is no XML parsing, native child, HTTP request, filesystem write,
-repair or refetch. No SQL transaction spans file or process IO.
+repair or refetch. Budget inspection optimistically reads and revalidates bytes, stamps and identities
+without opening the ledger lock or waiting on a local mutex. It neither blocks behind unknown
+writers nor disturbs another process or thread's lock. An intact observation says nothing about
+whether a writer holds that lock. Original completion locking is unchanged. No SQL transaction
+spans file or process IO.
 
 The ledger is historically digest-bound, not inode-bound: READY never persisted its inode. A
 byte-identical ledger replacement before assessment is therefore indistinguishable and acceptable

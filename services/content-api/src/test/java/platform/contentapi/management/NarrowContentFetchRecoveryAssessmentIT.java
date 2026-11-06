@@ -94,6 +94,29 @@ class NarrowContentFetchRecoveryAssessmentIT extends NarrowContentFetchLaunchFix
         var before=history();var a=NarrowContentFetchRecoveryAssessmentTestSupport.inspect(jdbc,tx,guard,owner.runId(),owner.attemptId(),"ABSENT",b->{throw new AssertionError("UNEXPECTED_FILE_ACCESS");});
         inert(a);assertThat(a.durable().prefix()).isEqualTo("COMPLETION_INTENT");assertThat(a.integrity()).isEqualTo("NOT_INSPECTED_NO_CHECKPOINT");assertThat(a.reviewTargets()).contains("INCOMPLETE_COMPLETION");assertThat(history()).isEqualTo(before);assertThat(Files.isSymbolicLink(attemptRoot())).isTrue();assertThat(requests).hasValue(1);
     }
+    @ParameterizedTest @ValueSource(strings={"LOCAL","PROCESS"})
+    void occupiedBudgetLockNeverBlocksOrEstablishesQuiescence(String holder)throws Exception{
+        checkpoint();var durable=assess().durable();var before=history();var files=filesystem();
+        Path lockPath=attemptRoot().resolve(NarrowContentAdmissionTestSupport.LOCK);
+        java.nio.channels.FileChannel channel=null;java.nio.channels.FileLock lock=null;Process child=null;
+        try{
+            if(holder.equals("LOCAL")){channel=java.nio.channels.FileChannel.open(lockPath,StandardOpenOption.WRITE);lock=channel.lock();}
+            else{
+                child=new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin/java").toString(),"-cp",System.getProperty("surefire.test.class.path",System.getProperty("java.class.path")),NarrowContentAssessmentLockChild.class.getName(),lockPath.toString()).redirectError(ProcessBuilder.Redirect.INHERIT).start();
+                var reader=child.inputReader();assertThat(java.util.concurrent.CompletableFuture.supplyAsync(()->{try{return reader.readLine();}catch(java.io.IOException ex){throw new IllegalStateException(ex);}}).get(10,java.util.concurrent.TimeUnit.SECONDS)).isEqualTo("ASSESSMENT_LOCK_HELD");
+            }
+            org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(3),()->{
+                var result=assess();inert(result);assertThat(result.durable()).isEqualTo(durable);assertThat(result.integrity()).isEqualTo("VERIFIED_AT_INSPECTION");
+            });
+            var probe=new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin/java").toString(),"-cp",System.getProperty("surefire.test.class.path",System.getProperty("java.class.path")),NarrowContentAssessmentLockChild.class.getName(),lockPath.toString(),"probe").redirectError(ProcessBuilder.Redirect.INHERIT).start();
+            try{assertThat(probe.waitFor(10,java.util.concurrent.TimeUnit.SECONDS)).isTrue();assertThat(probe.exitValue()).isZero();assertThat(probe.inputReader().readLine()).isEqualTo("ASSESSMENT_LOCK_RETAINED");}
+            finally{if(probe.isAlive())probe.destroyForcibly();}
+            assertThat(history()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);assertThat(requests).hasValue(1);
+        }finally{
+            if(lock!=null)lock.close();if(channel!=null)channel.close();
+            if(child!=null){child.destroyForcibly();assertThat(child.waitFor(10,java.util.concurrent.TimeUnit.SECONDS)).isTrue();}
+        }
+    }
     @ParameterizedTest @ValueSource(strings={"BEFORE_REOPEN","JOURNAL_REOPENED","JOURNAL_REOPENED_LEDGER"})
     void sameInvocationReplacementCannotBecomeIntegrityEvidence(String boundary)throws Exception{
         checkpoint();var before=history();var durable=assess().durable();var changed=new AtomicBoolean();

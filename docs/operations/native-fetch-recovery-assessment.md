@@ -25,7 +25,7 @@ Historical SQL facts remain available without installed runtime files or the ori
 
 Coverage includes admission and launch prefixes, every original-owner completion crash boundary,
 real owner death, fresh-JVM assessment, an actual disposable PostgreSQL restart, missing/tampered
-and identity-replaced files, symlinks/hardlinks, within-call replacement, uncertain processes and
+and identity-replaced files, symlinks/hardlinks, within-call replacement, same-JVM and separate-process occupied budget locks, uncertain processes and
 read-only database/filesystem invariants. The operator inspection regression isolates the narrow
 history veto even when all other legacy qualification predicates match.
 

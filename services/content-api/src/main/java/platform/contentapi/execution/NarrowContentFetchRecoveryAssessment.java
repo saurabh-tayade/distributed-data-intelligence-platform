@@ -121,7 +121,7 @@ final class NarrowContentFetchRecoveryAssessment {
         // Validate independently recorded host and ledger identities before constructing a file reader.
         context.check(guard,ready.frozen());
         Path directory=ContentOperationPlan.original(context.root(),ready.run(),ready.attempt(),ready.source()).directory("FETCH_SOURCE",0);
-        ContentEvidenceBudget.inspectFetchCompletion(context,guard,directory);
+        ContentEvidenceBudget.inspectFetchRecovery(context,guard,directory);
         var before=stamps(context.root(),directory);
         var journal=new RssJournalFiles(guard,ready.run(),ready.attempt(),s.facts().checkpoint(),ready.source(),
                 guard.binding().root().relativize(directory).toString(),false);
@@ -133,7 +133,7 @@ final class NarrowContentFetchRecoveryAssessment {
         var evidence=journal.reopen(s.command(),s.facts().completionSha256());
         require(Arrays.equals(s.descriptor(),evidence.descriptorBytes()) && Arrays.equals(s.reference(),evidence.checkpointReference()),RUNTIME_MISMATCH);
         fault.accept(Boundary.JOURNAL_REOPENED);
-        ContentEvidenceBudget.inspectFetchCompletion(context,guard,directory);
+        ContentEvidenceBudget.inspectFetchRecovery(context,guard,directory);
         require(before.equals(stamps(context.root(),directory)) && Arrays.equals(s.marker(),journal.read("complete.json")),RUNTIME_MISMATCH);
         // Repeat the bounded reopen after the final scope/identity check to avoid trusting a cached success.
         var finalEvidence=journal.reopen(s.command(),s.facts().completionSha256());
