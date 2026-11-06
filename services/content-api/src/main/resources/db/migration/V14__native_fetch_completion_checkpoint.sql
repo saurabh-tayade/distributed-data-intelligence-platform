@@ -98,7 +98,7 @@ BEGIN
            OR (f->>'byteLength')::numeric>maximum
            OR jsonb_typeof(f->'sha256') IS DISTINCT FROM 'string' OR f->>'sha256' !~ '^[0-9a-f]{64}$'
            OR jsonb_typeof(f->'stamp') IS DISTINCT FROM 'object'
-           OR NOT f->'stamp' ?& ARRAY['identity','modified','size'] OR f->'stamp'-ARRAY['identity','modified','size']<>'{}'::jsonb
+           OR NOT f->'stamp' ?& ARRAY['identity','modified','size'] OR (f->'stamp')-ARRAY['identity','modified','size']<>'{}'::jsonb
            OR jsonb_typeof(f->'stamp'->'identity') IS DISTINCT FROM 'string' OR f->'stamp'->>'identity' !~ '^[0-9]+:[0-9]+$'
            OR jsonb_typeof(f->'stamp'->'modified') IS DISTINCT FROM 'string' OR length(f->'stamp'->>'modified') NOT BETWEEN 1 AND 64
            OR f->'stamp'->'size' IS DISTINCT FROM f->'byteLength' OR f->'stamp'->>'size' IS DISTINCT FROM f->>'byteLength'
@@ -146,7 +146,7 @@ BEGIN
        OR e->'completionSha256' IS DISTINCT FROM to_jsonb(i.completion_sha256::text)
        OR NOT native_reservation_json_matches(convert_from(NEW.expected_evidence,'UTF8')::json->'bronze',d->'expected')
        OR jsonb_typeof(e->'completionStamp') IS DISTINCT FROM 'object'
-       OR NOT e->'completionStamp' ?& ARRAY['identity','modified','size'] OR e->'completionStamp'-ARRAY['identity','modified','size']<>'{}'::jsonb
+       OR NOT e->'completionStamp' ?& ARRAY['identity','modified','size'] OR (e->'completionStamp')-ARRAY['identity','modified','size']<>'{}'::jsonb
        OR jsonb_typeof(e->'completionStamp'->'identity') IS DISTINCT FROM 'string' OR e->'completionStamp'->>'identity' !~ '^[0-9]+:[0-9]+$'
        OR jsonb_typeof(e->'completionStamp'->'modified') IS DISTINCT FROM 'string' OR length(e->'completionStamp'->>'modified') NOT BETWEEN 1 AND 64
        OR e->'completionStamp'->'size' IS DISTINCT FROM to_jsonb(octet_length(i.completion_bytes)) OR e->'completionStamp'->>'size' IS DISTINCT FROM octet_length(i.completion_bytes)::text THEN
@@ -158,7 +158,7 @@ BEGIN
        OR (d->'declaredContentLength'<>'null'::jsonb AND (jsonb_typeof(d->'declaredContentLength') IS DISTINCT FROM 'number' OR d->>'declaredContentLength' !~ '^[0-9]+$' OR (d->>'declaredContentLength')::numeric>9223372036854775807))
        OR jsonb_typeof(d->'expected') IS DISTINCT FROM 'object'
        OR NOT d->'expected' ?& ARRAY['payloadKey','metadataKey','metadataByteLength','metadataSha256']
-       OR d->'expected'-ARRAY['payloadKey','metadataKey','metadataByteLength','metadataSha256']<>'{}'::jsonb
+       OR (d->'expected')-ARRAY['payloadKey','metadataKey','metadataByteLength','metadataSha256']<>'{}'::jsonb
        OR jsonb_typeof(d->'expected'->'metadataByteLength') IS DISTINCT FROM 'number' OR d->'expected'->>'metadataByteLength' !~ '^[0-9]+$'
        OR (d->'expected'->>'metadataByteLength')::numeric>65536
        OR jsonb_typeof(d->'expected'->'metadataSha256') IS DISTINCT FROM 'string' OR d->'expected'->>'metadataSha256' !~ '^[0-9a-f]{64}$' THEN
