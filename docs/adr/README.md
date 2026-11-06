@@ -116,3 +116,5 @@ consumed; no completion, recovery continuation or production Content dispatch is
 [ADR 0032](0032-inactive-fetch-candidate-verification.md) adds an independent, read-only
 observation of an exited native FETCH candidate. It validates raw HTTP journal integrity without
 XML parsing, durable verification, completion, slot release or continuation authority.
+
+- [0033: Inactive native FETCH completion checkpoint](0033-inactive-fetch-completion-checkpoint.md)

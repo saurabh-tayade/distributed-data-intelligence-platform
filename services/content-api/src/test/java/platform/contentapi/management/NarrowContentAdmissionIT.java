@@ -424,6 +424,6 @@ class NarrowContentAdmissionIT extends NarrowContentAdmissionFixtures {
         assertThat(jdbc.queryForList("SELECT (to_jsonb(a)-'content_admission_policy')::text FROM ddip_management.attempts a ORDER BY attempt_no",String.class)).isEqualTo(history);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.attempts WHERE content_admission_policy IS NOT NULL",Long.class)).isZero();
         assertThat(count("content_attempt_admissions")).isZero();assertThat(count("content_admission_milestones")).isZero();
-        assertThat(all.info().pending()).isEmpty();assertThat(all.info().current().getVersion().getVersion()).isEqualTo("13");
+        assertThat(all.info().pending()).isEmpty();assertThat(all.info().current().getVersion().getVersion()).isEqualTo("14");
     }
 }

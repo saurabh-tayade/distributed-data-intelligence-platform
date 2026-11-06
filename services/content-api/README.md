@@ -1845,3 +1845,13 @@ It rechecks original ledger and file identities, exact FETCH-only inventory and 
 journal semantics before returning a detached bounded observation. It does not parse XML, create
 completion evidence, record verification in SQL or authorize execution/recovery. No migration,
 new phase, stage success, reservation release, retry or Content dispatch is added.
+
+### Inactive native FETCH completion checkpoint
+
+The [completion bridge](../../docs/operations/narrow-fetch-completion-checkpoint.md) adds a
+single-use original-live-owner intent and native checkpoint after fresh candidate verification.
+It writes only the existing native completion marker and records additive SQL correspondence.
+This is not a legacy stage or delivery: attempts stay CLAIMED, runs stay RUNNING and the occupied
+slot remains reserved. Partial/uncertain completion is not resumed, repaired or refetched.
+Historical read-only confirmation grants no authority. [ADR 0033](../../docs/adr/0033-inactive-fetch-completion-checkpoint.md)
+records the boundary; #49, Gate B0, later stages, recovery and ordinary Content dispatch remain open.
