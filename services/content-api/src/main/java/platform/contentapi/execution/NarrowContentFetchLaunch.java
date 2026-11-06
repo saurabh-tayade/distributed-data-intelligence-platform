@@ -15,7 +15,7 @@ import static platform.contentapi.execution.WorkerFailure.Code.*;
 final class NarrowContentFetchLaunch {
     enum Boundary { RESERVED, LAUNCH_BOUND, DIRECTORY_CREATED, COMMAND_WRITTEN, FILES_READY, START_AUTHORIZED,
         CHILD_RECORDED, BEFORE_RELEASE, BEFORE_RELEASE_PHASE, RELEASE_AUTHORIZED, BEFORE_DELIVERY, HEARTBEAT, BEFORE_CANDIDATE, BEFORE_CANDIDATE_PHASE, CANDIDATE_EXITED }
-    private static final List<String> PHASES=List.of("LAUNCH_BOUND","FILES_READY","START_AUTHORIZED","CHILD_RECORDED","RELEASE_AUTHORIZED","CANDIDATE_EXITED");
+    static final List<String> PHASES=List.of("LAUNCH_BOUND","FILES_READY","START_AUTHORIZED","CHILD_RECORDED","RELEASE_AUTHORIZED","CANDIDATE_EXITED");
     record Facts(UUID operation,UUID attempt,List<String> phases,InstallationHostGuard.ProcessIdentity child,
                  String launchProfileId,String launchProfileSha256,String candidateSha256) {
         Facts {phases=List.copyOf(phases);}
@@ -102,8 +102,9 @@ final class NarrowContentFetchLaunch {
         return inspect(operation);
     }
     /** Historical facts only: no files, installed runtime, owner, packet, or resume token returned. */
-    Facts inspect(UUID operation){
-        var consumed=new NarrowContentFetchReservation(jdbc,tx,workers).inspect(operation);
+    Facts inspect(UUID operation){return inspect(jdbc,tx,operation);}
+    static Facts inspect(JdbcTemplate jdbc,ManagementTransactions tx,UUID operation){
+        var consumed=NarrowContentFetchReservation.inspect(jdbc,tx,operation);
         return tx.required(()->{
             var rows=jdbc.queryForList("SELECT phase,launch_profile_id,launch_profile_sha256,child_instance_id,child_pid,child_started_at,bootstrap_sha256,candidate_sha256 FROM ddip_management.content_native_launch_phases WHERE operation_id=? ORDER BY CASE phase WHEN 'LAUNCH_BOUND' THEN 1 WHEN 'FILES_READY' THEN 2 WHEN 'START_AUTHORIZED' THEN 3 WHEN 'CHILD_RECORDED' THEN 4 WHEN 'RELEASE_AUTHORIZED' THEN 5 ELSE 6 END",operation);
             var names=rows.stream().map(r->(String)r.get("phase")).toList();

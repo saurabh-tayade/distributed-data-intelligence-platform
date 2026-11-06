@@ -47,7 +47,7 @@ final class NarrowContentFetchReservation {
         var ready=NarrowContentAdmission.inspectReady(jdbc,tx,guard,owner.runId(),owner.attemptId());
         absent(ready);
         workers.narrowOperationTransaction(guard,owner,()->{
-            var metadata=metadata(owner.attemptId());
+            var metadata=metadata(jdbc,owner.attemptId());
             require(ready.equals(metadata.ready()),RUNTIME_MISMATCH);
             Payload current=build(metadata.ready(),NarrowContentRuntimeQualification.inspect(jdbc,tx,metadata.ready()),
                     metadata.expected(),metadata.current(),operation);
@@ -68,18 +68,19 @@ final class NarrowContentFetchReservation {
         var ready=NarrowContentAdmission.inspectReady(jdbc,tx,guard,owner.runId(),owner.attemptId());
         absent(ready);
         return tx.required(()->{
-            var m=metadata(owner.attemptId());
+            var m=metadata(jdbc,owner.attemptId());
             require(ready.equals(m.ready()) && m.current().equals(new Identity(owner.worker().installationId(),owner.worker().instanceId(),
                     owner.worker().epoch(),owner.runId(),owner.attemptId())),RUNTIME_MISMATCH);
             return build(ready,NarrowContentRuntimeQualification.inspect(jdbc,tx,ready),m.expected(),m.current(),operation);
         });
     }
     /** SQL-only historical inspection. Never grants a live owner, path effect or session. */
-    Facts inspect(UUID operation){
+    Facts inspect(UUID operation){return inspect(jdbc,tx,operation);}
+    static Facts inspect(JdbcTemplate jdbc,ManagementTransactions tx,UUID operation){
         require(operation!=null,WORKER_CONFIGURATION_INVALID);
         return tx.required(()->{
             var row=one(jdbc.queryForList("SELECT attempt_id,stage,item_ordinal,checkpoint_id,command_bytes,command_sha256,bootstrap_bytes,bootstrap_sha256 FROM ddip_management.content_native_operations WHERE operation_id=?",operation));
-            var m=metadata((UUID)row.get("attempt_id"));
+            var m=metadata(jdbc,(UUID)row.get("attempt_id"));
             var expected=build(m.ready(),NarrowContentRuntimeQualification.inspect(jdbc,tx,m.ready()),m.expected(),m.current(),operation);
             var command=canonical((byte[])row.get("command_bytes"),(String)row.get("command_sha256"),65536);
             var bootstrap=canonical((byte[])row.get("bootstrap_bytes"),(String)row.get("bootstrap_sha256"),65535);
@@ -88,6 +89,16 @@ final class NarrowContentFetchReservation {
                     && Arrays.equals(expected.commandBytes(),SourceJson.canonical(command))
                     && Arrays.equals(expected.bootstrapBytes(),SourceJson.canonical(bootstrap)),RUNTIME_MISMATCH);
             return new Facts(operation,expected.attempt(),expected.checkpoint(),(String)row.get("command_sha256"),(String)row.get("bootstrap_sha256"));
+        });
+    }
+    /** Read-only reconstruction against separately established admission provenance. No live owner. */
+    static Payload reconstruct(JdbcTemplate jdbc,ManagementTransactions tx,NarrowContentEvidenceContext.Expected ready,UUID operation){
+        return tx.required(()->{
+            var facts=inspect(jdbc,tx,operation);
+            require(facts.attempt().equals(ready.attempt()),RUNTIME_MISMATCH);
+            var m=metadata(jdbc,ready.attempt());
+            require(ready.equals(m.ready()),RUNTIME_MISMATCH);
+            return build(ready,NarrowContentRuntimeQualification.inspect(jdbc,tx,ready),m.expected(),m.current(),operation);
         });
     }
     private static boolean same(Payload a,Payload b){
@@ -146,7 +157,7 @@ final class NarrowContentFetchReservation {
         return new Payload(operation,ready.attempt(),checkpoint,commandBytes,bootstrapBytes);
     }
     /** Immutable enrollment and READY, plus separately observed durable attempt ownership. */
-    private Metadata metadata(UUID attempt){
+    private static Metadata metadata(JdbcTemplate jdbc,UUID attempt){
         try{
             var row=one(jdbc.queryForList("SELECT n.admission_bytes,n.admission_sha256,m.receipt_bytes,m.receipt_sha256,a.run_id,a.instance_id,a.owner_epoch,w.installation_id FROM ddip_management.content_attempt_admissions n JOIN ddip_management.content_admission_milestones m ON m.attempt_id=n.attempt_id AND m.phase='READY' JOIN ddip_management.attempts a ON a.attempt_id=n.attempt_id JOIN ddip_management.worker_instances w ON w.instance_id=a.instance_id WHERE n.attempt_id=?",attempt));
             var n=canonical((byte[])row.get("admission_bytes"),(String)row.get("admission_sha256"),65536);

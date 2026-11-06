@@ -153,8 +153,9 @@ final class ContentEvidenceBudget {
                           NarrowContentEvidenceContext.FrozenIdentities independentlySupplied){
         return inspect(context,guard,independentlySupplied,()->{});
     }
-    /** Only the live native launcher uses this scope. A result prefix is an active/uncertain
-     * write, never READY evidence, a successful result or permission for a new invocation. */
+    /** Restricted native FETCH scope for launch or read-only candidate verification. A result
+     * prefix is an active/uncertain write, never READY, success or new-invocation permission.
+     * Candidate verification additionally requires the exact final five-file inventory. */
     static Totals inspectFetch(NarrowContentEvidenceContext context,InstallationHostGuard guard,Path directory,boolean released){
         need(directory!=null && directory.getParent().getParent().getParent().equals(context.root()),INPUT_INVALID);
         return inspect(context,guard,context.frozen(),()->{

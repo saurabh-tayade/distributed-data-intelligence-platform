@@ -112,3 +112,7 @@ It preserves the V11 probe and excludes probe-used attempts, without child launc
 [ADR 0031](0031-inactive-guarded-fetch-launch.md) adds the separately versioned, loopback-only
 parent launch with ordered durable phases and candidate-only exit. Uncertain operations remain
 consumed; no completion, recovery continuation or production Content dispatch is enabled.
+
+[ADR 0032](0032-inactive-fetch-candidate-verification.md) adds an independent, read-only
+observation of an exited native FETCH candidate. It validates raw HTTP journal integrity without
+XML parsing, durable verification, completion, slot release or continuation authority.
