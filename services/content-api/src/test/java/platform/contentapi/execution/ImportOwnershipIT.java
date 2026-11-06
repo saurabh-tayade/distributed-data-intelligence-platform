@@ -49,7 +49,7 @@ class ImportOwnershipIT {
         jdbc.update("INSERT INTO ddip_management.coordinator(singleton_id,installation_id,mode) VALUES (1,?,'READY')",INSTALL);
     }
     @BeforeEach void setup() throws Exception {
-        reset("12");binding=host(Files.createTempDirectory(temp,"host-"));provision(jdbc,binding);
+        reset("13");binding=host(Files.createTempDirectory(temp,"host-"));provision(jdbc,binding);
         descriptor=Files.write(temp.resolve(UUID.randomUUID()+".json"),binding.descriptor());
     }
     @AfterEach void cleanupChildren() throws Exception {
@@ -102,8 +102,8 @@ class ImportOwnershipIT {
                 v7?new Object[]{UUID.randomUUID(),kind,product,contract,processor,identity,storage,address,OBJECT,HASH,format}:
                         new Object[]{UUID.randomUUID(),kind,product,contract,processor,identity,storage,address,OBJECT,HASH});
     }
-    @Test void cleanMigrationAndRepeatedValidationRecognizeTwelveVersionsAndOperationTables() {
-        var schema=new SchemaLifecycle(flyway("12"),jdbc,coordinator);schema.verify(false);schema.verify(true);
+    @Test void cleanMigrationAndRepeatedValidationRecognizeThirteenVersionsAndOperationTables() {
+        var schema=new SchemaLifecycle(flyway("13"),jdbc,coordinator);schema.verify(false);schema.verify(true);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.flyway_schema_history WHERE success AND version IS NOT NULL",Integer.class)).isEqualTo(13);
         assertThat(count("artifact_import_operations")).isZero();assertThat(coordinator.read().activeImportId()).isNull();
         assertThat(count("content_attempt_admissions")).isZero();assertThat(count("content_admission_milestones")).isZero();
@@ -120,7 +120,7 @@ class ImportOwnershipIT {
         var before=jdbc.queryForList("SELECT * FROM ddip_management.coordinator");
         var hashes=jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IS NOT NULL ORDER BY installed_rank");
         var artifact=jdbc.queryForList("SELECT artifact_id,evidence_bytes,evidence_sha256,verified_at FROM ddip_management.artifacts");
-        new SchemaLifecycle(flyway("12"),jdbc,coordinator).verify(true);
+        new SchemaLifecycle(flyway("13"),jdbc,coordinator).verify(true);
         var after=jdbc.queryForList("SELECT singleton_id,installation_id,mode,epoch,active_attempt_id,owner_instance_id,heartbeat_at,row_version FROM ddip_management.coordinator");
         assertThat(after).isEqualTo(before);
         assertThat(jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IN ('1','2','3','4','5','6') ORDER BY installed_rank")).isEqualTo(hashes);
@@ -129,7 +129,7 @@ class ImportOwnershipIT {
     }
     @Test void v8UpgradePreservesCoordinatorAndHistoricalChecksums(){
         reset("8");var history=jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IS NOT NULL ORDER BY installed_rank");var before=jdbc.queryForList("SELECT * FROM ddip_management.coordinator");
-        new SchemaLifecycle(flyway("12"),jdbc,coordinator).verify(true);
+        new SchemaLifecycle(flyway("13"),jdbc,coordinator).verify(true);
         assertThat(jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IN ('1','2','3','4','5','6','7','8') ORDER BY installed_rank")).isEqualTo(history);assertThat(jdbc.queryForList("SELECT * FROM ddip_management.coordinator")).isEqualTo(before);
     }
     @Test void nativeIdentityConflictAbortsV7WithoutPartialSchemaOrDeletedRows() {
@@ -151,7 +151,7 @@ class ImportOwnershipIT {
     @Test void upgradeNeverReinitializesAMissingOldCoordinator() {
         reset("6");jdbc.execute("ALTER TABLE ddip_management.coordinator DISABLE TRIGGER coordinator_guard");jdbc.update("DELETE FROM ddip_management.coordinator");
         jdbc.execute("ALTER TABLE ddip_management.coordinator ENABLE TRIGGER coordinator_guard");
-        fixedConflict(() -> new SchemaLifecycle(flyway("12"),jdbc,coordinator).verify(true),"MANAGEMENT_INCOMPATIBLE");assertThat(count("coordinator")).isZero();
+        fixedConflict(() -> new SchemaLifecycle(flyway("13"),jdbc,coordinator).verify(true),"MANAGEMENT_INCOMPATIBLE");assertThat(count("coordinator")).isZero();
     }
     @Test void V6OccupiedRecoveryOwnerSurvivesUpgradeUnchanged() {
         reset("6");provision(jdbc,binding);

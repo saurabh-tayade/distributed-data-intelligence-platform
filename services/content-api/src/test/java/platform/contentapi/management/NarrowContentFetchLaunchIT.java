@@ -61,7 +61,7 @@ class NarrowContentFetchLaunchIT extends NarrowContentFetchLaunchFixtures {
                 try{barrier.await(5,TimeUnit.SECONDS);}catch(Exception ex){throw new CompletionException(ex);}
                 var repository=WorkerTestSupport.enabled(jdbc,tx,INSTALL);
                 try{var result=NarrowContentFetchLaunchTestSupport.launch(jdbc,tx,repository,guard,owner,UUID.randomUUID(),LAUNCH_PROFILE,b->{});assertThat(result.candidateForVerification()).isTrue();completed.incrementAndGet();}
-                catch(ManagementFailure|WorkerFailure ex){refused.incrementAndGet();}
+                catch(ManagementFailure|WorkerFailure|PreflightFailure ex){refused.incrementAndGet();}
             }));for(var f:futures)f.get(30,TimeUnit.SECONDS);
         }
         assertThat(completed).hasValue(1);assertThat(refused).hasValue(1);assertThat(requests).hasValue(1);retained();
