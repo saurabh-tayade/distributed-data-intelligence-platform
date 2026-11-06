@@ -44,8 +44,13 @@ final class PreparedCommand {
             need(SourceJson.sha(PreflightFiles.read(path,(int)length,true)).equals(sha256),INPUT_CHANGED);
         }catch(java.io.IOException ex){throw new PreflightFailure(INPUT_UNAVAILABLE);}
     }
+    enum WriteBoundary { PREFIX_CREATED, PREFIX_WRITTEN, PREFIX_FORCED, MARKER_RENAMED, DIRECTORY_FORCED }
     /** Same-directory atomic publication; an interrupted prefix remains visibly uncommitted. */
     static void writeOnce(Path directory,String name,byte[] bytes,int maximum){
+        writeOnce(directory,name,bytes,maximum,b->{});
+    }
+    static void writeOnce(Path directory,String name,byte[] bytes,int maximum,java.util.function.Consumer<WriteBoundary> boundary){
+        need(boundary!=null,INPUT_INVALID);
         need(bytes.length<=maximum && name.matches("[a-z][a-z0-9.-]{0,63}"),RESOURCE_LIMIT);
         PreflightFiles.privateEntry(directory,true);
         Path target=directory.resolve(name),temporary=directory.resolve(name+".preparing");
@@ -53,13 +58,15 @@ final class PreparedCommand {
             try{
                 need(!Files.exists(target,LinkOption.NOFOLLOW_LINKS),INPUT_CHANGED);
                 try(var channel=FileChannel.open(temporary,Set.of(StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE,LinkOption.NOFOLLOW_LINKS),PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))){
-                    var b=ByteBuffer.wrap(bytes);while(b.hasRemaining())channel.write(b);channel.force(true);
+                    boundary.accept(WriteBoundary.PREFIX_CREATED);
+                    var b=ByteBuffer.wrap(bytes);while(b.hasRemaining())channel.write(b);boundary.accept(WriteBoundary.PREFIX_WRITTEN);
+                    channel.force(true);boundary.accept(WriteBoundary.PREFIX_FORCED);
                 }
                 need(Arrays.equals(bytes,PreflightFiles.read(temporary,maximum,true)),INPUT_CHANGED);
                 // Compliant writers hold the same tree lock; neither target nor prefix is replaced.
                 need(!Files.exists(target,LinkOption.NOFOLLOW_LINKS),INPUT_CHANGED);
-                Files.move(temporary,target,StandardCopyOption.ATOMIC_MOVE);
-                forceDirectory(directory);
+                Files.move(temporary,target,StandardCopyOption.ATOMIC_MOVE);boundary.accept(WriteBoundary.MARKER_RENAMED);
+                forceDirectory(directory);boundary.accept(WriteBoundary.DIRECTORY_FORCED);
                 need(Arrays.equals(bytes,PreflightFiles.read(target,maximum,true)),INPUT_CHANGED);
             }catch(FileAlreadyExistsException ex){throw new PreflightFailure(INPUT_CHANGED);}
             catch(java.io.IOException ex){throw new PreflightFailure(INPUT_UNAVAILABLE);}

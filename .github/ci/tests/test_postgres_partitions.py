@@ -27,6 +27,8 @@ GOLD = (
     'platform.contentapi.management.ContentFinalizationIT',
 )
 CONTENT_RECOVERY = (
+    "platform.contentapi.management.NarrowContentFetchCompletionIT",
+    "platform.contentapi.management.NarrowContentFetchCompletionRecoveryIT",
     "platform.contentapi.management.NarrowContentFetchCandidateVerificationIT",
     "platform.contentapi.management.NarrowContentFetchCandidateVerificationRecoveryIT",
     "platform.contentapi.management.NarrowContentFetchLaunchIT",
@@ -120,8 +122,8 @@ class PostgresInventoryTests(unittest.TestCase):
         self.assertEqual(PARTITIONS.inventory(self.root), self.groups)
         self.assertEqual(len(sum(self.groups.values(), [])), len(set(sum(self.groups.values(), []))))
         self.assertEqual({k: len(v) for k, v in self.groups.items()},
-                         dict(core=14, reliability=7, ingestion=3, gold=3, content_recovery=7))
-        self.assertEqual(len(sum(self.groups.values(), [])), 34)
+                         dict(core=14, reliability=7, ingestion=3, gold=3, content_recovery=9))
+        self.assertEqual(len(sum(self.groups.values(), [])), 36)
         self.assertEqual(tuple(self.groups['gold']), GOLD)
         self.assertEqual(tuple(self.groups['content_recovery']), CONTENT_RECOVERY)
 

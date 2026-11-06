@@ -31,6 +31,15 @@ final class NarrowContentFetchLaunch {
     }
     Facts launch(InstallationHostGuard guard,WorkerRepository.Owner owner,UUID operation,String launchProfile){return launch(guard,owner,operation,launchProfile,b->{});}
     Facts launch(InstallationHostGuard guard,WorkerRepository.Owner owner,UUID operation,String launchProfile,Consumer<Boundary> fault){
+        return launchThen(guard,owner,operation,launchProfile,fault,current->inspect(operation));
+    }
+    /** Same live invocation only. The refreshed owner never escapes as historical or restart authority. */
+    NarrowContentFetchCompletion.Observation launchAndCheckpoint(InstallationHostGuard guard,WorkerRepository.Owner owner,UUID operation,String launchProfile,
+                                                                Consumer<NarrowContentFetchCompletion.Boundary> completionFault){
+        return launchThen(guard,owner,operation,launchProfile,b->{},current->new NarrowContentFetchCompletion(jdbc,tx,workers).complete(guard,current,operation,completionFault));
+    }
+    private <T>T launchThen(InstallationHostGuard guard,WorkerRepository.Owner owner,UUID operation,String launchProfile,Consumer<Boundary> fault,
+                           java.util.function.Function<WorkerRepository.Owner,T> finish){
         require(operation!=null && fault!=null,WORKER_CONFIGURATION_INVALID);
         var ready=NarrowContentAdmission.inspectReady(jdbc,tx,guard,owner.runId(),owner.attemptId());
         var registered=NarrowContentRuntimeQualification.inspect(jdbc,tx,ready);
@@ -99,7 +108,7 @@ final class NarrowContentFetchLaunch {
         require(candidate.equals(candidate(directory,payload.commandBytes())),RUNTIME_MISMATCH);
         fault.accept(Boundary.BEFORE_CANDIDATE_PHASE);
         phase(guard,current[0],operation,"CANDIDATE_EXITED",null,null,candidate);fault.accept(Boundary.CANDIDATE_EXITED);
-        return inspect(operation);
+        return finish.apply(current[0]);
     }
     /** Historical facts only: no files, installed runtime, owner, packet, or resume token returned. */
     Facts inspect(UUID operation){return inspect(jdbc,tx,operation);}

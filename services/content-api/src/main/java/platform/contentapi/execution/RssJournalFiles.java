@@ -97,10 +97,14 @@ final class RssJournalFiles {
             return d;
         }catch(PreflightFailure ex){throw ex;}catch(RuntimeException ex){throw new PreflightFailure(INPUT_INVALID);}
     }
-    Evidence complete(byte[] command) {
+    /** Pure read-only planning. The marker format and historical completion path are unchanged. */
+    byte[] completionBytes(byte[] command) {
         validateCandidate(command);var marker=SourceJson.object().put("journalCompletionVersion",1).put("directoryIdentity",identity(directory));
         var files=marker.putArray("files");for(String name:new TreeSet<>(CANDIDATE)){byte[] raw=read(name);var f=files.addObject().put("name",name).put("byteLength",raw.length).put("sha256",SourceJson.sha(raw));f.set("stamp",stamp(directory.resolve(name)));}
-        byte[] raw=SourceJson.canonical(marker);write("complete.json",raw);return reopen(command,SourceJson.sha(raw));
+        return SourceJson.canonical(marker);
+    }
+    Evidence complete(byte[] command) {
+        byte[] raw=completionBytes(command);write("complete.json",raw);return reopen(command,SourceJson.sha(raw));
     }
     Evidence reopen(byte[] command,String completionSha) {
         membership(true);byte[] completion=read("complete.json");need(SourceJson.sha(completion).equals(completionSha),INPUT_CHANGED);

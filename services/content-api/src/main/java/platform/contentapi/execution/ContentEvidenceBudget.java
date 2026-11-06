@@ -170,6 +170,20 @@ final class ContentEvidenceBudget {
             }catch(java.io.IOException ex){throw new PreflightFailure(INPUT_UNAVAILABLE);}
         });
     }
+    /** Completed FETCH scope only; it does not relax launch or candidate inspection. */
+    static Totals inspectFetchCompletion(NarrowContentEvidenceContext context,InstallationHostGuard guard,Path directory){
+        need(directory!=null && directory.getParent().getParent().getParent().equals(context.root()),INPUT_INVALID);
+        return inspect(context,guard,context.frozen(),()->{
+            var names=new HashSet<>(RssJournalFiles.CANDIDATE);names.add("complete.json");
+            try(var walk=Files.walk(context.root(),4)){
+                for(Path p:walk.limit(ENTRIES+1).toList()){
+                    if(Files.isDirectory(p,LinkOption.NOFOLLOW_LINKS))need(Set.of(context.root(),directory.getParent().getParent(),directory.getParent(),directory).contains(p),INPUT_CHANGED);
+                    else if(p.getParent().equals(context.root()))need(Set.of(MANIFEST,LOCK).contains(p.getFileName().toString()),INPUT_CHANGED);
+                    else need(p.getParent().equals(directory) && names.contains(p.getFileName().toString()),INPUT_CHANGED);
+                }
+            }catch(java.io.IOException ex){throw new PreflightFailure(INPUT_UNAVAILABLE);}
+        });
+    }
     private static Totals inspect(NarrowContentEvidenceContext context,InstallationHostGuard guard,
                                   NarrowContentEvidenceContext.FrozenIdentities independentlySupplied,Runnable scope){
         need(context!=null,INPUT_INVALID);Path root=context.root();
