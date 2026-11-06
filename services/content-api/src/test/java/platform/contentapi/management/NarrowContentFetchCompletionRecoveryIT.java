@@ -23,11 +23,11 @@ class NarrowContentFetchCompletionRecoveryIT extends NarrowContentFetchLaunchFix
     String line(Process process)throws Exception{return CompletableFuture.supplyAsync(()->{try{var reader=process.inputReader();String s;while((s=reader.readLine())!=null)if(s.startsWith("NARROW_COMPLETION_"))return s;return "EOF";}catch(Exception ex){throw new CompletionException(ex);}}).get(45,TimeUnit.SECONDS);}
     static void stop(Process process)throws Exception{if(process.isAlive())process.destroyForcibly();assertThat(process.waitFor(10,TimeUnit.SECONDS)).isTrue();}
     void freshJvm(UUID run,UUID attempt,boolean present)throws Exception{var process=child("inspect",run,attempt);try{assertThat(line(process)).isEqualTo("NARROW_COMPLETION_HISTORY "+present);assertThat(process.waitFor(10,TimeUnit.SECONDS)).isTrue();assertThat(process.exitValue()).isZero();}finally{stop(process);}}
-    @ParameterizedTest @ValueSource(strings={"FRESH_VERIFIED","BEFORE_INTENT","INTENT_COMMITTED","BEFORE_MARKER","PREFIX_CREATED","PREFIX_WRITTEN","PREFIX_FORCED","MARKER_RENAMED","DIRECTORY_FORCED","MARKER_WRITTEN","JOURNAL_REOPENED","REOPENED","BEFORE_CHECKPOINT","CHECKPOINT_INSERTED","CHECKPOINT_COMMITTED"})
+    @ParameterizedTest @ValueSource(strings={"FRESH_VERIFIED","BEFORE_INTENT","INTENT_INSERTED","INTENT_COMMITTED","BEFORE_MARKER","PREFIX_CREATED","PREFIX_WRITTEN","PREFIX_FORCED","MARKER_RENAMED","DIRECTORY_FORCED","MARKER_WRITTEN","JOURNAL_REOPENED","REOPENED","BEFORE_CHECKPOINT","CHECKPOINT_INSERTED","CHECKPOINT_COMMITTED"})
     void killedOwnerNeverResumesOrRefetches(String boundary)throws Exception{
         UUID run=queue("completion-crash"),attempt=UUID.randomUUID();var process=child(boundary,run,attempt);
         try{assertThat(line(process)).isEqualTo("NARROW_COMPLETION_BOUNDARY "+boundary);}finally{stop(process);}
-        boolean consumed=!Set.of("FRESH_VERIFIED","BEFORE_INTENT").contains(boundary),checkpointed=boundary.equals("CHECKPOINT_COMMITTED");
+        boolean consumed=!Set.of("FRESH_VERIFIED","BEFORE_INTENT","INTENT_INSERTED").contains(boundary),checkpointed=boundary.equals("CHECKPOINT_COMMITTED");
         assertThat(count("content_fetch_completion_intents")).isEqualTo(consumed?1:0);assertThat(count("content_fetch_checkpoints")).isEqualTo(checkpointed?1:0);assertThat(requests).hasValue(1);noExecution();
         var before=history();var files=filesystem();freshJvm(run,attempt,checkpointed);freshJvm(run,attempt,checkpointed);assertThat(history()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);
         ready();assertThat(session.status()).isEqualTo("RECOVERY_ONLY");assertThatThrownBy(()->NarrowContentAdmissionTestSupport.claim(workers,guard,session,UUID.randomUUID(),run)).hasMessage("WORKER_NOT_READY");

@@ -12,7 +12,7 @@ import static platform.contentapi.execution.WorkerFailure.Code.*;
 
 /** Inactive original-owner bridge. A native checkpoint is not a legacy stage, delivery or continuation. */
 final class NarrowContentFetchCompletion {
-    enum Boundary { FRESH_VERIFIED, BEFORE_INTENT, INTENT_COMMITTED, BEFORE_MARKER, PREFIX_CREATED, PREFIX_WRITTEN,
+    enum Boundary { FRESH_VERIFIED, BEFORE_INTENT, INTENT_INSERTED, INTENT_COMMITTED, BEFORE_MARKER, PREFIX_CREATED, PREFIX_WRITTEN,
         PREFIX_FORCED, MARKER_RENAMED, DIRECTORY_FORCED, MARKER_WRITTEN, JOURNAL_REOPENED, REOPENED, BEFORE_CHECKPOINT,
         CHECKPOINT_INSERTED, CHECKPOINT_COMMITTED }
     record Observation(UUID operation,UUID run,UUID attempt,UUID checkpoint,String candidateSha256,String completionSha256) {
@@ -54,7 +54,7 @@ final class NarrowContentFetchCompletion {
         fence(guard,owner,()->{
             require(NarrowContentFetchLaunch.inspect(jdbc,tx,operation).candidateSha256().equals(intent.candidate()),RUNTIME_MISMATCH);
             jdbc.update("INSERT INTO ddip_management.content_fetch_completion_intents(operation_id,candidate_sha256,completion_bytes,completion_sha256,owner_coordinator_version,owner_worker_version,owner_run_version,owner_attempt_version) VALUES (?,?,?,?,?,?,?,?)",
-                    operation,intent.candidate(),marker,intent.completion(),owner.worker().coordinatorVersion(),owner.worker().workerVersion(),owner.runVersion(),owner.attemptVersion());return null;
+                    operation,intent.candidate(),marker,intent.completion(),owner.worker().coordinatorVersion(),owner.worker().workerVersion(),owner.runVersion(),owner.attemptVersion());fault.accept(Boundary.INTENT_INSERTED);return null;
         });
         // Any exception/uncertainty above ends the call. A read cannot authorize resuming this write.
         fault.accept(Boundary.INTENT_COMMITTED);fault.accept(Boundary.BEFORE_MARKER);
@@ -139,7 +139,7 @@ final class NarrowContentFetchCompletion {
     }
     static String markerCandidate(byte[] bytes,byte[] command){
         var m=PreflightFiles.canonical(bytes,RssJournalFiles.SMALL);SourceJson.fields(m,"journalCompletionVersion","directoryIdentity","files");
-        require(m.get("journalCompletionVersion").isIntegralNumber() && m.get("journalCompletionVersion").intValue()==1
+        require(m.get("journalCompletionVersion").isIntegralNumber() && m.get("journalCompletionVersion").canConvertToInt() && m.get("journalCompletionVersion").intValue()==1
                 && m.get("directoryIdentity").isString() && m.get("directoryIdentity").stringValue().matches("[0-9]+:[0-9]+")
                 && m.get("files").isArray() && m.get("files").size()==5,RUNTIME_MISMATCH);
         var inventory=SourceJson.object();var names=new ArrayList<String>();
@@ -217,7 +217,7 @@ final class NarrowContentFetchCompletion {
     private static void descriptor(JsonNode d,JsonNode c){
         SourceJson.fields(d,"journalVersion","commandSha256","runId","attemptId","ownerEpoch","stage","itemOrdinal","checkpointId","sourceId","revision","capturedConfigSha256","endpointSha256","runtimeSha256","ingestionId","ingestedAt","httpStatus","contentType","declaredContentLength","payloadByteLength","payloadSha256","expected");
         String ingestion=SourceJson.text(d.get("ingestionId")),at=SourceJson.text(d.get("ingestedAt"));
-        require(d.get("journalVersion").isIntegralNumber() && d.get("journalVersion").intValue()==1
+        require(d.get("journalVersion").isIntegralNumber() && d.get("journalVersion").canConvertToInt() && d.get("journalVersion").intValue()==1
                 && UUID.fromString(ingestion).toString().equals(ingestion) && java.time.Instant.parse(at).toString().equals(at) && at.matches("[0-9]{4}-.*Z")
                 && d.get("httpStatus").isIntegralNumber() && d.get("httpStatus").canConvertToInt() && d.get("httpStatus").intValue()>=200 && d.get("httpStatus").intValue()<300
                 && (d.get("contentType").isNull() || d.get("contentType").isString())

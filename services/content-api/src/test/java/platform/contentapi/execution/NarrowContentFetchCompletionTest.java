@@ -23,11 +23,12 @@ class NarrowContentFetchCompletionTest {
         var inventory=SourceJson.object();for(String name:new TreeSet<>(RssJournalFiles.CANDIDATE))inventory.putObject(name).put("bytes",2).put("sha256",SourceJson.sha(COMMAND));
         assertThat(NarrowContentFetchCompletion.markerCandidate(SourceJson.canonical(marker()),COMMAND)).isEqualTo(SourceJson.sha(SourceJson.canonical(inventory)));
     }
-    @ParameterizedTest @ValueSource(strings={"version","identity","field","name","length","hash","stamp","command"})
+    @ParameterizedTest @ValueSource(strings={"version","oversized-version","identity","field","name","length","hash","stamp","command"})
     void malformedOrSubstitutedMarkerCannotBecomeIntent(String change){
         var marker=marker();var first=(ObjectNode)marker.get("files").get(0);byte[] command=COMMAND;
         switch(change){
             case "version"->marker.put("journalCompletionVersion",2);
+            case "oversized-version"->marker.put("journalCompletionVersion",4294967297L);
             case "identity"->marker.put("directoryIdentity","../bad");
             case "field"->marker.put("unexpected",true);
             case "name"->first.put("name","foreign.json");

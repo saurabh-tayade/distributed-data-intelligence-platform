@@ -44,9 +44,9 @@ class NarrowContentFetchCompletionIT extends NarrowContentFetchLaunchFixtures {
     }
     @Test void freshCompletionWritesOnlyNativeMarkerAndImmutableReceipt()throws Exception{
         candidate();var before=metadata();var phases=facts();var files=filesystem();var boundaries=new ArrayList<String>();
-        var result=complete(b->{boundaries.add(b);if(!b.equals("CHECKPOINT_INSERTED"))assertThat(TransactionSynchronizationManager.isActualTransactionActive()).as(b).isFalse();});
+        var result=complete(b->{boundaries.add(b);if(!Set.of("INTENT_INSERTED","CHECKPOINT_INSERTED").contains(b))assertThat(TransactionSynchronizationManager.isActualTransactionActive()).as(b).isFalse();});
         assertThat(result.operation()).isEqualTo(operation);assertThat(result.run()).isEqualTo(owner.runId());assertThat(result.attempt()).isEqualTo(owner.attemptId());assertThat(result.candidateSha256()).isEqualTo(phases.candidateSha256());assertThat(result.checkpointed()).isTrue();assertThat(result.nativeLaunchCompatible()).isFalse();
-        assertThat(boundaries).containsSubsequence("FRESH_VERIFIED","INTENT_COMMITTED","MARKER_WRITTEN","REOPENED","CHECKPOINT_INSERTED","CHECKPOINT_COMMITTED");
+        assertThat(boundaries).containsSubsequence("FRESH_VERIFIED","INTENT_INSERTED","INTENT_COMMITTED","MARKER_WRITTEN","REOPENED","CHECKPOINT_INSERTED","CHECKPOINT_COMMITTED");
         byte[] marker=Files.readAllBytes(fetchDirectory().resolve("complete.json"));assertThat(result.completionSha256()).isEqualTo(SourceJson.sha(marker));
         assertThat(jdbc.queryForObject("SELECT completion_bytes FROM ddip_management.content_fetch_completion_intents",byte[].class)).isEqualTo(marker);
         assertThat(count("content_fetch_completion_intents")).isEqualTo(1);assertThat(count("content_fetch_checkpoints")).isEqualTo(1);
@@ -65,10 +65,10 @@ class NarrowContentFetchCompletionIT extends NarrowContentFetchLaunchFixtures {
         }finally{responseGate.countDown();}
     }
     @ParameterizedTest @ValueSource(strings={"","not XML","<feed><broken>"}) void rawHttpPayloadIsCheckpointable(String raw){body=raw.getBytes(java.nio.charset.StandardCharsets.UTF_8);candidate();assertThat(complete().checkpointed()).isTrue();assertThat(requests).hasValue(1);retained();}
-    @ParameterizedTest @ValueSource(strings={"FRESH_VERIFIED","BEFORE_INTENT","INTENT_COMMITTED","BEFORE_MARKER","PREFIX_CREATED","PREFIX_WRITTEN","PREFIX_FORCED","MARKER_RENAMED","DIRECTORY_FORCED","MARKER_WRITTEN","JOURNAL_REOPENED","REOPENED","BEFORE_CHECKPOINT","CHECKPOINT_INSERTED","CHECKPOINT_COMMITTED"})
+    @ParameterizedTest @ValueSource(strings={"FRESH_VERIFIED","BEFORE_INTENT","INTENT_INSERTED","INTENT_COMMITTED","BEFORE_MARKER","PREFIX_CREATED","PREFIX_WRITTEN","PREFIX_FORCED","MARKER_RENAMED","DIRECTORY_FORCED","MARKER_WRITTEN","JOURNAL_REOPENED","REOPENED","BEFORE_CHECKPOINT","CHECKPOINT_INSERTED","CHECKPOINT_COMMITTED"})
     void failuresAtEveryBoundaryNeverResumeConsumedIntent(String boundary)throws Exception{
         candidate();assertThatThrownBy(()->complete(b->{if(b.equals(boundary))throw new IllegalStateException("TEST_BOUNDARY");})).isInstanceOf(RuntimeException.class);
-        boolean consumed=!Set.of("FRESH_VERIFIED","BEFORE_INTENT").contains(boundary);assertThat(count("content_fetch_completion_intents")).isEqualTo(consumed?1:0);
+        boolean consumed=!Set.of("FRESH_VERIFIED","BEFORE_INTENT","INTENT_INSERTED").contains(boundary);assertThat(count("content_fetch_completion_intents")).isEqualTo(consumed?1:0);
         assertThat(count("content_fetch_checkpoints")).isEqualTo(boundary.equals("CHECKPOINT_COMMITTED")?1:0);
         if(consumed)rejectedWithoutWrites();assertThat(requests).hasValue(1);retained();
     }
