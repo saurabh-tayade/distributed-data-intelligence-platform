@@ -14,10 +14,10 @@ import static platform.contentapi.management.SourceFixtures.*;
 /** Real PostgreSQL reservation-only acceptance. No native child, credentials or endpoint is used. */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class NarrowContentFetchReservationIT extends NarrowContentAdmissionFixtures {
-    UUID operation;boolean versionEleven;
+    UUID operation;boolean versionEleven,versionTwelve;
     @Override void migrateFixtureSchema(){
-        if(!versionEleven){super.migrateFixtureSchema();return;}
-        org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").target("11").load().migrate();
+        if(!versionEleven && !versionTwelve){super.migrateFixtureSchema();return;}
+        org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").target(versionTwelve?"12":"11").load().migrate();
         new JdbcCoordinatorRepository(jdbc,tx,INSTALL).initialize();
     }
     @Override void profile(String id,boolean content,String source){
@@ -34,7 +34,7 @@ class NarrowContentFetchReservationIT extends NarrowContentAdmissionFixtures {
         jdbc.update("INSERT INTO ddip_management.storage_bindings(binding_id,product,role,configuration_bytes,configuration_sha256,installation_id) VALUES (?,?,?,?,?,?)",id,product,role,bytes,SourceJson.sha(bytes),INSTALL);
     }
     @BeforeEach void identity(){operation=UUID.randomUUID();}
-    @AfterEach void resetVersion(){versionEleven=false;}
+    @AfterEach void resetVersion(){versionEleven=false;versionTwelve=false;}
     void prepared(){claimed();prepare();}
     NarrowContentFetchReservationTestSupport.Facts reserve(java.util.function.Consumer<String> boundary){return NarrowContentFetchReservationTestSupport.reserve(jdbc,tx,workers,guard,owner,operation,boundary);}
     NarrowContentFetchReservationTestSupport.Facts facts(){return NarrowContentFetchReservationTestSupport.inspect(jdbc,tx,workers,operation);}
@@ -116,7 +116,7 @@ class NarrowContentFetchReservationIT extends NarrowContentAdmissionFixtures {
     @Test void populatedVersionElevenUpgradePreservesProbeWithoutNativeBackfill()throws Exception{
         versionEleven=true;setup();prepared();assertThatThrownBy(()->NarrowContentOperationTestSupport.probe(jdbc,tx,workers,guard,owner,UUID.randomUUID(),b->{if(b.equals("RESERVED"))throw new IllegalStateException("TEST_BOUNDARY");})).hasMessage("TEST_BOUNDARY");
         var metadata=metadata();var files=filesystem();var probes=jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_operations t",String.class);
-        var migration=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();assertThat(migration.migrate().migrationsExecuted).isEqualTo(1);
+        var migration=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();assertThat(migration.migrate().migrationsExecuted).isEqualTo(2);
         new SchemaLifecycle(migration,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(false);
         assertThat(metadata()).isEqualTo(metadata);assertThat(filesystem()).isEqualTo(files);assertThat(jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_operations t",String.class)).isEqualTo(probes);assertThat(count("content_native_operations")).isZero();assertThatThrownBy(()->reserve(b->{})).hasMessage("STATE_CONFLICT");
     }
@@ -342,4 +342,90 @@ class NarrowContentFetchReservationIT extends NarrowContentAdmissionFixtures {
             public java.sql.Connection getConnection(String u,String p)throws java.sql.SQLException{return getConnection();}
         };return new org.springframework.jdbc.core.JdbcTemplate(source);
     }
+    // V13 additive migration acceptance: synthetic registrations, no process or endpoint.
+    @Test void populatedVersionTwelveUpgradePreservesNativeReservationWithoutLaunchBackfill()throws Exception{
+        versionTwelve=true;setup();prepared();var original=reserve(b->{});var before=metadata();var files=filesystem();
+        var registrations=jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.execution_profiles t ORDER BY profile_id",String.class);
+        var rows=jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_native_operations t",String.class);
+        var migration=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();
+        assertThat(migration.migrate().migrationsExecuted).isEqualTo(1);
+        new SchemaLifecycle(migration,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(false);
+        assertThat(metadata()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);assertThat(facts()).isEqualTo(original);
+        assertThat(jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.execution_profiles t ORDER BY profile_id",String.class)).isEqualTo(registrations);
+        assertThat(jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_native_operations t",String.class)).isEqualTo(rows);
+        assertThat(count("content_fetch_launch_profiles")).isZero();assertThat(count("content_native_launch_phases")).isZero();
+        assertThatThrownBy(()->reserve(b->{})).hasMessage("STATE_CONFLICT");retained();
+    }
+    private tools.jackson.databind.node.ObjectNode launchConfiguration(){
+        var historical=SourceJson.parse(jdbc.queryForObject("SELECT configuration_bytes FROM ddip_management.execution_profiles WHERE profile_id='fetch'",byte[].class));
+        var manifest=historical.get("manifest").deepCopy();
+        ((tools.jackson.databind.node.ObjectNode)manifest).put("adapter","platform.ingestion.managed.StrictManagedRssFetch");
+        var config=SourceJson.object().put("strictFetchLaunchVersion",1).put("fetchRuntimeId","fetch")
+                .put("fetchRuntimeSha256",digest("fetch")).put("deploymentSha256",SourceJson.sha(SourceJson.canonical(manifest))).put("testEndpoint",true);
+        for(String field:List.of("runProfileId","runProfileSha256","controlBindingId","javaHome"))config.set(field,historical.get(field));
+        config.set("manifest",manifest);return config;
+    }
+    private String registerLaunch(byte[] bytes){
+        String sha=SourceJson.sha(bytes);
+        jdbc.update("INSERT INTO ddip_management.content_fetch_launch_profiles(launch_profile_id,configuration_bytes,configuration_sha256) VALUES ('strict-fetch',?,?)",bytes,sha);
+        return sha;
+    }
+    private void phase(String phase){jdbc.update("INSERT INTO ddip_management.content_native_launch_phases(operation_id,phase) VALUES (?,?)",operation,phase);}
+    private void bindLaunch(String sha){jdbc.update("INSERT INTO ddip_management.content_native_launch_phases(operation_id,phase,launch_profile_id,launch_profile_sha256) VALUES (?,'LAUNCH_BOUND','strict-fetch',?)",operation,sha);}
+    @Test void launchProfileIsSeparateImmutableAndBoundBeforeFiles(){
+        prepared();var historical=jdbc.queryForObject("SELECT configuration_bytes FROM ddip_management.execution_profiles WHERE profile_id='fetch'",byte[].class);
+        String sha=registerLaunch(SourceJson.canonical(launchConfiguration()));reserve(b->{});
+        assertThatThrownBy(()->phase("FILES_READY")).isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(()->bindLaunch("0".repeat(64))).isInstanceOf(RuntimeException.class);
+        bindLaunch(sha);assertThatThrownBy(()->bindLaunch(sha)).isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(()->phase("START_AUTHORIZED")).isInstanceOf(RuntimeException.class);
+        phase("FILES_READY");phase("START_AUTHORIZED");
+        assertThatThrownBy(()->phase("CHILD_RECORDED")).isInstanceOf(RuntimeException.class);
+        jdbc.update("INSERT INTO ddip_management.content_native_launch_phases(operation_id,phase,child_instance_id,child_pid,child_started_at) VALUES (?,'CHILD_RECORDED',?,123,clock_timestamp())",operation,UUID.randomUUID());
+        jdbc.update("INSERT INTO ddip_management.content_native_launch_phases(operation_id,phase,bootstrap_sha256) VALUES (?,'RELEASE_AUTHORIZED',?)",operation,"a".repeat(64));
+        jdbc.update("INSERT INTO ddip_management.content_native_launch_phases(operation_id,phase,candidate_sha256) VALUES (?,'CANDIDATE_EXITED',?)",operation,"b".repeat(64));
+        assertThat(count("content_native_launch_phases")).isEqualTo(6);retained();
+        assertThat(jdbc.queryForObject("SELECT configuration_bytes FROM ddip_management.execution_profiles WHERE profile_id='fetch'",byte[].class)).isEqualTo(historical);
+        for(String table:List.of("content_fetch_launch_profiles","content_native_launch_phases"))for(String sql:List.of("UPDATE ddip_management."+table+" SET created_at=created_at","DELETE FROM ddip_management."+table,"TRUNCATE ddip_management."+table+" CASCADE"))
+            assertThatThrownBy(()->jdbc.execute(sql)).isInstanceOf(RuntimeException.class);
+    }
+    @ParameterizedTest @ValueSource(strings={"version","adapter","javaHome","classpath","fetchHash","profile","control","testEndpoint","unknown","duplicate","nestedDuplicate"})
+    void launchProfileRejectsSubstitutionAndDuplicateKeys(String mutation){
+        prepared();var n=launchConfiguration();
+        switch(mutation){
+            case "version"->n.put("strictFetchLaunchVersion","1");
+            case "adapter"->((tools.jackson.databind.node.ObjectNode)n.get("manifest")).put("adapter","platform.ingestion.managed.BoundedManagedRssFetch");
+            case "javaHome"->n.put("javaHome","/different");
+            case "classpath"->((tools.jackson.databind.node.ObjectNode)n.get("manifest")).putArray("classpath");
+            case "fetchHash"->n.put("fetchRuntimeSha256","0".repeat(64));
+            case "profile"->n.put("runProfileId","other");
+            case "control"->n.put("controlBindingId","other");
+            case "testEndpoint"->n.put("testEndpoint",false);
+            case "unknown"->n.put("unknown",true);
+        }
+        byte[] bytes=SourceJson.canonical(n);
+        if(mutation.equals("duplicate"))bytes=("{\"testEndpoint\":true,"+new String(bytes,java.nio.charset.StandardCharsets.UTF_8).substring(1)).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        if(mutation.equals("nestedDuplicate"))bytes=new String(bytes,java.nio.charset.StandardCharsets.UTF_8).replace("\"manifest\":{","\"manifest\":{\"adapter\":\"platform.ingestion.managed.StrictManagedRssFetch\",").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] invalid=bytes;assertThatThrownBy(()->registerLaunch(invalid)).isInstanceOf(RuntimeException.class);
+        assertThat(count("content_fetch_launch_profiles")).isZero();
+    }
+    @ParameterizedTest @ValueSource(strings={"cancel","stop","interrupt"})
+    void launchPhasesRefuseLostAuthority(String change){
+        prepared();String sha=registerLaunch(SourceJson.canonical(launchConfiguration()));reserve(b->{});bindLaunch(sha);
+        switch(change){case "cancel"->cancel();case "stop"->jdbc.update("UPDATE ddip_management.coordinator SET mode='STOPPING',row_version=row_version+1");case "interrupt"->workers.interrupt(guard,owner);}
+        assertThatThrownBy(()->phase("FILES_READY")).isInstanceOf(RuntimeException.class);
+        assertThat(count("content_native_launch_phases")).isEqualTo(1);noExecution();
+    }
+    @ParameterizedTest @ValueSource(strings={"REPEATABLE READ","SERIALIZABLE"})
+    void launchPhasesRequireReadCommitted(String isolation)throws Exception{
+        prepared();String sha=registerLaunch(SourceJson.canonical(launchConfiguration()));reserve(b->{});bindLaunch(sha);
+        try(var connection=jdbc.getDataSource().getConnection()){
+            connection.setAutoCommit(false);
+            try(var statement=connection.createStatement()){
+                statement.execute("SET TRANSACTION ISOLATION LEVEL "+isolation);
+                assertThatThrownBy(()->statement.execute("INSERT INTO ddip_management.content_native_launch_phases(operation_id,phase) VALUES ('"+operation+"','FILES_READY')")).isInstanceOf(java.sql.SQLException.class).hasMessageContaining("CONTENT_NATIVE_LAUNCH_ISOLATION_REQUIRED");
+            }finally{connection.rollback();}
+        }
+    }
+
 }

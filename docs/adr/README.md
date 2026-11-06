@@ -108,3 +108,7 @@ It creates candidates only, without SQL reservation, parent completion or produc
 [ADR 0030](0030-inactive-native-fetch-reservation.md) adds a separate immutable, inactive
 FETCH_SOURCE/0 native reservation with exact command/bootstrap facts and facts-only inspection.
 It preserves the V11 probe and excludes probe-used attempts, without child launch or completion.
+
+[ADR 0031](0031-inactive-guarded-fetch-launch.md) adds the separately versioned, loopback-only
+parent launch with ordered durable phases and candidate-only exit. Uncertain operations remain
+consumed; no completion, recovery continuation or production Content dispatch is enabled.

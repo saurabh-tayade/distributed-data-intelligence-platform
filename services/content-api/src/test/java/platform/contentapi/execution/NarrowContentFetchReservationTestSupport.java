@@ -25,9 +25,18 @@ public final class NarrowContentFetchReservationTestSupport {
 
     /** Fully hash-linked runtime registrations, with deliberately nonexistent executable/JAR paths. */
     public static void registerChain(JdbcTemplate jdbc,String profileId,ObjectNode profile,String product){
+        registerChain(jdbc,profileId,profile,product,null);
+    }
+    public static void registerChain(JdbcTemplate jdbc,String profileId,ObjectNode profile,String product,tools.jackson.databind.JsonNode fetchManifest){
         var fixture=new NarrowContentRuntimeQualificationTest.Fixture();
+        String deployment=fetchManifest==null?fixture.deployment:SourceJson.sha(SourceJson.canonical(fetchManifest));
+        if(fetchManifest!=null){
+            fixture.configs.get("fetch").set("manifest",fetchManifest);
+            fixture.configs.get("fetch").put("javaHome",java.nio.file.Path.of(System.getProperty("java.home")).toString()).put("httpTimeoutMillis",30000);
+            for(var config:fixture.configs.values())if(config.has("deploymentSha256"))config.put("deploymentSha256",deployment);
+        }
         profile.put("runProfileVersion",2).put("contentRuntimeId","content");
-        ((ObjectNode)profile.get("runtime")).put("deploymentSha256",fixture.deployment);
+        ((ObjectNode)profile.get("runtime")).put("deploymentSha256",deployment);
         String hash=NarrowContentRuntimeQualificationTest.sha(profile);
         var bindings=new HashMap<String,String>();
         for(var row:jdbc.queryForList("SELECT binding_id,role FROM ddip_management.storage_bindings WHERE product=?",product))bindings.put((String)row.get("role"),(String)row.get("binding_id"));

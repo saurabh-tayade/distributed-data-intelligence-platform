@@ -1828,3 +1828,11 @@ The [V12 native fetch reservation record](../../docs/operations/narrow-native-fe
 adds only an inactive, single-use FETCH_SOURCE/0 reservation and facts-only historical inspection.
 It preserves the V11 probe, rejects probe-used attempts and introduces no launch, completion,
 stage success or dispatch capability.
+
+## Inactive guarded native fetch launch (#49)
+
+The [V13 guarded launch](../../docs/operations/narrow-guarded-fetch-launch.md) adds a separate
+immutable strict-fetch launch identity and ordered phases through candidate-only exit. Its
+loopback-only test seam records child identity before EOF-gated release, supervises active
+prefixes, and never reuses an uncertain reservation. Historical runtime-v2 registrations remain
+unchanged. No stage success, completion, recovery release or Content dispatch is enabled.

@@ -106,6 +106,24 @@ class NarrowContentEvidenceContextTest {
         Path result=operation.resolve("result.json");Files.write(result,new byte[65537]);Files.setPosixFilePermissions(result,PosixFilePermissions.fromString("rw-------"));
         assertThatThrownBy(()->context.inspect(guard,frozen)).hasMessage("INPUT_CHANGED");
     }
+    @Test void liveFetchInspectionAllowsOnlyItsExactActivePrefixAndNeverCompletion()throws Exception {
+        var context=new NarrowContentEvidenceContext(expected());
+        Path fetch=ContentOperationPlan.original(root,run,attempt,"source").directory("FETCH_SOURCE",0);
+        ContentEvidenceBudget.inspectFetch(context,guard,fetch,false);
+        for(Path directory:List.of(fetch.getParent().getParent(),fetch.getParent(),fetch)){
+            Files.createDirectory(directory,PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+            ContentEvidenceBudget.inspectFetch(context,guard,fetch,false);
+        }
+        Path prefix=Files.createFile(fetch.resolve("result.json.preparing"),PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+        assertThatThrownBy(()->ContentEvidenceBudget.inspectFetch(context,guard,fetch,false)).hasMessage("INPUT_CHANGED");
+        ContentEvidenceBudget.inspectFetch(context,guard,fetch,true);
+        Files.delete(prefix);
+        Files.createFile(fetch.resolve("complete.json"),PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+        assertThatThrownBy(()->ContentEvidenceBudget.inspectFetch(context,guard,fetch,true)).hasMessage("INPUT_CHANGED");
+        Files.delete(fetch.resolve("complete.json"));
+        Path foreign=Files.createDirectory(root.resolve("check-inputs"),PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+        assertThatThrownBy(()->ContentEvidenceBudget.inspectFetch(context,guard,fetch,true)).hasMessage("INPUT_CHANGED");
+    }
     @Test void lostHostGuardNeverBecomesInspectionAuthority()throws Exception {
         var context=new NarrowContentEvidenceContext(expected());guard.close();
         assertThatThrownBy(()->context.inspect(guard,frozen)).hasMessage("INPUT_CHANGED");
