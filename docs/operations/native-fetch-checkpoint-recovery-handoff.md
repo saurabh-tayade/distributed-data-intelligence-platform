@@ -34,3 +34,7 @@ Docker and PostgreSQL are unavailable in the implementation environment. Hosted 
 the full PostgreSQL/native-child integration suite on the exact submitted head before merge.
 
 The full #49 recovery workflow, Content dispatch and Gate B0 remain open.
+
+A separate inactive [terminal disposition](native-fetch-terminal-recovery.md), specified in
+[ADR 0036](../adr/0036-inactive-terminal-fetch-recovery.md), can now consume only the original
+successfully returned owner. The handoff itself still does not release the slot or recreate an owner.

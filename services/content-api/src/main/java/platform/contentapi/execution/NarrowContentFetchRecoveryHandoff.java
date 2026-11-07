@@ -32,7 +32,7 @@ final class NarrowContentFetchRecoveryHandoff {
         JsonNode json(){var n=(ObjectNode)quiescence.json();return n.put("reviewVersion",1).put("descendantsReviewed",descendantsReviewed).put("launchGapsReviewed",launchGapsReviewed);}
         @Override public String toString(){return "NativeFetchRecoveryReview[redacted]";}
     }
-    private record Snapshot(Map<String,Object> coordinator,Map<String,Object> run,Map<String,Object> attempt,
+    record Snapshot(Map<String,Object> coordinator,Map<String,Object> run,Map<String,Object> attempt,
                             Map<String,Object> control,Map<String,Object> oldWorker,Map<String,Object> recovery,
                             List<Map<String,Object>> history,Map<String,Object> lineage) {
         UUID runId(){return (UUID)run.get("run_id");} UUID oldId(){return (UUID)attempt.get("attempt_id");}
@@ -133,6 +133,15 @@ final class NarrowContentFetchRecoveryHandoff {
         jdbc.queryForList("SELECT singleton_id FROM ddip_management.coordinator WHERE singleton_id=1 FOR UPDATE");
         var row=one(jdbc.queryForList("SELECT * FROM ddip_management.content_fetch_recovery_handoffs WHERE handoff_id=?",handoff));
         var s=read((UUID)row.get("control_id"),(UUID)row.get("recovery_instance_id"));
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.content_fetch_recovery_finalizations WHERE handoff_id=?)",Boolean.class,handoff)) {
+            var terminal=new NarrowContentFetchRecoveryFinalization(jdbc,tx,installation).lookupHandoffLocked(handoff);
+            need(terminal.status()==NarrowContentFetchRecoveryFinalization.Status.CONFIRMED_TERMINAL,EVIDENCE_CHANGED);
+        }else validateRecordedHandoff(row,s.json(),s);
+        return new Receipt(Status.CONFIRMED_HANDOFF,handoff,s.runId(),(UUID)row.get("recovery_attempt_id"),s.checkpoint());
+    }
+    /** Validates historical transfer bytes against independently reconstructed immutable native SQL. */
+    void validateRecordedHandoff(Map<String,Object> row,JsonNode recorded,Snapshot current){
+        var s=current;
         var n=canonical((byte[])row.get("ancestry_bytes"),(String)row.get("ancestry_sha256"),65536);
         var review=canonical((byte[])row.get("review_bytes"),(String)row.get("review_sha256"),8192);
         var before=n.get("snapshot");need(before!=null && before.isObject() && hash(before).equals(text(n,"snapshotSha256")),EVIDENCE_CHANGED);
@@ -141,16 +150,16 @@ final class NarrowContentFetchRecoveryHandoff {
         need(text(review,"targetSha256").equals(SourceJson.sha((byte[])row.get("ancestry_bytes"))) && review.get("reviewVersion").intValue()==1
                 && review.get("handlersStopped").booleanValue() && review.get("unmanagedWritersStopped").booleanValue() && review.get("orphanReviewComplete").booleanValue()
                 && review.get("descendantsReviewed").booleanValue() && review.get("launchGapsReviewed").booleanValue(),EVIDENCE_CHANGED);
-        need(unchangedAfter(before,s,row),EVIDENCE_CHANGED);
+        need(unchangedAfter(before,recorded,row),EVIDENCE_CHANGED);
         // read() independently reconstructs the native reservation, launch and checkpoint SQL.
         checkLineageHeader(n,s);
         var expected=expectedAudits(before,s,row,(String)row.get("ancestry_sha256"));
         var actual=jdbc.queryForList("SELECT attempt_id,action,before_state,after_state,before_version,after_version,details_bytes FROM ddip_management.audit_events WHERE run_id=? AND control_id=? AND safe_code='NATIVE_FETCH_HANDOFF' ORDER BY event_seq LIMIT 4",s.runId(),s.controlId());
         need(hash(RecoveryHandoff.json(actual)).equals(hash(RecoveryHandoff.json(expected))),EVIDENCE_CHANGED);
-        return new Receipt(Status.CONFIRMED_HANDOFF,handoff,s.runId(),(UUID)row.get("recovery_attempt_id"),s.checkpoint());
+        need(recorded.get("lineage").equals(s.json().get("lineage")),EVIDENCE_CHANGED);
     }
-    private boolean unchangedAfter(JsonNode before,Snapshot after,Map<String,Object> h){
-        var expected=(ObjectNode)before.deepCopy();var actual=(ObjectNode)after.json();
+    private boolean unchangedAfter(JsonNode before,JsonNode after,Map<String,Object> h){
+        var expected=(ObjectNode)before.deepCopy();var actual=after;
         need(text(before.get("attempt"),"attempt_id").equals(h.get("original_attempt_id").toString()) && text(before.get("run"),"run_id").equals(h.get("run_id").toString())
                 && text(before.get("control"),"control_id").equals(h.get("control_id").toString())
                 && text(before.get("oldWorker"),"instance_id").equals(h.get("original_instance_id").toString())
@@ -161,13 +170,27 @@ final class NarrowContentFetchRecoveryHandoff {
         var c=(ObjectNode)expected.get("coordinator");c.put("active_attempt_id",h.get("recovery_attempt_id").toString()).put("owner_instance_id",h.get("recovery_instance_id").toString()).put("epoch",Long.toString(number(h,"original_epoch")+1)).put("row_version",Long.toString(number(h,"original_coordinator_version")+1)).put("mode","RECOVERY_ONLY");c.set("heartbeat_at",actual.get("coordinator").get("heartbeat_at"));
         var r=(ObjectNode)expected.get("run");r.put("current_attempt_id",h.get("recovery_attempt_id").toString()).put("state","RECOVERY_REQUIRED").put("outcome_code","RECOVERY_REQUIRED").put("retry_eligible",false).put("row_version",Long.toString(number(h,"original_run_version")+1));
         var history=expected.putArray("history");for(var prior:before.get("history")){history.add(text(prior,"attempt_id").equals(h.get("original_attempt_id").toString())?a:prior);}
-        var successors=after.history.stream().filter(v->v.get("attempt_id").equals(h.get("recovery_attempt_id"))).toList();need(successors.size()==1,EVIDENCE_CHANGED);var successor=successors.getFirst();
-        need(successor.get("run_id").equals(h.get("run_id")) && "RECONCILE".equals(successor.get("kind")) && "CLAIMED".equals(successor.get("state")) && POLICY.equals(successor.get("content_recovery_policy"))
-                && successor.get("instance_id").equals(h.get("recovery_instance_id")) && number(successor,"owner_epoch")==number(h,"original_epoch")+1 && number(successor,"row_version")==0
-                && successor.get("finished_at")==null && successor.get("outcome_code")==null && successor.get("content_admission_policy")==null && successor.get("reused_checkpoint_id")==null
-                && number(successor,"attempt_no")==before.get("history").valueStream().mapToLong(v->Long.parseLong(text(v,"attempt_no"))).max().orElse(0)+1,EVIDENCE_CHANGED);
-        history.add(RecoveryHandoff.json(successor));return expected.equals(actual);
+        var successors=after.get("history").valueStream().filter(v->text(v,"attempt_id").equals(h.get("recovery_attempt_id").toString())).toList();need(successors.size()==1,EVIDENCE_CHANGED);var successor=successors.getFirst();
+        need(text(successor,"run_id").equals(h.get("run_id").toString()) && "RECONCILE".equals(text(successor,"kind")) && "CLAIMED".equals(text(successor,"state")) && POLICY.equals(text(successor,"content_recovery_policy"))
+                && text(successor,"instance_id").equals(h.get("recovery_instance_id").toString()) && Long.parseLong(text(successor,"owner_epoch"))==number(h,"original_epoch")+1 && "0".equals(text(successor,"row_version"))
+                && successor.get("finished_at").isNull() && successor.get("outcome_code").isNull() && successor.get("content_admission_policy").isNull() && successor.get("reused_checkpoint_id").isNull()
+                && Long.parseLong(text(successor,"attempt_no"))==before.get("history").valueStream().mapToLong(v->Long.parseLong(text(v,"attempt_no"))).max().orElse(0)+1,EVIDENCE_CHANGED);
+        history.add(successor);return expected.equals(actual);
     }
+    /** These seams consume the same opaque owner; none can reconstruct or return one. */
+    void terminalGuard(InstallationHostGuard guard,Owner owner){
+        outside();need(guard!=null && owner!=null,INVALID_REQUEST);guard.checkHeld(installation);
+        need(guard.process().instanceId().equals(owner.instance),OWNERSHIP_LOST);
+    }
+    Map<String,Object> terminalHandoff(Owner owner){
+        need(owner!=null && TransactionSynchronizationManager.isActualTransactionActive(),INVALID_REQUEST);
+        jdbc.queryForList("SELECT singleton_id FROM ddip_management.coordinator WHERE singleton_id=1 FOR UPDATE");
+        var h=one(jdbc.queryForList("SELECT * FROM ddip_management.content_fetch_recovery_handoffs WHERE handoff_id=?",owner.handoff));
+        need(owner.attempt.equals(h.get("recovery_attempt_id")) && owner.instance.equals(h.get("recovery_instance_id"))
+                && owner.epoch==number(h,"original_epoch")+1 && owner.identity.equals(h.get("ancestry_sha256")),OWNERSHIP_LOST);
+        return h;
+    }
+    Snapshot terminalRead(Map<String,Object> handoff){return read((UUID)handoff.get("control_id"),(UUID)handoff.get("recovery_instance_id"));}
     private void intact(InstallationHostGuard guard,Target t){
         held(guard,t.recovery);
         var a=NarrowContentFetchRecoveryAssessment.inspect(jdbc,tx,guard,t.snapshot.runId(),t.snapshot.oldId(),processes,b->{});

@@ -133,6 +133,22 @@ class RunHistoryIT extends RunApiFixtures {
         String id=run();event(id);event(id);var first=real(RUNS+"/"+id+"/events?limit=1");event(id);var next=real(RUNS+"/"+id+"/events?cursor="+next(first));assertThat(data(next).size()).isEqualTo(2);
         jdbc.update("INSERT INTO ddip_management.audit_events(actor_scope,run_id,action,safe_code,details_bytes) VALUES ('local-operator',?,'PRIVATE_ACTION','PRIVATE_SECRET',?)",uuid(id),bytes("{}"));error(real(RUNS+"/"+id+"/events"),500,"INTERNAL_FAILURE");
     }
+    @Test void nativeFetchTerminalHistoryExposesOnlySafeClassifications()throws Exception {
+        String id=run();
+        jdbc.update("UPDATE ddip_management.runs SET state='FAILED',finished_at=clock_timestamp(),outcome_code='NATIVE_FETCH_INTERRUPTED',retry_eligible=false,row_version=row_version+1 WHERE run_id=?",uuid(id));
+        var inspected=data(real(RUNS+"/"+id));
+        assertThat(inspected.get("outcomeCode").stringValue()).isEqualTo("NATIVE_FETCH_INTERRUPTED");
+        assertThat(inspected.get("state").stringValue()).isEqualTo("FAILED");
+        assertThat(inspected.get("retryEligibility").booleanValue()).isFalse();
+        for(String action:List.of("NATIVE_FETCH_HANDOFF","NATIVE_FETCH_TERMINAL_ATTEMPT","NATIVE_FETCH_TERMINAL_RUN","NATIVE_FETCH_TERMINAL_CONTROL","NATIVE_FETCH_TERMINAL_WORKER","NATIVE_FETCH_TERMINAL_RELEASE")) {
+            boolean worker=action.equals("NATIVE_FETCH_TERMINAL_WORKER");
+            jdbc.update("INSERT INTO ddip_management.audit_events(actor_scope,run_id,action,before_state,after_state,safe_code,details_bytes) VALUES ('local-operator',?,?,?,?,?,?)",uuid(id),action,worker?"RECOVERY_ONLY":null,worker?"STOPPED":null,action.equals("NATIVE_FETCH_HANDOFF")?"NATIVE_FETCH_HANDOFF":"NATIVE_FETCH_INTERRUPTED",bytes("{\"review\":\"PRIVATE_REVIEW\",\"process\":\"PRIVATE_PROCESS\",\"path\":\"PRIVATE_PATH\"}"));
+        }
+        var response=real(RUNS+"/"+id+"/events");
+        assertThat(response.status()).isEqualTo(200);
+        assertThat(data(response).toString()).contains("NATIVE_FETCH_TERMINAL_WORKER","STOPPED","NATIVE_FETCH_INTERRUPTED","NATIVE_FETCH_HANDOFF")
+                .doesNotContain("PRIVATE_REVIEW","PRIVATE_PROCESS","PRIVATE_PATH","detailsBytes","details_bytes");
+    }
     @Test void malformedCountsNeverExposePrivateKeysAndVerificationFlagAloneIsInsufficient()throws Exception {
         String id=run();jdbc.update("UPDATE ddip_management.runs SET counts_bytes=?,row_version=row_version+1 WHERE run_id=?",bytes("{\"privateCredential\":\"123\"}"),uuid(id));error(real(RUNS+"/"+id),500,"INTERNAL_FAILURE");
         UUID artifact=UUID.randomUUID();byte[] e=bytes("{}");jdbc.update("INSERT INTO ddip_management.artifacts(artifact_id,kind,product_id,contract_version,processor_revision,native_identity,storage_binding_id,relative_address,evidence_bytes,evidence_sha256,verified_at) VALUES (?,'CONTENT',?,1,1,?,'content-CONTENT','v1/forged',?,?,now())",artifact,CONTENT,HASH,e,SourceJson.sha(e));jdbc.update("UPDATE ddip_management.runs SET state='SUCCEEDED',finished_at=now(),counts_bytes=NULL,result_artifact_id=?,row_version=row_version+1 WHERE run_id=?",artifact,uuid(id));error(real(RUNS+"/"+id),500,"INTERNAL_FAILURE");

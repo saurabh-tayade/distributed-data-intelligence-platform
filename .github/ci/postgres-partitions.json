@@ -35,6 +35,7 @@
     "platform.contentapi.management.ContentFinalizationIT"
   ],
   "content_recovery": [
+    "platform.contentapi.management.NarrowContentFetchRecoveryFinalizationIT",
     "platform.contentapi.management.NarrowContentFetchRecoveryHandoffIT",
     "platform.contentapi.management.NarrowContentFetchRecoveryAssessmentIT",
     "platform.contentapi.management.NarrowContentFetchCompletionIT",

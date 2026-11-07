@@ -18,6 +18,18 @@ public class RunInspectionTest {
     @Test void malformedSignedStateAndUnknownVersionFail(){var signer=new SourceCursor(key);var c=new RunPageCursor(signer,Clock.systemUTC());var n=SourceJson.object().put("v",2).put("kind","runs").put("scope","a".repeat(64)).put("high","2").put("after","1").put("expires",Long.toString(Instant.now().getEpochSecond()+100));assertThatThrownBy(()->c.decode(signer.encode(n),"runs","a".repeat(64),true)).hasMessage("INVALID_ARGUMENT");n.put("v",1).put("after","3");assertThatThrownBy(()->c.decode(signer.encode(n),"runs","a".repeat(64),true)).hasMessage("INVALID_ARGUMENT");}
     @Test void safeCountsAreExactStringsAndUnknownFieldsFailClosed(){var n=SourceJson.object().put("rows","9007199254740993");assertThat(RunInspectionValues.counts(SourceJson.canonical(n))).isEqualTo(n);assertThat(RunInspectionValues.counts(null)).isNull();n.put("privateCredential","123");assertThatThrownBy(()->RunInspectionValues.counts(SourceJson.canonical(n))).hasMessage("INTERNAL_FAILURE");}
     @Test void unsafeCounterTypesClassificationsAndOverflowNeverLeak(){for(String s:new String[]{"{\"rows\":1}","{\"rows\":\"01\"}","{\"rows\":\"9223372036854775808\"}"})assertThatThrownBy(()->RunInspectionValues.counts(s.getBytes(java.nio.charset.StandardCharsets.UTF_8))).hasMessage("INTERNAL_FAILURE");assertThatThrownBy(()->RunInspectionValues.code("PRIVATE_SECRET")).hasMessage("INTERNAL_FAILURE");assertThatThrownBy(()->RunInspectionValues.action("PRIVATE_ACTION")).hasMessage("INTERNAL_FAILURE");}
+    @Test void nativeFetchTerminalClassificationsRemainExplicitAndFailClosed() {
+        for(String code:new String[]{"NATIVE_FETCH_HANDOFF","NATIVE_FETCH_INTERRUPTED","RECONCILED_FAILED"})
+            assertThat(RunInspectionValues.code(code)).isEqualTo(code);
+        for(String action:new String[]{"NATIVE_FETCH_HANDOFF","NATIVE_FETCH_TERMINAL_ATTEMPT","NATIVE_FETCH_TERMINAL_RUN","NATIVE_FETCH_TERMINAL_CONTROL","NATIVE_FETCH_TERMINAL_WORKER","NATIVE_FETCH_TERMINAL_RELEASE"})
+            assertThat(RunInspectionValues.action(action)).isEqualTo(action);
+        assertThat(RunInspectionValues.state("STOPPED")).isEqualTo("STOPPED");
+        for(String privateCode:new String[]{"NATIVE_FETCH_PRIVATE_REVIEW","NATIVE_FETCH_INTERRUPTED:PRIVATE_SECRET","NATIVE_FETCH_TERMINAL_UNKNOWN"}) {
+            assertThatThrownBy(()->RunInspectionValues.code(privateCode)).hasMessage("INTERNAL_FAILURE");
+            assertThatThrownBy(()->RunInspectionValues.action(privateCode)).hasMessage("INTERNAL_FAILURE");
+        }
+        assertThatThrownBy(()->RunInspectionValues.state("PRIVATE_PROCESS_STATE")).hasMessage("INTERNAL_FAILURE");
+    }
     @Test void stageCursorBindsIdentityOrderingAndFixedExpiry() {
         var signer=new SourceCursor(key);var clock=Clock.fixed(Instant.parse("2026-11-02T00:00:00Z"),ZoneOffset.UTC);var c=new StagePageCursor(signer,clock);
         var high=new StagePageCursor.Key("VERIFY_RESULT",511);var after=new StagePageCursor.Key("FETCH_SOURCE",0);var first=c.first(high);
