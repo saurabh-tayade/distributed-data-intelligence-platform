@@ -131,3 +131,8 @@ Content dispatch, issue #49 and Gate B0 remain open.
 
 ADR 0038 records the owner-approved new-journal direction for original-live-owner Bronze
 reservation. It does not authorize Bronze launch, legacy history translation or ordinary dispatch.
+
+- [0039: Inactive strict Bronze child](0039-inactive-strict-bronze-child.md)
+
+ADR 0039 adds a separate child-only ledger-v2 candidate producer. It preserves native storage
+semantics and does not activate a launcher, receipt commit or ordinary Content dispatch.
