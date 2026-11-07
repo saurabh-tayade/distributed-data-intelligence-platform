@@ -126,3 +126,8 @@ XML parsing, durable verification, completion, slot release or continuation auth
 ADR 0037 adds only the bounded packaged terminal operator caller to ADRs 0035/0036.
 Its validation remains pending; historical receipts never restore authority, and ordinary
 Content dispatch, issue #49 and Gate B0 remain open.
+
+- [0038: Inactive native Bronze reservation](0038-inactive-native-bronze-reservation.md)
+
+ADR 0038 records the owner-approved new-journal direction for original-live-owner Bronze
+reservation. It does not authorize Bronze launch, legacy history translation or ordinary dispatch.
