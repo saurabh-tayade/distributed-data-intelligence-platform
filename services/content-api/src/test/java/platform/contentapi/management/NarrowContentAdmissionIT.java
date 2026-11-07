@@ -422,9 +422,9 @@ class NarrowContentAdmissionIT extends NarrowContentAdmissionFixtures {
         var all=Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();
         var lifecycle=new SchemaLifecycle(all,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL));
         assertThatThrownBy(()->lifecycle.verify(false)).hasMessage("MANAGEMENT_INCOMPATIBLE");lifecycle.verify(true);lifecycle.verify(false);
-        assertThat(jdbc.queryForList("SELECT (to_jsonb(a)-'content_admission_policy')::text FROM ddip_management.attempts a ORDER BY attempt_no",String.class)).isEqualTo(history);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.attempts WHERE content_admission_policy IS NOT NULL",Long.class)).isZero();
+        assertThat(jdbc.queryForList("SELECT (to_jsonb(a)-'content_admission_policy'-'content_recovery_policy')::text FROM ddip_management.attempts a ORDER BY attempt_no",String.class)).isEqualTo(history);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.attempts WHERE content_admission_policy IS NOT NULL OR content_recovery_policy IS NOT NULL",Long.class)).isZero();
         assertThat(count("content_attempt_admissions")).isZero();assertThat(count("content_admission_milestones")).isZero();
-        assertThat(all.info().pending()).isEmpty();assertThat(all.info().current().getVersion().getVersion()).isEqualTo("14");
+        assertThat(all.info().pending()).isEmpty();assertThat(all.info().current().getVersion().getVersion()).isEqualTo("15");
     }
 }

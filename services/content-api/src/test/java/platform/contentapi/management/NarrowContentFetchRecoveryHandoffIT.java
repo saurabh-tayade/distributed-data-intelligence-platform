@@ -99,6 +99,23 @@ class NarrowContentFetchRecoveryHandoffIT extends NarrowContentFetchLaunchFixtur
         }
         assertThat(count("content_fetch_recovery_handoffs")).isEqualTo(1);assertThat(count("attempts")).isEqualTo(2);assertThat(jdbc.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isIn(successor,secondId);noExecution();
     }
+    @ParameterizedTest @ValueSource(ints={128,129})
+    void existingControlCapacityIsNotReduced(int controls){
+        checkpoint();recover();byte[] body=SourceJson.canonical(SourceJson.object());
+        for(int i=1;i<controls;i++)jdbc.update("INSERT INTO ddip_management.controls(control_id,run_id,type,idempotency_key,normalized_request,request_sha256,expected_version,target_attempt_id,quiescence_confirmed,state,reason,requester,applied_at) VALUES (?,?,'RECONCILE',?,?,?,0,?,true,'REJECTED','TEST','local-operator',clock_timestamp())",UUID.randomUUID(),owner.runId(),"historical-"+i,body,SourceJson.sha(body),owner.attemptId());
+        var q=qualify();var before=history();
+        if(controls==128){assertThat(repo.transfer(guard,q).ownerPresent()).isTrue();occupied(successor);}
+        else{assertThatThrownBy(()->repo.transfer(guard,q)).hasMessage("CAPACITY_EXCEEDED");assertThat(history()).isEqualTo(before);occupied(owner.attemptId());}
+    }
+    @Test void reusedHandoffIdCannotConfirmAnotherQualifiedSuccessor(){
+        checkpoint();recover();var first=qualify();
+        var other=repo.inspect(guard,recovery,control,UUID.randomUUID(),handoff);var second=repo.qualify(guard,other,clock.instant(),"");
+        repo.transfer(guard,first);var before=history();
+        assertThatThrownBy(()->repo.transfer(guard,second)).isInstanceOf(RuntimeException.class);
+        assertThat(repo.resolve(second)).isEqualTo("UNRESOLVED");
+        assertThatThrownBy(()->repo.transfer(guard,second)).hasMessage("HANDOFF_UNRESOLVED");
+        assertThat(repo.lookup(handoff)).isEqualTo("CONFIRMED_HANDOFF");assertThat(history()).isEqualTo(before);occupied(successor);
+    }
     @Test void committedHandoffRowIsImmutableAndUnknownLookupIsUnresolved(){
         checkpoint();recover();repo.transfer(guard,qualify());var before=history();assertThatThrownBy(()->jdbc.update("UPDATE ddip_management.content_fetch_recovery_handoffs SET handoff_id=? WHERE handoff_id=?",UUID.randomUUID(),handoff)).isInstanceOf(RuntimeException.class);assertThatThrownBy(()->jdbc.update("DELETE FROM ddip_management.content_fetch_recovery_handoffs WHERE handoff_id=?",handoff)).isInstanceOf(RuntimeException.class);assertThat(repo.lookup(UUID.randomUUID())).isEqualTo("UNRESOLVED");assertThat(history()).isEqualTo(before);occupied(successor);
     }

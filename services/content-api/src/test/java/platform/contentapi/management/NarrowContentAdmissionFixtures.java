@@ -89,6 +89,14 @@ abstract class NarrowContentAdmissionFixtures extends RunApiFixtures {
             snapshot.put(table,jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management."+table+" t ORDER BY to_jsonb(t)::text",String.class));
         return snapshot;
     }
+    // Upgrade assertions alone compare the old columns, after proving V15 added only null policy.
+    // Ordinary metadata snapshots deliberately keep both policy markers visible.
+    Map<String,List<String>> metadataBeforeRecoveryPolicyUpgrade() {
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.attempts WHERE content_recovery_policy IS NOT NULL",Long.class)).isZero();
+        var snapshot=metadata();
+        snapshot.put("attempts",jdbc.queryForList("SELECT (to_jsonb(t)-'content_recovery_policy')::text FROM ddip_management.attempts t ORDER BY (to_jsonb(t)-'content_recovery_policy')::text",String.class));
+        return snapshot;
+    }
     Map<String,String> filesystem() throws Exception {
         var snapshot=new TreeMap<String,String>();
         for(var entry:roots.entrySet())try(var paths=Files.walk(entry.getValue())) {

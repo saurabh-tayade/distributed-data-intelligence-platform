@@ -92,7 +92,7 @@ final class NarrowContentFetchRecoveryHandoff {
             guard.checkLeaseHeld(installation);
             var s=read(t.snapshot.controlId(),t.recovery.instanceId());validateOriginal(guard,t.recovery,s);
             need(s.digest().equals(t.snapshot.digest()),OWNERSHIP_LOST);RecoveryQuiescence.fresh(q.review.quiescence().inspectedAt(),clock.instant());
-            need(s.history.size()<20 && jdbc.queryForObject("SELECT count(*) FROM ddip_management.controls WHERE run_id=?",Long.class,s.runId())<=100,CAPACITY_EXCEEDED);
+            need(s.history.size()<20 && jdbc.queryForObject("SELECT count(*) FROM ddip_management.controls WHERE run_id=?",Long.class,s.runId())<=128,CAPACITY_EXCEEDED);
             long epoch=Math.addExact(number(s.coordinator,"epoch"),1),next=s.history.stream().mapToLong(v->number(v,"attempt_no")).max().orElse(0)+1;
             need(next<=20 && epoch>0,CAPACITY_EXCEEDED);
             long unfinished=jdbc.queryForObject("SELECT count(*) FROM ddip_management.runs WHERE state IN ('QUEUED','RUNNING','CANCEL_REQUESTED','RECOVERY_REQUIRED')",Long.class);
@@ -116,8 +116,8 @@ final class NarrowContentFetchRecoveryHandoff {
     Receipt resolve(Qualified q){
         outside();need(q!=null,INVALID_REQUEST);var t=q.target;
         try{return tx.required(()->{
-            var rows=jdbc.queryForList("SELECT handoff_id FROM ddip_management.content_fetch_recovery_handoffs WHERE handoff_id=?",UUID.class,t.handoff);
-            if(!rows.isEmpty())return lookupLocked(t.handoff);
+            var rows=jdbc.queryForList("SELECT ancestry_sha256 FROM ddip_management.content_fetch_recovery_handoffs WHERE handoff_id=?",String.class,t.handoff);
+            if(!rows.isEmpty())return rows.size()==1 && rows.getFirst().equals(t.digest())?lookupLocked(t.handoff):receipt(Status.UNRESOLVED,t);
             var s=read(t.snapshot.controlId(),t.recovery.instanceId());
             boolean unchanged=s.digest().equals(t.snapshot.digest()) && jdbc.queryForObject("SELECT count(*) FROM ddip_management.attempts WHERE attempt_id=?",Long.class,t.recoveryAttempt)==0
                     && jdbc.queryForObject("SELECT count(*) FROM ddip_management.audit_events WHERE control_id=? AND safe_code='NATIVE_FETCH_HANDOFF'",Long.class,s.controlId())==0;

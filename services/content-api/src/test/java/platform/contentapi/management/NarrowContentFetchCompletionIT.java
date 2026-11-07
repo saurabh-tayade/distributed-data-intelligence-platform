@@ -19,13 +19,13 @@ import static platform.contentapi.management.SourceFixtures.*;
 /** Native completion consumes one immutable intent without starting legacy execution. */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class NarrowContentFetchCompletionIT extends NarrowContentFetchLaunchFixtures {
-    byte[] body;boolean versionThirteen;
+    byte[] body;boolean versionThirteen,versionFourteen;
     @Override void migrateFixtureSchema(){
-        if(!versionThirteen){super.migrateFixtureSchema();return;}
-        org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").target("13").load().migrate();
+        if(!versionThirteen && !versionFourteen){super.migrateFixtureSchema();return;}
+        org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").target(versionFourteen?"14":"13").load().migrate();
         new JdbcCoordinatorRepository(jdbc,tx,INSTALL).initialize();
     }
-    @AfterEach void resetSchemaTarget(){versionThirteen=false;}
+    @AfterEach void resetSchemaTarget(){versionThirteen=false;versionFourteen=false;}
 
     @Override byte[] responsePayload(){return body==null?super.responsePayload():body;}
     @BeforeEach void resetBody(){body=null;}
@@ -38,9 +38,26 @@ class NarrowContentFetchCompletionIT extends NarrowContentFetchLaunchFixtures {
     @Test void populatedVersionThirteenUpgradePreservesCandidateWithoutCompletionBackfill()throws Exception{
         versionThirteen=true;closeServer();setup();candidate();var before=metadata();var launch=facts();var files=filesystem();
         var migration=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();
-        assertThat(migration.migrate().migrationsExecuted).isEqualTo(1);new SchemaLifecycle(migration,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(false);
-        assertThat(metadata()).isEqualTo(before);assertThat(facts()).isEqualTo(launch);assertThat(filesystem()).isEqualTo(files);
+        assertThat(migration.migrate().migrationsExecuted).isEqualTo(2);new SchemaLifecycle(migration,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(false);
+        assertThat(metadataBeforeRecoveryPolicyUpgrade()).isEqualTo(before);assertThat(facts()).isEqualTo(launch);assertThat(filesystem()).isEqualTo(files);
         assertThat(count("content_fetch_completion_intents")).isZero();assertThat(count("content_fetch_checkpoints")).isZero();assertThat(checkpoint()).isEmpty();retained();
+    }
+    @Test void populatedVersionFourteenUpgradePreservesCheckpointWithoutRecoveryBackfill()throws Exception{
+        versionFourteen=true;closeServer();setup();candidate();complete();
+        var before=metadata();var launch=facts();var durable=checkpoint();var files=filesystem();
+        var checkpoints=jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_fetch_checkpoints t",String.class);
+        var intents=jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_fetch_completion_intents t",String.class);
+        var migrations=jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IS NOT NULL ORDER BY installed_rank");
+        var migration=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();
+        assertThat(migration.migrate().migrationsExecuted).isEqualTo(1);
+        new SchemaLifecycle(migration,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(false);
+        assertThat(migration.info().current().getVersion().getVersion()).isEqualTo("15");
+        assertThat(metadataBeforeRecoveryPolicyUpgrade()).isEqualTo(before);assertThat(facts()).isEqualTo(launch);
+        assertThat(checkpoint()).isEqualTo(durable);assertThat(filesystem()).isEqualTo(files);
+        assertThat(jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_fetch_checkpoints t",String.class)).isEqualTo(checkpoints);
+        assertThat(jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_fetch_completion_intents t",String.class)).isEqualTo(intents);
+        assertThat(jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IS NOT NULL AND version<>'15' ORDER BY installed_rank")).isEqualTo(migrations);
+        assertThat(count("content_fetch_recovery_handoffs")).isZero();assertThat(requests).hasValue(1);retained();
     }
     @Test void freshCompletionWritesOnlyNativeMarkerAndImmutableReceipt()throws Exception{
         candidate();var before=metadata();var phases=facts();var files=filesystem();var boundaries=new ArrayList<String>();
