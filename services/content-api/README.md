@@ -1893,3 +1893,11 @@ original-live-owner native FETCH-to-Bronze reservation. It retains the new execu
 without synthesizing legacy delivery or VERIFIED stage history. It does not launch Bronze.
 FETCH-only terminal recovery refuses downstream Bronze reservation history; no downstream
 recovery, ordinary Content dispatch or complete UI readiness is claimed.
+
+### Inactive strict Bronze candidate child
+
+The [strict child record](../../docs/operations/narrow-strict-bronze-child.md) and
+[ADR 0039](../../docs/adr/0039-inactive-strict-bronze-child.md) describe the next inactive producer
+boundary. It does not alter V17 reservation identity, historical runtime registrations or managed
+launch authority. Production execution, receipt commitment and ordinary Content dispatch remain
+separate work.
