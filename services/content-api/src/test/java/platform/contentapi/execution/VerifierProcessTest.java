@@ -28,6 +28,17 @@ class VerifierProcessTest {
         assertThat(result.stderrSha256()).isEqualTo(platform.contentapi.management.SourceJson.sha("message".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         assertThat(result.toString()).doesNotContain("message");
     }
+    @Test void receiptCaptureIsExplicitAndDefensivelyCopied(){
+        var result=ReadOnlyVerifierProcess.receiptReader().run(command("small-stdout","unused"),Map.of(),temp,Duration.ofSeconds(10),new Observer());
+        assertThat(result.stdout()).isEqualTo("receipt".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        result.stdout()[0]=0;assertThat(result.stdout()[0]).isEqualTo((byte)'r');assertThat(result.toString()).doesNotContain("receipt");
+        assertThat(run("small-stdout",new Observer()).stdout()).isNull();
+    }
+    @Test void receiptCaptureHasExactSixtyFourKiBCeiling(){
+        var result=ReadOnlyVerifierProcess.receiptReader().run(command("receipt-limit","unused"),Map.of(),temp,Duration.ofSeconds(10),new Observer());
+        assertThat(result.stdoutBytes()).isEqualTo(65536);assertThat(result.stdout()).hasSize(65536);
+        assertThatThrownBy(()->ReadOnlyVerifierProcess.receiptReader().run(command("receipt-overflow","unused"),Map.of(),temp,Duration.ofSeconds(10),new Observer())).hasMessage("STAGE_OUTPUT_LIMIT");
+    }
     @Test void nonzeroExitIsNotSuccessEvidence(){assertThat(run("failed",new Observer()).exitCode()).isEqualTo(1);}
     @Test void startupFailureHasSafeClassification(){assertThatThrownBy(()->process().run(List.of(temp.resolve("missing").toString()),Map.of(),temp,Duration.ofSeconds(1),new Observer())).isInstanceOf(PreflightFailure.class).hasMessage("PROCESS_START_FAILED").hasNoCause();}
     @Test void authorizationFailurePreventsLaunch(){var observer=new Observer(){public void beforeStart(){throw new WorkerFailure(WorkerFailure.Code.OWNERSHIP_LOST);}};assertThatThrownBy(()->run("marker",observer)).hasMessage("OWNERSHIP_LOST");assertThat(Files.exists(temp.resolve("marker"))).isFalse();}
@@ -73,6 +84,9 @@ class VerifierProcessTest {
                 case "stdout"->System.out.write(new byte[4096]);
                 case "stderr"->System.err.write(new byte[4096]);
                 case "small-stderr"->System.err.print("message");
+                case "small-stdout"->System.out.print("receipt");
+                case "receipt-limit"->System.out.write(new byte[65536]);
+                case "receipt-overflow"->System.out.write(new byte[65537]);
                 case "hang"->new CountDownLatch(1).await();
                 case "descendant"->{var child=new ProcessBuilder(command("hang","unused")).redirectError(ProcessBuilder.Redirect.DISCARD).redirectOutput(ProcessBuilder.Redirect.DISCARD).start();Runtime.getRuntime().addShutdownHook(Thread.ofPlatform().unstarted(()->{child.destroyForcibly();try{child.waitFor(1,TimeUnit.SECONDS);}catch(InterruptedException ex){Thread.currentThread().interrupt();}}));Files.writeString(Path.of(args[1]),"STARTED");child.waitFor();}
                 default->throw new IllegalArgumentException();

@@ -20,14 +20,22 @@ public final class BronzeObjectVerifier {
     public BronzeObjectVerifier(S3Client client,String bucket){this.client=client;this.bucket=bucket;}
 
     public State inspect(RssSource source,RawFeed feed,byte[] metadata) throws BronzeStorageException {return verify(source,feed,metadata).state();}
+    @FunctionalInterface public interface Guard<E extends Exception> { void check() throws E; }
     public Observation verify(RssSource source,RawFeed feed,byte[] metadata) throws BronzeStorageException {
+        return verify(source,feed,metadata,()->{});
+    }
+    /** Read-only caller guard at each GET boundary, without changing native verification semantics. */
+    public <E extends Exception> Observation verify(RssSource source,RawFeed feed,byte[] metadata,Guard<E> guard) throws BronzeStorageException,E {
         if(feed.body().length>5*1024*1024 || metadata.length>65536
                 || !Arrays.equals(metadata,S3BronzeStorage.preparedMetadata(source,feed))) {
             throw new IllegalArgumentException("BRONZE_EXPECTATION_INVALID");
         }
         var keys=BronzeKeys.forFeed(feed);
+        guard.check();
         var payload=get(keys.payload(),feed.body(),"application/octet-stream");
+        guard.check();
         var descriptor=get(keys.metadata(),metadata,"application/json");
+        guard.check();
         State state;
         if(payload.state()==ObjectState.CONFLICT || descriptor.state()==ObjectState.CONFLICT)state=State.CONFLICT;
         else if(payload.state()==ObjectState.UNAVAILABLE || descriptor.state()==ObjectState.UNAVAILABLE)state=State.UNAVAILABLE;

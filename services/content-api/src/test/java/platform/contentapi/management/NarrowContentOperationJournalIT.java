@@ -209,7 +209,7 @@ class NarrowContentOperationJournalIT extends NarrowContentAdmissionFixtures {
         else assertThatThrownBy(()->NarrowContentAdmissionTestSupport.prepare(jdbc,tx,workers,guard,owner,b->{if(b.equals("PREPARING_COMMITTED"))throw new IllegalStateException("TEST_BOUNDARY");})).hasMessage("TEST_BOUNDARY");
         var metadata=metadata();var files=filesystem();
         var migration=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();
-        assertThat(migration.migrate().migrationsExecuted).isEqualTo(8);
+        assertThat(migration.migrate().migrationsExecuted).isEqualTo(9);
         new SchemaLifecycle(migration,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(false);
         assertThat(metadataBeforeRecoveryPolicyUpgrade()).isEqualTo(metadata);assertThat(filesystem()).isEqualTo(files);
         assertThat(count("content_operations")).isZero();assertThat(count("content_operation_phases")).isZero();

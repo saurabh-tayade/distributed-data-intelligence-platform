@@ -28,6 +28,14 @@ final class NarrowContentBronzeLaunch {
         @Override public String toString(){return "NarrowContentBronzeLaunchFacts[candidate only; no continuation]";}
     }
     record Candidate(String sha256,String state,int exitCode) { }
+    /** Unexported one-use live channel; historical facts cannot construct this object. */
+    static final class LiveCandidate {
+        private final WorkerRepository.Owner owner;private final UUID operation;private final Candidate candidate;private boolean consumed;
+        private LiveCandidate(WorkerRepository.Owner owner,UUID operation,Candidate candidate){this.owner=owner;this.operation=operation;this.candidate=candidate;}
+        synchronized WorkerRepository.Owner consume(UUID expected){require(!consumed && operation.equals(expected),WORKER_NOT_READY);consumed=true;return owner;}
+        UUID operation(){return operation;}Candidate candidate(){return candidate;}
+        @Override public String toString(){return "LiveBronzeCandidate[private; one use]";}
+    }
     private final JdbcTemplate jdbc;private final ManagementTransactions tx;private final WorkerRepository workers;
     NarrowContentBronzeLaunch(JdbcTemplate jdbc,ManagementTransactions tx,WorkerRepository workers){
         this.jdbc=Objects.requireNonNull(jdbc);this.tx=Objects.requireNonNull(tx);this.workers=Objects.requireNonNull(workers);
@@ -36,6 +44,22 @@ final class NarrowContentBronzeLaunch {
     /** Reserve and launch once in this invocation. No entry point accepts an existing reservation. */
     Facts reserveAndLaunch(InstallationHostGuard guard,WorkerRepository.Owner owner,UUID fetchOperation,UUID operation,
                            String launchProfile,Consumer<Boundary> fault){
+        return launchThen(guard,owner,fetchOperation,operation,launchProfile,fault,current->inspect(operation));
+    }
+    /** Only this original live call can cross from candidate to checkpoint. No resume API exists. */
+    NarrowContentBronzeCompletion.Observation reserveLaunchAndCheckpoint(InstallationHostGuard guard,WorkerRepository.Owner owner,
+            UUID fetchOperation,UUID operation,String launchProfile,String verificationProfile,Consumer<NarrowContentBronzeCompletion.Boundary> fault){
+        require(guard!=null && owner!=null && fetchOperation!=null && operation!=null && !operation.equals(fetchOperation)
+                && launchProfile!=null && launchProfile.matches("[A-Za-z0-9_-]{1,128}")
+                && verificationProfile!=null && verificationProfile.matches("[A-Za-z0-9_-]{1,128}") && fault!=null
+                && !org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive(),WORKER_CONFIGURATION_INVALID);
+        var ready=NarrowContentAdmission.inspectReady(jdbc,tx,guard,owner.runId(),owner.attemptId());
+        StrictBronzeVerificationRuntime.load(jdbc,tx,guard,NarrowContentRuntimeQualification.inspect(jdbc,tx,ready),verificationProfile);
+        return launchThen(guard,owner,fetchOperation,operation,launchProfile,b->{},current->
+                new NarrowContentBronzeCompletion(jdbc,tx,workers).complete(guard,current,verificationProfile,fault));
+    }
+    private <T>T launchThen(InstallationHostGuard guard,WorkerRepository.Owner owner,UUID fetchOperation,UUID operation,
+            String launchProfile,Consumer<Boundary> fault,java.util.function.Function<LiveCandidate,T> finish){
         require(guard!=null && owner!=null && operation!=null && fetchOperation!=null && !operation.equals(fetchOperation) && fault!=null,WORKER_CONFIGURATION_INVALID);
         var ready=NarrowContentAdmission.inspectReady(jdbc,tx,guard,owner.runId(),owner.attemptId());
         var registered=NarrowContentRuntimeQualification.inspect(jdbc,tx,ready);
@@ -100,14 +124,17 @@ final class NarrowContentBronzeLaunch {
         runtime.check();checkCommand(guard,current[0],material,directory,command,true);
         require(candidate.equals(candidate(directory,material.command(),material.descriptor(),result.exitCode())),RUNTIME_MISMATCH);
         phase(guard,current[0],operation,"CANDIDATE_EXITED",null,null,null,candidate);fault.accept(Boundary.CANDIDATE_EXITED);
-        return inspect(operation);
+        return finish.apply(new LiveCandidate(current[0],operation,candidate));
     }
     /** Native SDK's exact no-provider diagnostic is allowed; no arbitrary stderr is retained or accepted. */
     static boolean outputAccepted(ReadOnlyVerifierProcess.Result result){
+        return result.stdoutBytes()==0 && stderrAccepted(result);
+    }
+    static boolean stderrAccepted(ReadOnlyVerifierProcess.Result result){
         byte[] warning=("SLF4J: Failed to load class \"org.slf4j.impl.StaticLoggerBinder\".\n"
                 +"SLF4J: Defaulting to no-operation (NOP) logger implementation\n"
                 +"SLF4J: See http://www.slf4j.org/codes.html#StaticLoggerBinder for further details.\n").getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        return result.stdoutBytes()==0 && (result.stderrBytes()==0 || result.stderrBytes()==warning.length && SourceJson.sha(warning).equals(result.stderrSha256()));
+        return result.stderrBytes()==0 || result.stderrBytes()==warning.length && SourceJson.sha(warning).equals(result.stderrSha256());
     }
     private void check(InstallationHostGuard guard,WorkerRepository.Owner owner,NarrowContentBronzeReservation.Material material,boolean released){
         NarrowContentBronzeReservation.reopenForLaunch(guard,material,released);workers.narrowOperationTransaction(guard,owner,()->null);

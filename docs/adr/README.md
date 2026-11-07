@@ -138,3 +138,5 @@ ADR 0039 adds a separate child-only ledger-v2 candidate producer. It preserves n
 semantics and does not activate a launcher, receipt commit or ordinary Content dispatch.
 
 - [0040: Inactive guarded native Bronze launch](0040-inactive-guarded-bronze-launch.md)
+
+- [0041: Inactive native Bronze verification checkpoint](0041-inactive-native-bronze-checkpoint.md)

@@ -60,6 +60,24 @@ final class NarrowContentFetchLaunch {
             return new NarrowContentBronzeLaunch(jdbc,tx,workers).reserveAndLaunch(guard,current,fetchOperation,bronzeOperation,bronzeProfile,fault);
         });
     }
+    /** Complete both native checkpoints without exporting or reconstructing live ownership. */
+    NarrowContentBronzeCompletion.Observation launchCheckpointAndCompleteBronze(InstallationHostGuard guard,WorkerRepository.Owner owner,
+            UUID fetchOperation,String fetchProfile,UUID bronzeOperation,String bronzeProfile,String verificationProfile,
+            Consumer<NarrowContentBronzeCompletion.Boundary> fault){
+        require(guard!=null && owner!=null && fetchOperation!=null && bronzeOperation!=null && !bronzeOperation.equals(fetchOperation)
+                && fetchProfile!=null && fetchProfile.matches("[A-Za-z0-9_-]{1,128}")
+                && bronzeProfile!=null && bronzeProfile.matches("[A-Za-z0-9_-]{1,128}")
+                && verificationProfile!=null && verificationProfile.matches("[A-Za-z0-9_-]{1,128}") && fault!=null
+                && !org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive(),WORKER_CONFIGURATION_INVALID);
+        var ready=NarrowContentAdmission.inspectReady(jdbc,tx,guard,owner.runId(),owner.attemptId());
+        var registered=NarrowContentRuntimeQualification.inspect(jdbc,tx,ready);
+        StrictBronzeLaunchRuntime.load(jdbc,tx,guard,registered,bronzeProfile);
+        StrictBronzeVerificationRuntime.load(jdbc,tx,guard,registered,verificationProfile);
+        return launchThen(guard,owner,fetchOperation,fetchProfile,b->{},current->{
+            new NarrowContentFetchCompletion(jdbc,tx,workers).complete(guard,current,fetchOperation);
+            return new NarrowContentBronzeLaunch(jdbc,tx,workers).reserveLaunchAndCheckpoint(guard,current,fetchOperation,bronzeOperation,bronzeProfile,verificationProfile,fault);
+        });
+    }
     private <T>T launchThen(InstallationHostGuard guard,WorkerRepository.Owner owner,UUID operation,String launchProfile,Consumer<Boundary> fault,
                            java.util.function.Function<WorkerRepository.Owner,T> finish){
         require(operation!=null && fault!=null,WORKER_CONFIGURATION_INVALID);

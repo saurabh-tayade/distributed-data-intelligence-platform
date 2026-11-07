@@ -188,6 +188,32 @@ final class ContentEvidenceBudget {
             }catch(java.io.IOException ex){throw new PreflightFailure(INPUT_UNAVAILABLE);}
         });
     }
+    /** Dedicated checkpoint scope: completed FETCH, exact candidate slots and the existing parent anchor. Earlier readers stay unchanged. */
+    static Totals inspectBronzeCompletion(NarrowContentEvidenceContext context,InstallationHostGuard guard,Path directory){
+        return inspect(context,guard,context.frozen(),bronzeCompletionScope(context,directory));
+    }
+    /** The caller already holds the original ledger write lock; never reacquire it. */
+    static Totals inspectBronzeCompletionSnapshot(NarrowContentEvidenceContext context,InstallationHostGuard guard,Path directory){
+        try{return inspectSnapshot(context,guard,context.frozen(),bronzeCompletionScope(context,directory));}
+        catch(java.io.IOException ex){throw new PreflightFailure(INPUT_UNAVAILABLE);}
+    }
+    private static Runnable bronzeCompletionScope(NarrowContentEvidenceContext context,Path directory){
+        need(context!=null && directory!=null && directory.equals(context.originalDirectory("STORE_BRONZE",0)),INPUT_INVALID);
+        Path fetch=context.originalDirectory("FETCH_SOURCE",0);
+        return ()->{
+            Set<Path> directories=Set.of(context.root(),fetch.getParent().getParent(),fetch.getParent(),fetch,directory.getParent(),directory);
+            var fetchNames=new HashSet<>(RssJournalFiles.CANDIDATE);fetchNames.add("complete.json");
+            Set<String> bronzeNames=Set.of("command.json","evidence.json","result.json","verified.json","verified.json.preparing");
+            try(var walk=Files.walk(context.root(),4)){
+                for(Path p:walk.limit(ENTRIES+1).toList()){
+                    if(Files.isDirectory(p,LinkOption.NOFOLLOW_LINKS))need(directories.contains(p),INPUT_CHANGED);
+                    else if(p.getParent().equals(context.root()))need(Set.of(MANIFEST,LOCK).contains(p.getFileName().toString()),INPUT_CHANGED);
+                    else if(p.getParent().equals(fetch))need(fetchNames.contains(p.getFileName().toString()),INPUT_CHANGED);
+                    else need(p.getParent().equals(directory) && bronzeNames.contains(p.getFileName().toString()),INPUT_CHANGED);
+                }
+            }catch(java.io.IOException ex){throw new PreflightFailure(INPUT_UNAVAILABLE);}
+        };
+    }
     /** Completed FETCH scope only; it does not relax launch or candidate inspection. */
     static Totals inspectFetchCompletion(NarrowContentEvidenceContext context,InstallationHostGuard guard,Path directory){
         return inspect(context,guard,context.frozen(),fetchCompletionScope(context,directory));

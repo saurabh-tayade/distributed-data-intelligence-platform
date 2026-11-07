@@ -305,10 +305,10 @@ class NarrowContentFetchRecoveryFinalizationIT extends NarrowContentFetchLaunchF
         terminalSetup();pending();
         var before=metadata();var files=filesystem();var row=jdbc.queryForObject("SELECT to_jsonb(h)::text FROM ddip_management.content_fetch_recovery_handoffs h",String.class);
         var migrations=jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IS NOT NULL ORDER BY installed_rank");
-        var migration=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();assertThat(migration.migrate().migrationsExecuted).isEqualTo(3);
+        var migration=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();assertThat(migration.migrate().migrationsExecuted).isEqualTo(4);
         new SchemaLifecycle(migration,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(false);
         assertThat(metadata()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);assertThat(jdbc.queryForObject("SELECT to_jsonb(h)::text FROM ddip_management.content_fetch_recovery_handoffs h",String.class)).isEqualTo(row);
-        assertThat(jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IS NOT NULL AND version NOT IN ('16','17','18') ORDER BY installed_rank")).isEqualTo(migrations);
+        assertThat(jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IS NOT NULL AND version NOT IN ('16','17','18','19') ORDER BY installed_rank")).isEqualTo(migrations);
         assertThat(count("content_fetch_recovery_finalizations")).isZero();occupied();assertThat(handoffs.lookup(handoff)).isEqualTo("CONFIRMED_HANDOFF");
         assertThat(repo.finish(guard,qualify())).isEqualTo("COMMITTED");released();
     }
