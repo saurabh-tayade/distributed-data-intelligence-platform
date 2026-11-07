@@ -170,6 +170,24 @@ final class ContentEvidenceBudget {
             }catch(java.io.IOException ex){throw new PreflightFailure(INPUT_UNAVAILABLE);}
         });
     }
+    /** Only completed FETCH and the single original STORE_BRONZE/0 slot. Never a recovery reader. */
+    static Totals inspectBronzeLaunch(NarrowContentEvidenceContext context,InstallationHostGuard guard,Path directory,boolean released){
+        need(context!=null && directory!=null && directory.equals(context.originalDirectory("STORE_BRONZE",0)),INPUT_INVALID);
+        Path fetch=context.originalDirectory("FETCH_SOURCE",0);
+        return inspect(context,guard,context.frozen(),()->{
+            Set<Path> directories=Set.of(context.root(),fetch.getParent().getParent(),fetch.getParent(),fetch,directory.getParent(),directory);
+            var fetchNames=new HashSet<>(RssJournalFiles.CANDIDATE);fetchNames.add("complete.json");
+            Set<String> bronzeNames=released?Set.of("command.json","evidence.json","evidence.json.preparing","result.json","result.json.preparing"):Set.of("command.json");
+            try(var walk=Files.walk(context.root(),4)){
+                for(Path p:walk.limit(ENTRIES+1).toList()){
+                    if(Files.isDirectory(p,LinkOption.NOFOLLOW_LINKS))need(directories.contains(p),INPUT_CHANGED);
+                    else if(p.getParent().equals(context.root()))need(Set.of(MANIFEST,LOCK).contains(p.getFileName().toString()),INPUT_CHANGED);
+                    else if(p.getParent().equals(fetch))need(fetchNames.contains(p.getFileName().toString()),INPUT_CHANGED);
+                    else need(p.getParent().equals(directory) && bronzeNames.contains(p.getFileName().toString()),INPUT_CHANGED);
+                }
+            }catch(java.io.IOException ex){throw new PreflightFailure(INPUT_UNAVAILABLE);}
+        });
+    }
     /** Completed FETCH scope only; it does not relax launch or candidate inspection. */
     static Totals inspectFetchCompletion(NarrowContentEvidenceContext context,InstallationHostGuard guard,Path directory){
         return inspect(context,guard,context.frozen(),fetchCompletionScope(context,directory));

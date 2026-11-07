@@ -47,6 +47,19 @@ final class NarrowContentFetchLaunch {
             return new NarrowContentBronzeReservation(jdbc,tx,workers).reserve(guard,current,fetchOperation,bronzeOperation,fault);
         });
     }
+    /** Original uninterrupted owner chain only; the Bronze result grants no successor authority. */
+    NarrowContentBronzeLaunch.Facts launchCheckpointAndLaunchBronze(InstallationHostGuard guard,WorkerRepository.Owner owner,
+            UUID fetchOperation,String fetchProfile,UUID bronzeOperation,String bronzeProfile,Consumer<NarrowContentBronzeLaunch.Boundary> fault){
+        require(bronzeOperation!=null && !bronzeOperation.equals(fetchOperation) && bronzeProfile!=null
+                && bronzeProfile.matches("[A-Za-z0-9_-]{1,128}") && fault!=null,WORKER_CONFIGURATION_INVALID);
+        // Qualify before FETCH effects too, so a missing Bronze profile cannot strand a new chain.
+        var ready=NarrowContentAdmission.inspectReady(jdbc,tx,guard,owner.runId(),owner.attemptId());
+        StrictBronzeLaunchRuntime.load(jdbc,tx,guard,NarrowContentRuntimeQualification.inspect(jdbc,tx,ready),bronzeProfile);
+        return launchThen(guard,owner,fetchOperation,fetchProfile,b->{},current->{
+            new NarrowContentFetchCompletion(jdbc,tx,workers).complete(guard,current,fetchOperation);
+            return new NarrowContentBronzeLaunch(jdbc,tx,workers).reserveAndLaunch(guard,current,fetchOperation,bronzeOperation,bronzeProfile,fault);
+        });
+    }
     private <T>T launchThen(InstallationHostGuard guard,WorkerRepository.Owner owner,UUID operation,String launchProfile,Consumer<Boundary> fault,
                            java.util.function.Function<WorkerRepository.Owner,T> finish){
         require(operation!=null && fault!=null,WORKER_CONFIGURATION_INVALID);

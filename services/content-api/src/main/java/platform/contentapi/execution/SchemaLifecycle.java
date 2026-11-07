@@ -31,13 +31,13 @@ public final class SchemaLifecycle {
             boolean initialSchema = migrate && flyway.info().current()==null;
             boolean appliedMigrations = migrate && flyway.migrate().migrationsExecuted > 0;
             var validation=flyway.validateWithResult();
-            if (!validation.validationSuccessful || flyway.info().pending().length!=0 || Arrays.stream(flyway.info().applied()).filter(i -> i.getVersion()!=null).count()!=17)
+            if (!validation.validationSuccessful || flyway.info().pending().length!=0 || Arrays.stream(flyway.info().applied()).filter(i -> i.getVersion()!=null).count()!=18)
                 throw new ManagementFailure(ManagementFailure.Code.MANAGEMENT_INCOMPATIBLE);
             try {
                 for(String table: List.of("storage_bindings","execution_profiles","execution_profile_storage","worker_instances",
                         "coordinator","sources","source_revisions","artifacts","artifact_dependencies","runs","run_sources",
                         "run_inputs","attempts","stage_invocations","stage_artifacts","rss_deliveries","controls","command_bindings","audit_events","artifact_import_operations",
-                        "content_attempt_admissions","content_admission_milestones","content_operations","content_operation_phases","content_native_operations","content_fetch_launch_profiles","content_native_launch_phases","content_fetch_completion_intents","content_fetch_checkpoints","content_fetch_recovery_handoffs","content_fetch_recovery_finalizations","content_bronze_reservations")) {
+                        "content_attempt_admissions","content_admission_milestones","content_operations","content_operation_phases","content_native_operations","content_fetch_launch_profiles","content_native_launch_phases","content_fetch_completion_intents","content_fetch_checkpoints","content_fetch_recovery_handoffs","content_fetch_recovery_finalizations","content_bronze_reservations","content_bronze_launch_profiles","content_bronze_launch_phases")) {
                     jdbc.execute("SELECT * FROM ddip_management."+table+" LIMIT 0");
                 }
             } catch(DataAccessException ex) {

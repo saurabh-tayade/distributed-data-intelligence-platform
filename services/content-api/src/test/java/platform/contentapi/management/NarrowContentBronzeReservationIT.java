@@ -20,7 +20,21 @@ import static platform.contentapi.management.SourceFixtures.*;
 /** Real PostgreSQL + loopback FETCH; Bronze reservation never contacts an object store. */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class NarrowContentBronzeReservationIT extends NarrowContentFetchLaunchFixtures {
-    UUID bronzeOperation;Path credentials;
+    UUID bronzeOperation;Path credentials;boolean versionSeventeen;
+    @Override void migrateFixtureSchema(){
+        if(!versionSeventeen){super.migrateFixtureSchema();return;}
+        org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").target("17").load().migrate();
+        new JdbcCoordinatorRepository(jdbc,tx,INSTALL).initialize();
+    }
+    @AfterEach void resetSchemaTarget(){versionSeventeen=false;}
+    @Test void populatedVersionSeventeenUpgradePreservesConsumedReservationWithoutLaunchBackfill()throws Exception{
+        versionSeventeen=true;closeServer();setup();checkpoint();var reservation=reserve();var files=filesystem();var before=metadata();
+        var row=jdbc.queryForObject("SELECT to_jsonb(b)::text FROM ddip_management.content_bronze_reservations b",String.class);
+        var migration=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();
+        assertThat(migration.migrate().migrationsExecuted).isEqualTo(1);new SchemaLifecycle(migration,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(false);
+        assertThat(reservationFacts()).isEqualTo(reservation);assertThat(jdbc.queryForObject("SELECT to_jsonb(b)::text FROM ddip_management.content_bronze_reservations b",String.class)).isEqualTo(row);
+        assertThat(metadata()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);assertThat(count("content_bronze_launch_profiles")).isZero();assertThat(count("content_bronze_launch_phases")).isZero();retained();
+    }
     @BeforeEach void bronzeIdentity(){bronzeOperation=UUID.randomUUID();}
     @Override void storage(String id,String product,String role){
         if(!role.equals("BRONZE")){super.storage(id,product,role);return;}
