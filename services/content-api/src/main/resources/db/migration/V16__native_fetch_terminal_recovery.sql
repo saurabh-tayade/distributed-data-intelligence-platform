@@ -211,7 +211,7 @@ BEGIN
     IF EXISTS(SELECT 1 FROM content_fetch_recovery_finalizations f
         JOIN content_fetch_recovery_handoffs h USING(handoff_id)
         JOIN attempts a ON a.attempt_id=h.recovery_attempt_id
-        JOIN attempts old ON old.attempt_id=h.original_attempt_id
+        JOIN attempts predecessor ON predecessor.attempt_id=h.original_attempt_id
         JOIN runs r ON r.run_id=h.run_id
         JOIN controls ctl ON ctl.control_id=h.control_id
         JOIN worker_instances w ON w.instance_id=h.recovery_instance_id
@@ -225,8 +225,8 @@ BEGIN
            OR a.content_recovery_policy IS DISTINCT FROM h.policy
            OR a.instance_id<>h.recovery_instance_id OR a.owner_epoch<>h.original_epoch+1
            OR a.content_admission_policy IS NOT NULL OR a.reused_checkpoint_id IS NOT NULL
-           OR old.state<>'INTERRUPTED' OR old.outcome_code IS DISTINCT FROM 'INTERRUPTED'
-           OR old.row_version<>h.original_attempt_version+1 OR old.finished_at IS NULL
+           OR predecessor.state<>'INTERRUPTED' OR predecessor.outcome_code IS DISTINCT FROM 'INTERRUPTED'
+           OR predecessor.row_version<>h.original_attempt_version+1 OR predecessor.finished_at IS NULL
            OR r.state<>'FAILED' OR r.outcome_code IS DISTINCT FROM 'NATIVE_FETCH_INTERRUPTED'
            OR r.current_attempt_id IS DISTINCT FROM a.attempt_id OR r.row_version<>h.original_run_version+2
            OR r.retry_eligible OR r.result_artifact_id IS NOT NULL OR r.counts_bytes IS NOT NULL OR r.finished_at IS NULL
