@@ -35,6 +35,12 @@
     "platform.contentapi.management.ContentFinalizationIT"
   ],
   "content_recovery": [
+    "platform.contentapi.execution.ContentRecoveryIT",
+    "platform.contentapi.execution.ContentResumeIT",
+    "platform.contentapi.execution.ContentInheritedRecoveryIT"
+  ],
+  "native_fetch_recovery": [
+    "platform.contentapi.management.NarrowContentFetchOperatorIT",
     "platform.contentapi.management.NarrowContentFetchRecoveryCompositionIT",
     "platform.contentapi.management.NarrowContentFetchRecoveryFinalizationIT",
     "platform.contentapi.management.NarrowContentFetchRecoveryHandoffIT",
@@ -44,9 +50,6 @@
     "platform.contentapi.management.NarrowContentFetchCandidateVerificationIT",
     "platform.contentapi.management.NarrowContentFetchCandidateVerificationRecoveryIT",
     "platform.contentapi.management.NarrowContentFetchLaunchIT",
-    "platform.contentapi.management.NarrowContentFetchLaunchRecoveryIT",
-    "platform.contentapi.execution.ContentRecoveryIT",
-    "platform.contentapi.execution.ContentResumeIT",
-    "platform.contentapi.execution.ContentInheritedRecoveryIT"
+    "platform.contentapi.management.NarrowContentFetchLaunchRecoveryIT"
   ]
 }

@@ -119,3 +119,10 @@ XML parsing, durable verification, completion, slot release or continuation auth
 
 - [0033: Inactive native FETCH completion checkpoint](0033-inactive-fetch-completion-checkpoint.md)
 - [0034: Inactive native FETCH recovery assessment](0034-inactive-native-fetch-recovery-assessment.md)
+- [0035: Inactive FETCH checkpoint-only recovery handoff](0035-inactive-fetch-checkpoint-recovery-handoff.md)
+- [0036: Inactive terminal native FETCH recovery](0036-inactive-terminal-fetch-recovery.md)
+- [0037: Trusted-local native FETCH terminal operator](0037-native-fetch-terminal-operator.md)
+
+ADR 0037 adds only the bounded packaged terminal operator caller to ADRs 0035/0036.
+Its validation remains pending; historical receipts never restore authority, and ordinary
+Content dispatch, issue #49 and Gate B0 remain open.

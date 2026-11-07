@@ -26,7 +26,7 @@ The integration suite covers intact checkpoints, candidate/intent/marker rejecti
 fields and expiry, process vetoes, changed files and fencing, concurrent qualifications, every
 mutation rollback boundary, actual JDBC commit acknowledgment loss, fresh-JVM lookup and schema
 rejection of execution/release shortcuts. It checks metadata and filesystem preservation and zero
-additional HTTP/native work. The suite is in the fail-closed `content_recovery` CI inventory.
+additional HTTP/native work. The suite is in the fail-closed `native_fetch_recovery` CI inventory.
 
 Production sources compile locally with the JDK 21 compiler module and pinned production
 libraries. Java test parsing and bridge/child type compilation are local checks only: Maven,

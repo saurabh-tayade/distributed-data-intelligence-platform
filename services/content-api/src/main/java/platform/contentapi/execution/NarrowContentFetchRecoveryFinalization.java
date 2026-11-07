@@ -13,7 +13,7 @@ import tools.jackson.databind.node.ObjectNode;
 import static platform.contentapi.execution.RecoveryFailure.Code.*;
 import static platform.contentapi.execution.RecoveryFailure.need;
 
-/** Inactive terminal-only disposition. No dispatcher, process launch, owner reconstruction or continuation. */
+/** Trusted-local terminal-only disposition. No dispatcher, process launch, owner reconstruction or continuation. */
 final class NarrowContentFetchRecoveryFinalization {
     static final String POLICY="ddip-content-fetch-terminal-recovery-v1",CODE="NATIVE_FETCH_INTERRUPTED";
     enum Boundary { BEFORE_FINISH, ATTEMPT, RUN, CONTROL, WORKER, COORDINATOR, AUDIT, RECEIPT, COMMITTED }
@@ -29,6 +29,7 @@ final class NarrowContentFetchRecoveryFinalization {
         private Target(NarrowContentFetchRecoveryHandoff.Owner owner,NarrowContentFetchRecoveryHandoff.Snapshot state,Map<String,Object> handoff,JsonNode snapshot,UUID id){this.owner=owner;this.state=state;this.handoff=handoff;this.snapshot=snapshot;this.id=id;}
         String digest(){return hash(target(id,handoff,snapshot));}
         UUID checkpoint(){return state.checkpoint();}
+        List<RecoveryQuiescence.Identity> processes(){return state.processes();}
         @Override public String toString(){return "NativeFetchTerminalTarget[redacted]";}
     }
     static final class Qualified {

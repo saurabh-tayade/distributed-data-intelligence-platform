@@ -33,7 +33,7 @@ history veto even when all other legacy qualification predicates match.
 Local production compilation uses the JDK 21 compiler module and pinned dependencies. Maven and
 Docker are unavailable in the implementation environment, so PostgreSQL, native child, fresh-JVM
 and restart tests require hosted CI. The new assessment suite is part of the fail-closed
-`content_recovery` inventory. Required CI must pass on the exact submitted head before merge.
+`native_fetch_recovery` inventory. Required CI must pass on the exact submitted head before merge.
 
 This is an assessment, not recovery execution. No handoff, owner adoption, checkpoint insertion,
 repair, successor, release, refetch, dispatch or activation is performed. #49 remains open.

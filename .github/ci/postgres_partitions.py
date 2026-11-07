@@ -11,7 +11,7 @@ import re
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
-GROUPS = ('core', 'reliability', 'ingestion', 'gold', 'content_recovery')
+GROUPS = ('core', 'reliability', 'ingestion', 'gold', 'content_recovery', 'native_fetch_recovery')
 INCLUDES = ['**/IT*.java', '**/*IT.java', '**/*ITCase.java']
 HTTP_CLASSES = ('platform.contentapi.GoldApiIT', 'platform.contentapi.ReliabilityApiIT', 'platform.contentapi.ContentApiIT')
 HTTP_EXCLUDES = ['**/' + name.rsplit('.', 1)[1] + '.java' for name in HTTP_CLASSES]
@@ -98,19 +98,36 @@ def verify_reports(groups, partition, directory):
     return cases
 
 
+NATIVE_SMOKE = 'platform.contentapi.management.NarrowContentFetchOperatorIT'
+
+
+def selection(groups, partition, phase='all'):
+    classes = groups[partition]
+    if phase == 'all':
+        return classes
+    if partition != 'native_fetch_recovery' or NATIVE_SMOKE not in classes:
+        raise ValueError('phased execution requires the native fetch recovery smoke suite')
+    if phase == 'smoke':
+        return [NATIVE_SMOKE]
+    return [name for name in classes if name != NATIVE_SMOKE]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--partition', choices=GROUPS)
     parser.add_argument('--reports', type=Path)
+    parser.add_argument('--phase', choices=('all', 'smoke', 'remaining'), default='all')
     args = parser.parse_args()
     try:
         groups = inventory()
+        if args.phase != 'all' and (not args.partition or args.reports):
+            raise ValueError('phases select execution only; reports must verify the whole partition')
         if args.reports:
             if not args.partition:
                 raise ValueError('report verification requires a partition')
             print(f'{args.partition}: {verify_reports(groups, args.partition, args.reports)} passing integration cases')
         elif args.partition:
-            print(','.join(groups[args.partition]))
+            print(','.join(selection(groups, args.partition, args.phase)))
         else:
             print('PostgreSQL inventory: ' + ', '.join(f'{k}={len(groups[k])}' for k in GROUPS))
     except (ValueError, OSError, KeyError, ET.ParseError) as error:

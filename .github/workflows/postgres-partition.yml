@@ -49,13 +49,13 @@ jobs:
       - name: Install pinned processing dependencies
         run: python -m pip install -r processing/requirements-bronze.txt -r processing/requirements-analytics.txt
       - name: Build prebuilt Java RSS and Bronze adapters for managed acceptance
-        if: ${{ inputs.partition == 'ingestion' || inputs.partition == 'gold' || inputs.partition == 'content_recovery' }}
+        if: ${{ inputs.partition == 'ingestion' || inputs.partition == 'gold' || inputs.partition == 'content_recovery' || inputs.partition == 'native_fetch_recovery' }}
         run: |
           export JAVA_HOME="$JAVA_HOME_21_X64"
           export PATH="$JAVA_HOME/bin:$PATH"
           mvn -B -ntp -f ingestion/pom.xml package -DskipTests
       - name: Start isolated Bronze acceptance storage
-        if: ${{ inputs.partition == 'ingestion' || inputs.partition == 'gold' || inputs.partition == 'content_recovery' }}
+        if: ${{ inputs.partition == 'ingestion' || inputs.partition == 'gold' || inputs.partition == 'content_recovery' || inputs.partition == 'native_fetch_recovery' }}
         run: |
           docker run --detach --name "ddip-ci-bronze-${POSTGRES_PARTITION}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --hostname seaweedfs --publish 127.0.0.1:8333:8333 \
@@ -80,11 +80,13 @@ jobs:
           export PATH="$JAVA_HOME/bin:$PATH"
           export DDIP_TEST_PYTHON="$(command -v python)"
           selection=$(python3 .github/ci/postgres_partitions.py --partition "$POSTGRES_PARTITION")
-          # Exercise checkpoint and assessment boundaries first; the complete partition below still must pass.
-          if [ "$POSTGRES_PARTITION" = content_recovery ]; then
+          # Run the complete operator adapter suite first for fast feedback, then every remaining suite.
+          # Keep the smoke XML reports: the final inventory check requires both invocations together.
+          if [ "$POSTGRES_PARTITION" = native_fetch_recovery ]; then
+            smoke=$(python3 .github/ci/postgres_partitions.py --partition "$POSTGRES_PARTITION" --phase smoke)
             mvn -B -ntp -f services/content-api/pom.xml verify -Ppostgres \
-              '-Dit.test=NarrowContentFetchCompletionIT#freshCompletionWritesOnlyNativeMarkerAndImmutableReceipt+sqlIntentGuardRejectsSubstitutionBeforeDuplicateConstraint+sqlCheckpointGuardRejectsSubstitutionBeforeDuplicateConstraint,NarrowContentFetchRecoveryAssessmentIT' \
-              -DskipUnitTests=true
+              "-Dit.test=$smoke" -DskipUnitTests=true
+            selection=$(python3 .github/ci/postgres_partitions.py --partition "$POSTGRES_PARTITION" --phase remaining)
           fi
           # Units execute once in core; Failsafe integration execution is always enabled.
           skip_units=true
@@ -94,5 +96,5 @@ jobs:
           python3 .github/ci/postgres_partitions.py --partition "$POSTGRES_PARTITION" \
             --reports services/content-api/target/failsafe-reports
       - name: Remove isolated Bronze acceptance storage
-        if: ${{ always() && (inputs.partition == 'ingestion' || inputs.partition == 'gold' || inputs.partition == 'content_recovery') }}
+        if: ${{ always() && (inputs.partition == 'ingestion' || inputs.partition == 'gold' || inputs.partition == 'content_recovery' || inputs.partition == 'native_fetch_recovery') }}
         run: docker rm --force --volumes "ddip-ci-bronze-${POSTGRES_PARTITION}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" || true

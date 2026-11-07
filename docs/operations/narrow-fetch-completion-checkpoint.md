@@ -41,7 +41,7 @@ artifacts. Maven and Docker are unavailable in the implementation environment. H
 required for Maven, PostgreSQL, native-child loopback, real launcher death and database restart
 execution. Local compilation and static checks are not a substitute for that CI result.
 
-The completion and recovery suites belong to the `content_recovery` PostgreSQL partition; the
+The completion and recovery suites belong to the `native_fetch_recovery` PostgreSQL partition; the
 fail-closed test inventory must account for both suites. Authored coverage includes success,
 duplicate/concurrent invocations, raw non-XML payloads, candidate and marker mutation, controls,
 stale/foreign ownership, lost commit acknowledgments, crashes around each persistence boundary,

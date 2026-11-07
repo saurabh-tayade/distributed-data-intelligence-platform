@@ -25,7 +25,7 @@ Historical FETCH registration and completion paths remain unchanged.
 Local production compilation uses the JDK 21 compiler module and existing pinned dependency
 artifacts. Maven and Docker are unavailable in the implementation environment. Full Maven,
 PostgreSQL, native-child loopback and restart execution therefore belong to hosted CI, not to a
-local test claim. The new suites are assigned to the `content_recovery` partition; its fail-closed
+local test claim. The new suites are assigned to the `native_fetch_recovery` partition; its fail-closed
 report inventory must account for both suites before its aggregate check succeeds.
 
 Authored coverage includes genuine strict-child HTTP, non-XML raw payloads, repeat and fresh-JVM
