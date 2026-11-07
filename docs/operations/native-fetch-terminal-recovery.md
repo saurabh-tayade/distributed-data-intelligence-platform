@@ -34,3 +34,7 @@ inspection, Content and Reliability suites remain required.
 
 The full issue #49 workflow and Gate B0 remain open. Browser walkthrough remains deferred until the
 entire UI is in place, and this change does not establish end-to-end execution readiness.
+
+The separate [test-only composition suite](native-fetch-recovery-composition.md) exercises the
+assessment, first handoff and terminal disposition together, including real recovery-JVM death.
+It adds no production caller or operational activation.
