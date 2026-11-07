@@ -294,10 +294,12 @@ class NarrowContentFetchRecoveryHandoffIT extends NarrowContentFetchLaunchFixtur
     static void insertBronze(JdbcTemplate jdbc,Map<String,Object> r){
         jdbc.update("INSERT INTO ddip_management.content_bronze_reservations(operation_id,fetch_operation_id,attempt_id,checkpoint_id,command_bytes,command_sha256,reservation_bytes,reservation_sha256,owner_coordinator_version,owner_worker_version,owner_run_version,owner_attempt_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",r.get("operation_id"),r.get("fetch_operation_id"),r.get("attempt_id"),r.get("checkpoint_id"),r.get("command_bytes"),r.get("command_sha256"),r.get("reservation_bytes"),r.get("reservation_sha256"),r.get("owner_coordinator_version"),r.get("owner_worker_version"),r.get("owner_run_version"),r.get("owner_attempt_version"));
     }
-    static void assertDeferredBronzeExclusion(JdbcTemplate jdbc,ManagementTransactions tx,Map<String,Object> bronze){
+    static void assertDeferredBronzeExclusion(JdbcTemplate jdbc,Map<String,Object> bronze){
         // Test-only bypass of the immediate owner guard reaches the defense-in-depth constraint.
         // The intentional constraint failure rolls back both insertion and trigger alteration.
-        assertThatThrownBy(()->tx.required(()->{
+        // Keep the raw SQL diagnostic: ManagementTransactions intentionally sanitizes it.
+        var raw=new TransactionTemplate(new DataSourceTransactionManager(jdbc.getDataSource()));
+        assertThatThrownBy(()->raw.execute(status->{
             jdbc.execute("ALTER TABLE ddip_management.content_bronze_reservations DISABLE TRIGGER content_bronze_reservation_insert");
             insertBronze(jdbc,bronze);jdbc.execute("SET CONSTRAINTS ALL IMMEDIATE");return null;
         })).hasStackTraceContaining("CONTENT_BRONZE_FETCH_RECOVERY_EXCLUDED");
@@ -315,7 +317,9 @@ class NarrowContentFetchRecoveryHandoffIT extends NarrowContentFetchLaunchFixtur
         checkpoint();NarrowContentBronzeReservationTestSupport.reserve(jdbc,tx,workers,guard,owner,operation,UUID.randomUUID(),b->{});
         // Isolate this additive guard in a rolled-back transaction, not a full valid handoff.
         // Ordinary production ordering is exercised separately above.
-        assertThatThrownBy(()->tx.required(()->{
+        // Inspect the exact database rejection without the production exception sanitizer.
+        var raw=new TransactionTemplate(new DataSourceTransactionManager(jdbc.getDataSource()));
+        assertThatThrownBy(()->raw.execute(status->{
             jdbc.execute("ALTER TRIGGER fetch_only_without_bronze ON ddip_management.content_fetch_recovery_handoffs RENAME TO a_fetch_only_without_bronze");
             jdbc.update("INSERT INTO ddip_management.content_fetch_recovery_handoffs(operation_id) VALUES (?)",operation);return null;
         })).hasStackTraceContaining("CONTENT_FETCH_ONLY_BRONZE_RESERVED");
@@ -326,7 +330,7 @@ class NarrowContentFetchRecoveryHandoffIT extends NarrowContentFetchLaunchFixtur
     @Test void committedHandoffRejectsPreviouslyValidRawBronzeReservation()throws Exception{
         checkpoint();var bronze=pendingBronze(this);recover();repo.transfer(guard,qualify());var before=history();var files=filesystem();
         assertThatThrownBy(()->tx.required(()->{insertBronze(jdbc,bronze);return null;})).isInstanceOf(RuntimeException.class);
-        assertDeferredBronzeExclusion(jdbc,tx,bronze);
+        assertDeferredBronzeExclusion(jdbc,bronze);
         assertThat(history()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);assertThat(count("content_bronze_reservations")).isZero();occupied(successor);
     }
     @Test void concurrentControlCannotAdoptCommittedRawBronzeReservation()throws Exception{

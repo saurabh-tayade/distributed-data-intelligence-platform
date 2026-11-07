@@ -319,7 +319,7 @@ class NarrowContentFetchRecoveryFinalizationIT extends NarrowContentFetchLaunchF
     @Test void terminalDispositionRejectsPreviouslyValidRawBronzeReservation()throws Exception{
         checkpoint();var bronze=NarrowContentFetchRecoveryHandoffIT.pendingBronze(this);recover();transfer();repo.finish(guard,qualify());var before=history();var files=filesystem();
         assertThatThrownBy(()->tx.required(()->{NarrowContentFetchRecoveryHandoffIT.insertBronze(jdbc,bronze);return null;})).isInstanceOf(RuntimeException.class);
-        NarrowContentFetchRecoveryHandoffIT.assertDeferredBronzeExclusion(jdbc,tx,bronze);
+        NarrowContentFetchRecoveryHandoffIT.assertDeferredBronzeExclusion(jdbc,bronze);
         assertThat(history()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);assertThat(count("content_bronze_reservations")).isZero();released();
     }
     @Test void rawBronzeInsertionDuringTerminalTransactionRollsBackWholeDisposition()throws Exception{

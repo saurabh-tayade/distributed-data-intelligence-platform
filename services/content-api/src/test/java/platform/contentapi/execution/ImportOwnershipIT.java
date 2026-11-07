@@ -49,7 +49,7 @@ class ImportOwnershipIT {
         jdbc.update("INSERT INTO ddip_management.coordinator(singleton_id,installation_id,mode) VALUES (1,?,'READY')",INSTALL);
     }
     @BeforeEach void setup() throws Exception {
-        reset("16");binding=host(Files.createTempDirectory(temp,"host-"));provision(jdbc,binding);
+        reset("17");binding=host(Files.createTempDirectory(temp,"host-"));provision(jdbc,binding);
         descriptor=Files.write(temp.resolve(UUID.randomUUID()+".json"),binding.descriptor());
     }
     @AfterEach void cleanupChildren() throws Exception {
