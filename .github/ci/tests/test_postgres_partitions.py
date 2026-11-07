@@ -1,4 +1,4 @@
-"""Complete source inventory, actual Maven reports and five-way fail-closed fan-in."""
+"""Complete source inventory, actual Maven reports and six-way fail-closed fan-in."""
 import importlib.util
 import itertools
 import json
@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 import xml.etree.ElementTree as ET
 from test_policy import ROOT, WORKFLOW, POSTGRES_WORKFLOW, block, run_script
@@ -26,7 +27,7 @@ GOLD = (
     'platform.contentapi.management.RssContentIT',
     'platform.contentapi.management.ContentFinalizationIT',
 )
-CONTENT_RECOVERY = (
+NATIVE_FETCH_RECOVERY = (
     "platform.contentapi.management.NarrowContentFetchOperatorIT",
     "platform.contentapi.management.NarrowContentFetchRecoveryCompositionIT",
     "platform.contentapi.management.NarrowContentFetchRecoveryFinalizationIT",
@@ -38,6 +39,8 @@ CONTENT_RECOVERY = (
     "platform.contentapi.management.NarrowContentFetchCandidateVerificationRecoveryIT",
     "platform.contentapi.management.NarrowContentFetchLaunchIT",
     "platform.contentapi.management.NarrowContentFetchLaunchRecoveryIT",
+)
+CONTENT_RECOVERY = (
     'platform.contentapi.execution.ContentRecoveryIT',
     'platform.contentapi.execution.ContentResumeIT',
     'platform.contentapi.execution.ContentInheritedRecoveryIT',
@@ -127,10 +130,11 @@ class PostgresInventoryTests(unittest.TestCase):
         self.assertEqual(PARTITIONS.inventory(self.root), self.groups)
         self.assertEqual(len(sum(self.groups.values(), [])), len(set(sum(self.groups.values(), []))))
         self.assertEqual({k: len(v) for k, v in self.groups.items()},
-                         dict(core=14, reliability=7, ingestion=3, gold=3, content_recovery=14))
+                         dict(core=14, reliability=7, ingestion=3, gold=3, content_recovery=3, native_fetch_recovery=11))
         self.assertEqual(len(sum(self.groups.values(), [])), 41)
         self.assertEqual(tuple(self.groups['gold']), GOLD)
         self.assertEqual(tuple(self.groups['content_recovery']), CONTENT_RECOVERY)
+        self.assertEqual(tuple(self.groups['native_fetch_recovery']), NATIVE_FETCH_RECOVERY)
 
     def test_exact_analytics_http_inventory_is_separate(self):
         self.assertEqual(PARTITIONS.HTTP_CLASSES, HTTP_CLASSES)
@@ -177,11 +181,75 @@ class PostgresInventoryTests(unittest.TestCase):
                 path.write_text(original)
 
     def test_gold_and_content_recovery_selectors_are_exact(self):
-        for partition, classes in (('gold', GOLD), ('content_recovery', CONTENT_RECOVERY)):
+        for partition, classes in (('gold', GOLD), ('content_recovery', CONTENT_RECOVERY), ('native_fetch_recovery', NATIVE_FETCH_RECOVERY)):
             with self.subTest(partition=partition):
                 result = subprocess.run([sys.executable, '-I', '-B', str(ROOT / '.github/ci/postgres_partitions.py'),
                                          '--partition', partition], check=True, capture_output=True, text=True)
                 self.assertEqual(result.stdout.strip().split(','), list(classes))
+
+    def test_native_smoke_and_remaining_are_disjoint_and_complete(self):
+        smoke = PARTITIONS.selection(self.groups, 'native_fetch_recovery', 'smoke')
+        remaining = PARTITIONS.selection(self.groups, 'native_fetch_recovery', 'remaining')
+        self.assertEqual(smoke, [PARTITIONS.NATIVE_SMOKE])
+        self.assertEqual(len(remaining), 10)
+        self.assertFalse(set(smoke) & set(remaining))
+        self.assertCountEqual(smoke + remaining, NATIVE_FETCH_RECOVERY)
+        for partition in PARTITIONS.GROUPS:
+            self.assertEqual(PARTITIONS.selection(self.groups, partition), self.groups[partition])
+            if partition != 'native_fetch_recovery':
+                with self.assertRaises(ValueError):
+                    PARTITIONS.selection(self.groups, partition, 'smoke')
+
+    def test_phases_cannot_narrow_report_verification(self):
+        result = subprocess.run([sys.executable, str(ROOT / '.github/ci/postgres_partitions.py'),
+                                 '--partition', 'native_fetch_recovery', '--phase', 'smoke',
+                                 '--reports', str(self.root)], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('reports must verify the whole partition', result.stderr)
+
+    def test_workflow_smoke_runs_first_and_keeps_required_reports(self):
+        body = POSTGRES_WORKFLOW.split('      - name: Verify the complete partition', 1)[1]
+        script = textwrap.dedent(body.split('        run: |\n', 1)[1].split('      - name:', 1)[0])
+        shutil.copyfile(ROOT / '.github/ci/postgres_partitions.py', self.root / '.github/ci/postgres_partitions.py')
+        bin_dir = self.root / 'bin'; bin_dir.mkdir()
+        mvn = bin_dir / 'mvn'
+        mvn.write_text('#!' + sys.executable + '\n' + textwrap.dedent("""
+            import os, sys
+            from pathlib import Path
+            import xml.etree.ElementTree as ET
+            selected = next(arg.split('=', 1)[1] for arg in sys.argv if arg.startswith('-Dit.test=')).split(',')
+            with open('invocations', 'a') as stream:
+                stream.write(','.join(selected) + '\\n')
+            if os.environ.get('FAIL_SMOKE') and len(selected) == 1:
+                sys.exit(1)
+            directory = Path('services/content-api/target/failsafe-reports')
+            directory.mkdir(parents=True, exist_ok=True)
+            for name in selected:
+                if os.environ.get('OMIT_SMOKE') and len(selected) == 1:
+                    continue
+                suite = ET.Element('testsuite', name=name, tests='1')
+                ET.SubElement(suite, 'testcase', classname=name, name='test')
+                ET.ElementTree(suite).write(directory / ('TEST-' + name + '.xml'))
+        """))
+        mvn.chmod(0o755)
+        env = {**os.environ, 'JAVA_HOME_21_X64': str(self.root),
+               'POSTGRES_PARTITION': 'native_fetch_recovery'}
+        for mode, expected, calls in (('', 0, 2), ('FAIL_SMOKE', 1, 1), ('OMIT_SMOKE', 1, 2)):
+            with self.subTest(mode=mode):
+                shutil.rmtree(self.root / 'services/content-api/target', ignore_errors=True)
+                (self.root / 'invocations').unlink(missing_ok=True)
+                result = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', script],
+                                        cwd=self.root, env={**env, **({mode: '1'} if mode else {})},
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, expected, result.stderr)
+                invocations = (self.root / 'invocations').read_text().splitlines()
+                self.assertEqual(len(invocations), calls)
+                self.assertEqual(invocations[0], PARTITIONS.NATIVE_SMOKE)
+                if calls == 2:
+                    self.assertCountEqual(invocations[1].split(','),
+                                          PARTITIONS.selection(self.groups, 'native_fetch_recovery', 'remaining'))
+                if not mode:
+                    self.assertIn('11 passing integration cases', result.stdout)
 
     def test_missing_or_extra_partition_fails(self):
         path = self.root / '.github/ci/postgres-partitions.json'
@@ -228,7 +296,7 @@ class PostgresInventoryTests(unittest.TestCase):
         return directory
 
     def test_actual_success_reports_cover_exact_selection(self):
-        for partition in ('gold', 'content_recovery'):
+        for partition in ('gold', 'content_recovery', 'native_fetch_recovery'):
             with self.subTest(partition=partition):
                 for name in self.groups[partition]:
                     directory = self.report(name, partition)
@@ -237,7 +305,7 @@ class PostgresInventoryTests(unittest.TestCase):
                 with self.assertRaises(ValueError): PARTITIONS.verify_reports(self.groups, other, directory)
 
     def test_duplicate_and_empty_reports_are_not_completion(self):
-        for partition in ('gold', 'content_recovery'):
+        for partition in ('gold', 'content_recovery', 'native_fetch_recovery'):
             with self.subTest(partition=partition):
                 for name in self.groups[partition]:
                     directory = self.report(name, partition)
@@ -249,7 +317,7 @@ class PostgresInventoryTests(unittest.TestCase):
                 with self.assertRaises(ValueError): PARTITIONS.verify_reports(self.groups, partition, directory)
 
     def test_missing_failed_cancelled_skipped_and_unexpected_reports_reject(self):
-        for partition in ('gold', 'content_recovery'):
+        for partition in ('gold', 'content_recovery', 'native_fetch_recovery'):
             with self.subTest(partition=partition):
                 directory = self.root / 'reports' / partition; directory.mkdir(parents=True)
                 with self.assertRaises(ValueError): PARTITIONS.verify_reports(self.groups, partition, directory)

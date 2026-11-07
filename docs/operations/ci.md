@@ -49,11 +49,13 @@ flowchart LR
   changes --> pgingest[PostgreSQL D1-D3]
   changes --> pggold[PostgreSQL Gold/Content publication]
   changes --> pgrecovery[PostgreSQL Content recovery/RESUME]
+  changes --> pgnative[PostgreSQL native FETCH recovery]
   pgcore --> postgres[content_postgres: fan-in]
   pgrel --> postgres
   pgingest --> postgres
   pggold --> postgres
   pgrecovery --> postgres
+  pgnative --> postgres
   changes --> http[analytics_http: selected or fallback]
   changes --> gate[processing: always evaluates results]
   ingestion --> gate
@@ -74,17 +76,18 @@ flowchart LR
 | content_postgres_ingestion | Managed Content D1/D2/D3 integration | 90 minutes |
 | content_postgres_gold | Native Gold/Content publication and finalization integration | 90 minutes |
 | content_postgres_content_recovery | Content recovery, explicit RESUME and inherited recovery integration | 90 minutes |
+| content_postgres_native_fetch_recovery | Native FETCH launch, completion, verification and recovery integration; operator adapter smoke first | 90 minutes |
 | content_postgres | Original PostgreSQL check; requires every selected partition to succeed | 5 minutes |
 | analytics_http | Fresh Gold, Reliability and Content fixtures; Content API units; GoldApiIT, ReliabilityApiIT and ContentApiIT HTTP/native compatibility; generated Content and Reliability envelopes through actual frontend parsers | 15 minutes |
 | processing | Existing required backend context; classification and five-suite aggregate | 5 minutes |
 | documentation | Existing Markdown/link/hygiene checks plus focused CI policy tests | 5 minutes |
 | frontend | Existing typecheck, lint, component tests and production build | 10 minutes |
 
-The five PostgreSQL callers use the same logical `content_postgres` classification output.
+The six PostgreSQL callers use the same logical `content_postgres` classification output.
 They depend only on classification and invoke the [reusable partition workflow](../../.github/workflows/postgres-partition.yml)
 on independently provisioned Ubuntu 24.04 runners, each with its own pinned PostgreSQL service,
-workspace, fixture roots and full pinned Python/Spark/DuckDB/JDK environment. The three managed
-Content partitions (`ingestion`, `gold`, `content_recovery`) build the ingestion adapter and
+workspace, fixture roots and full pinned Python/Spark/DuckDB/JDK environment. The four managed
+Content partitions (`ingestion`, `gold`, `content_recovery`, `native_fetch_recovery`) build the ingestion adapter and
 start pinned SeaweedFS, with cleanup guarded by `always()`. Core/import
 fixtures supply their own synthetic Bronze HTTP server and need no SeaweedFS service. Unit tests
 run once in core; other PostgreSQL partitions skip only Surefire units, never Failsafe integration.
@@ -96,25 +99,40 @@ does not skip in that job. Its source dependencies are listed below.
 
 The original `content_postgres` name is now a small fail-closed fan-in job. A selected missing,
 failed, cancelled, skipped or timed-out partition cannot produce PostgreSQL success. If PostgreSQL
-is intentionally unselected, all five callers and that fan-in are skipped, preserving the existing
+is intentionally unselected, all six callers and that fan-in are skipped, preserving the existing
 five-suite aggregate's exact safe-skip rule. Classification and the top-level aggregate retain
 all five logical outputs, trust/fallback behavior and original required-check names. Only fan-ins
 wait for partition completion; no execution partition waits for another execution partition.
 
 The [explicit inventory](../../.github/ci/postgres-partitions.json) covers every PostgreSQL integration
 class exactly once. Default Maven PostgreSQL discovery includes all standard integration names
-and excludes only `GoldApiIT` and `ReliabilityApiIT`, which remain in the HTTP profile. The always-running documentation
+and excludes only `GoldApiIT`, `ReliabilityApiIT` and `ContentApiIT`, which remain in the HTTP profile. The always-running documentation
 job and every selected partition validate complete source membership. Missing/new/duplicate classes
 fail CI until deliberately assigned. Actual Maven XML reports must cover the exact selected classes
 with positive test counts and no failures, errors or skips. This guards selection/discovery as
 well as test success. [PR #72 evidence](pr72-postgres-partitions.md) records all class assignments,
 hosted timing inputs, local measurements, commands and remaining hosted acceptance requirements.
 
-The current inventory is **core=10, reliability=7, ingestion=3, gold=3,
-content_recovery=3 (26 total)**. Gold contains `RssGoldIT`, `RssContentIT` and
+The current inventory is **core=14, reliability=7, ingestion=3, gold=3,
+content_recovery=3, native_fetch_recovery=11 (41 total)**. Gold contains `RssGoldIT`, `RssContentIT` and
 `ContentFinalizationIT`. Content recovery contains `ContentRecoveryIT`, `ContentResumeIT` and
 `ContentInheritedRecoveryIT`; their native cases retain separate original/resumed worker processes,
 real storage and PostgreSQL restart coverage. No integration class or case is removed or weakened.
+
+The native FETCH partition contains the eleven `NarrowContentFetch*IT` classes in the inventory.
+It runs the complete `NarrowContentFetchOperatorIT` adapter suite in an isolated Maven invocation
+first, then runs the ten remaining suites. These selections are disjoint and cover the complete
+partition. No `clean` or report deletion occurs between invocations: the final XML coverage check
+requires successful reports from all eleven classes, including the initial smoke. A smoke failure
+stops the job immediately; a missing smoke report fails the final check. Unit tests still run only
+in core. The former partial checkpoint/assessment warm-up is replaced by this full-class smoke;
+all checkpoint and assessment cases remain in the required remaining selection.
+
+This CI-only split separates native FETCH work from the long-running legacy Content recovery
+suites. It changes neither production lifecycle behavior nor the 90-minute ceiling. Both recovery
+partitions remain mandatory whenever the logical PostgreSQL job is selected. Hosted timing and
+full-suite success must be measured on the submitted head; parallelism alone is not evidence of
+completed coverage or a runtime guarantee.
 
 **Gold timeout follow-up:** [run 41317309717](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/41317309717)
 cancelled `content_postgres_gold` at its configured 90-minute ceiling; the unchanged base commit

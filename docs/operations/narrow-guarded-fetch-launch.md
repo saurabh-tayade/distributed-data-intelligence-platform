@@ -30,7 +30,7 @@ Authored acceptance covers real strict-child loopback HTTP, single-use/racing re
 ordered immutable phases, live owner/control changes at external-effect boundaries, uncertain
 phase acknowledgment, active prefixes, cancellation, installed-JAR substitution, foreign evidence,
 invalid candidates, historical inspection, parent-JVM death and disposable PostgreSQL restart.
-The `content_recovery` CI partition builds the ingestion JAR before these tests and requires
+The `native_fetch_recovery` CI partition builds the ingestion JAR before these tests and requires
 passing integration reports. Existing reservation tests also cover populated V12 upgrade without
 backfill and separate immutable registration guards. Authored tests are not execution evidence
 until the corresponding hosted run passes.

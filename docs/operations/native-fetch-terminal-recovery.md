@@ -26,7 +26,7 @@ are local checks. Maven, Docker and PostgreSQL are unavailable in the implementa
 these checks do not claim an executed integration suite. Hosted CI must run the complete required
 checks on the exact PR head before merge.
 
-The new PostgreSQL/native-child suite belongs to the fail-closed `content_recovery` inventory. It
+The new PostgreSQL/native-child suite belongs to the fail-closed `native_fetch_recovery` inventory. It
 covers terminal disposition and evidence retention, subsequent unrelated slot use, direct SQL
 shortcuts, competing controls and finishers, mutation rollback, process/review/file vetoes, actual
 JDBC commit acknowledgment loss, and fresh-process receipt inspection. Existing handoff, migration,
