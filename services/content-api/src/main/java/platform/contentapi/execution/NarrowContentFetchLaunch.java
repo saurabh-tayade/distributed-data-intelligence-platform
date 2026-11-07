@@ -38,6 +38,15 @@ final class NarrowContentFetchLaunch {
                                                                 Consumer<NarrowContentFetchCompletion.Boundary> completionFault){
         return launchThen(guard,owner,operation,launchProfile,b->{},current->new NarrowContentFetchCompletion(jdbc,tx,workers).complete(guard,current,operation,completionFault));
     }
+    /** Original live chain only; no owner escapes and no Bronze child can launch. */
+    NarrowContentBronzeReservation.Facts launchCheckpointAndReserveBronze(InstallationHostGuard guard,WorkerRepository.Owner owner,
+            UUID fetchOperation,String launchProfile,UUID bronzeOperation,Consumer<NarrowContentBronzeReservation.Boundary> fault){
+        require(bronzeOperation!=null && fault!=null && !bronzeOperation.equals(fetchOperation),WORKER_CONFIGURATION_INVALID);
+        return launchThen(guard,owner,fetchOperation,launchProfile,b->{},current->{
+            new NarrowContentFetchCompletion(jdbc,tx,workers).complete(guard,current,fetchOperation);
+            return new NarrowContentBronzeReservation(jdbc,tx,workers).reserve(guard,current,fetchOperation,bronzeOperation,fault);
+        });
+    }
     private <T>T launchThen(InstallationHostGuard guard,WorkerRepository.Owner owner,UUID operation,String launchProfile,Consumer<Boundary> fault,
                            java.util.function.Function<WorkerRepository.Owner,T> finish){
         require(operation!=null && fault!=null,WORKER_CONFIGURATION_INVALID);

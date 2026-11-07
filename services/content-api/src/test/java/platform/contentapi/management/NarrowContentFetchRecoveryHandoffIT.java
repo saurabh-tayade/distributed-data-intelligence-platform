@@ -272,5 +272,74 @@ class NarrowContentFetchRecoveryHandoffIT extends NarrowContentFetchLaunchFixtur
         assertThat(count("stage_invocations")).isEqualTo(1);assertThat(count("content_fetch_recovery_handoffs")).isZero();
         assertThat(jdbc.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isNull();
     }
+    @Override void storage(String id,String product,String role){
+        if(role.equals("BRONZE")){bronzeStorage(this,id,product,role);return;}
+        super.storage(id,product,role);
+    }
+    static void bronzeStorage(NarrowContentFetchLaunchFixtures fixture,String id,String product,String role){
+        try{
+            Path secret=Files.createTempFile(fixture.temp,"recovery-bronze-",".json",java.nio.file.attribute.PosixFilePermissions.asFileAttribute(java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")));
+            Files.write(secret,SourceJson.canonical(SourceJson.object().put("accessKey","fixture-access").put("secretKey","fixture-secret")));
+            byte[] raw=SourceJson.canonical(SourceJson.object().put("importBronzeVersion",1).put("endpoint","http://127.0.0.1:1").put("region","local").put("bucket","bronze").put("credentialsFile",secret.toString()));
+            fixture.jdbc.update("INSERT INTO ddip_management.storage_bindings(binding_id,product,role,configuration_bytes,configuration_sha256,installation_id) VALUES (?,?,?,?,?,?)",id,product,role,raw,SourceJson.sha(raw),INSTALL);
+        }catch(Exception ex){throw new IllegalStateException(ex);}
+    }
+    static Map<String,Object> pendingBronze(NarrowContentFetchLaunchFixtures f){
+        var captured=new AtomicReference<Map<String,Object>>();
+        assertThatThrownBy(()->NarrowContentBronzeReservationTestSupport.reserve(f.jdbc,f.tx,f.workers,f.guard,f.owner,f.operation,UUID.randomUUID(),b->{
+            if(b.equals("INSERTED")){captured.set(f.jdbc.queryForMap("SELECT * FROM ddip_management.content_bronze_reservations"));throw new IllegalStateException("CAPTURE_BRONZE");}
+        })).hasMessage("CAPTURE_BRONZE");
+        assertThat(captured.get()).isNotNull();assertThat(f.count("content_bronze_reservations")).isZero();return captured.get();
+    }
+    static void insertBronze(JdbcTemplate jdbc,Map<String,Object> r){
+        jdbc.update("INSERT INTO ddip_management.content_bronze_reservations(operation_id,fetch_operation_id,attempt_id,checkpoint_id,command_bytes,command_sha256,reservation_bytes,reservation_sha256,owner_coordinator_version,owner_worker_version,owner_run_version,owner_attempt_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",r.get("operation_id"),r.get("fetch_operation_id"),r.get("attempt_id"),r.get("checkpoint_id"),r.get("command_bytes"),r.get("command_sha256"),r.get("reservation_bytes"),r.get("reservation_sha256"),r.get("owner_coordinator_version"),r.get("owner_worker_version"),r.get("owner_run_version"),r.get("owner_attempt_version"));
+    }
+    static void assertDeferredBronzeExclusion(JdbcTemplate jdbc,ManagementTransactions tx,Map<String,Object> bronze){
+        // Test-only bypass of the immediate owner guard reaches the defense-in-depth constraint.
+        // The intentional constraint failure rolls back both insertion and trigger alteration.
+        assertThatThrownBy(()->tx.required(()->{
+            jdbc.execute("ALTER TABLE ddip_management.content_bronze_reservations DISABLE TRIGGER content_bronze_reservation_insert");
+            insertBronze(jdbc,bronze);jdbc.execute("SET CONSTRAINTS ALL IMMEDIATE");return null;
+        })).hasStackTraceContaining("CONTENT_BRONZE_FETCH_RECOVERY_EXCLUDED");
+        assertThat(jdbc.queryForObject("SELECT t.tgenabled::text FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='ddip_management' AND c.relname='content_bronze_reservations' AND t.tgname='content_bronze_reservation_insert'",String.class)).isEqualTo("O");
+    }
+    @Test void bronzeReservationCannotEnterFetchOnlyRecovery()throws Exception{
+        checkpoint();NarrowContentBronzeReservationTestSupport.reserve(jdbc,tx,workers,guard,owner,operation,UUID.randomUUID(),b->{});
+        recover();var before=history();var files=filesystem();
+        assertThatThrownBy(this::qualify).hasMessage("EVIDENCE_UNAVAILABLE");
+        // Production trigger order must reject a raw handoff as well; no state transfer occurs.
+        assertThatThrownBy(()->tx.required(()->{jdbc.update("INSERT INTO ddip_management.content_fetch_recovery_handoffs(operation_id) VALUES (?)",operation);return null;})).isInstanceOf(RuntimeException.class);
+        assertThat(history()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);assertThat(count("content_fetch_recovery_handoffs")).isZero();assertThat(count("content_bronze_reservations")).isEqualTo(1);occupied(owner.attemptId());
+    }
+    @Test void bronzeExclusionGuardAndDeferredTriggersAreInstalled(){
+        checkpoint();NarrowContentBronzeReservationTestSupport.reserve(jdbc,tx,workers,guard,owner,operation,UUID.randomUUID(),b->{});
+        // Isolate this additive guard in a rolled-back transaction, not a full valid handoff.
+        // Ordinary production ordering is exercised separately above.
+        assertThatThrownBy(()->tx.required(()->{
+            jdbc.execute("ALTER TRIGGER fetch_only_without_bronze ON ddip_management.content_fetch_recovery_handoffs RENAME TO a_fetch_only_without_bronze");
+            jdbc.update("INSERT INTO ddip_management.content_fetch_recovery_handoffs(operation_id) VALUES (?)",operation);return null;
+        })).hasStackTraceContaining("CONTENT_FETCH_ONLY_BRONZE_RESERVED");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='ddip_management' AND t.tgname='bronze_fetch_recovery_exclusion' AND t.tgdeferrable AND t.tginitdeferred AND c.relname IN ('content_bronze_reservations','content_fetch_recovery_handoffs','content_fetch_recovery_finalizations')",Long.class)).isEqualTo(3);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='ddip_management' AND c.relname='content_fetch_recovery_handoffs' AND t.tgname='fetch_only_without_bronze'",Long.class)).isEqualTo(1);
+        retained();
+    }
+    @Test void committedHandoffRejectsPreviouslyValidRawBronzeReservation()throws Exception{
+        checkpoint();var bronze=pendingBronze(this);recover();repo.transfer(guard,qualify());var before=history();var files=filesystem();
+        assertThatThrownBy(()->tx.required(()->{insertBronze(jdbc,bronze);return null;})).isInstanceOf(RuntimeException.class);
+        assertDeferredBronzeExclusion(jdbc,tx,bronze);
+        assertThat(history()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);assertThat(count("content_bronze_reservations")).isZero();occupied(successor);
+    }
+    @Test void concurrentControlCannotAdoptCommittedRawBronzeReservation()throws Exception{
+        checkpoint();var bronze=pendingBronze(this);var inserted=new CountDownLatch(1);var release=new CountDownLatch(1);var controlStarted=new CountDownLatch(1);
+        try(var pool=Executors.newVirtualThreadPerTaskExecutor()){
+            var reservation=pool.submit(()->tx.required(()->{insertBronze(jdbc,bronze);inserted.countDown();try{if(!release.await(10,TimeUnit.SECONDS))throw new IllegalStateException("RELEASE_TIMEOUT");}catch(InterruptedException ex){Thread.currentThread().interrupt();throw new IllegalStateException(ex);}return null;}));
+            assertThat(inserted.await(10,TimeUnit.SECONDS)).isTrue();
+            var requested=pool.submit(()->{controlStarted.countDown();recover();return null;});
+            assertThat(controlStarted.await(10,TimeUnit.SECONDS)).isTrue();
+            try{assertThatThrownBy(()->requested.get(150,TimeUnit.MILLISECONDS)).isInstanceOf(TimeoutException.class);}finally{release.countDown();}
+            reservation.get(15,TimeUnit.SECONDS);requested.get(15,TimeUnit.SECONDS);
+        }finally{release.countDown();}
+        var before=history();assertThatThrownBy(this::qualify).hasMessage("EVIDENCE_UNAVAILABLE");assertThat(history()).isEqualTo(before);assertThat(count("content_bronze_reservations")).isEqualTo(1);assertThat(count("content_fetch_recovery_handoffs")).isZero();occupied(owner.attemptId());
+    }
     static final class MutableClock extends Clock {volatile Instant now;MutableClock(Instant now){this.now=now;}public ZoneId getZone(){return ZoneOffset.UTC;}public Clock withZone(ZoneId zone){return this;}public Instant instant(){return now;}}
 }

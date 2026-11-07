@@ -47,6 +47,7 @@ final class NarrowContentFetchRecoveryAssessment {
                               RecoveryQuiescence.Processes processes,Consumer<Boundary> fault){
         require(jdbc!=null && tx!=null && run!=null && attempt!=null && fault!=null
                 && !TransactionSynchronizationManager.isActualTransactionActive(),WORKER_CONFIGURATION_INVALID);
+        require(tx.required(()->jdbc.queryForObject("SELECT count(*) FROM ddip_management.content_bronze_reservations WHERE attempt_id=?",Long.class,attempt))==0,WORKER_NOT_READY);
         Snapshot snapshot=tx.required(()->snapshot(jdbc,tx,run,attempt));
         // No SQL transaction spans process or filesystem IO. No worker is registered or reconstructed.
         // Default OS observations are meaningful only on the independently recorded host.
@@ -75,6 +76,7 @@ final class NarrowContentFetchRecoveryAssessment {
                 catch(RuntimeException ex){integrity=Integrity.UNAVAILABLE_OR_CHANGED;}
             }
         }
+        require(tx.required(()->jdbc.queryForObject("SELECT count(*) FROM ddip_management.content_bronze_reservations WHERE attempt_id=?",Long.class,attempt))==0,WORKER_NOT_READY);
         return new Assessment(snapshot.facts(),integrity,observed,review);
     }
     private static Snapshot snapshot(JdbcTemplate jdbc,ManagementTransactions tx,UUID run,UUID attempt){

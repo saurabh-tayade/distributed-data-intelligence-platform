@@ -284,15 +284,49 @@ class NarrowContentFetchRecoveryFinalizationIT extends NarrowContentFetchLaunchF
         assertThat(readOnly.lookup(finalization)).isEqualTo("UNRESOLVED");assertThat(history()).isEqualTo(before);released();
     }
     @Test void populatedVersionFifteenUpgradePreservesPendingOwnerWithoutTerminalBackfill()throws Exception{
-        versionFifteen=true;closeServer();setup();terminalSetup();pending();
+        versionFifteen=true;closeServer();setup();
+        // Seed the historical V15 handoff semantics without weakening production's V17
+        // fail-closed reader. Only these two new absence queries are emulated, and only
+        // after proving that this fixture is still V15 and the successor table is absent.
+        var originalJdbc=jdbc;
+        jdbc=new JdbcTemplate(originalJdbc.getDataSource()){
+            @Override public <T>T queryForObject(String sql,Class<T> type,Object... args){
+                boolean count=sql.equals("SELECT count(*) FROM ddip_management.content_bronze_reservations WHERE attempt_id=?");
+                boolean exists=sql.equals("SELECT EXISTS(SELECT 1 FROM ddip_management.content_bronze_reservations b JOIN ddip_management.attempts a USING(attempt_id) WHERE a.run_id=?)");
+                if((count || exists) && versionFifteen
+                        && Boolean.TRUE.equals(originalJdbc.queryForObject("SELECT to_regclass('ddip_management.content_bronze_reservations') IS NULL",Boolean.class))){
+                    assertThat(originalJdbc.queryForObject("SELECT max(version::integer) FROM ddip_management.flyway_schema_history WHERE success AND version IS NOT NULL",Integer.class)).isEqualTo(15);
+                    assertThat(args).hasSize(1);
+                    return type.cast(count?Long.valueOf(0):Boolean.FALSE);
+                }
+                return super.queryForObject(sql,type,args);
+            }
+        };
+        terminalSetup();pending();
         var before=metadata();var files=filesystem();var row=jdbc.queryForObject("SELECT to_jsonb(h)::text FROM ddip_management.content_fetch_recovery_handoffs h",String.class);
         var migrations=jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IS NOT NULL ORDER BY installed_rank");
-        var migration=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();assertThat(migration.migrate().migrationsExecuted).isEqualTo(1);
+        var migration=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();assertThat(migration.migrate().migrationsExecuted).isEqualTo(2);
         new SchemaLifecycle(migration,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(false);
         assertThat(metadata()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);assertThat(jdbc.queryForObject("SELECT to_jsonb(h)::text FROM ddip_management.content_fetch_recovery_handoffs h",String.class)).isEqualTo(row);
-        assertThat(jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IS NOT NULL AND version<>'16' ORDER BY installed_rank")).isEqualTo(migrations);
+        assertThat(jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IS NOT NULL AND version NOT IN ('16','17') ORDER BY installed_rank")).isEqualTo(migrations);
         assertThat(count("content_fetch_recovery_finalizations")).isZero();occupied();assertThat(handoffs.lookup(handoff)).isEqualTo("CONFIRMED_HANDOFF");
         assertThat(repo.finish(guard,qualify())).isEqualTo("COMMITTED");released();
+    }
+    @Override void storage(String id,String product,String role){
+        if(role.equals("BRONZE")){NarrowContentFetchRecoveryHandoffIT.bronzeStorage(this,id,product,role);return;}
+        super.storage(id,product,role);
+    }
+    @Test void terminalDispositionRejectsPreviouslyValidRawBronzeReservation()throws Exception{
+        checkpoint();var bronze=NarrowContentFetchRecoveryHandoffIT.pendingBronze(this);recover();transfer();repo.finish(guard,qualify());var before=history();var files=filesystem();
+        assertThatThrownBy(()->tx.required(()->{NarrowContentFetchRecoveryHandoffIT.insertBronze(jdbc,bronze);return null;})).isInstanceOf(RuntimeException.class);
+        NarrowContentFetchRecoveryHandoffIT.assertDeferredBronzeExclusion(jdbc,tx,bronze);
+        assertThat(history()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);assertThat(count("content_bronze_reservations")).isZero();released();
+    }
+    @Test void rawBronzeInsertionDuringTerminalTransactionRollsBackWholeDisposition()throws Exception{
+        checkpoint();var bronze=NarrowContentFetchRecoveryHandoffIT.pendingBronze(this);recover();transfer();var q=qualify();var before=history();var files=filesystem();var attempted=new AtomicBoolean();
+        var failing=repository(b->{if(b.equals("RECEIPT")){attempted.set(true);NarrowContentFetchRecoveryHandoffIT.insertBronze(jdbc,bronze);}});
+        assertThatThrownBy(()->failing.finish(guard,q)).isInstanceOf(RuntimeException.class);assertThat(attempted).isTrue();
+        assertThat(history()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);assertThat(count("content_bronze_reservations")).isZero();assertThat(count("content_fetch_recovery_finalizations")).isZero();occupied();
     }
     static final class MutableClock extends Clock {volatile Instant now;MutableClock(Instant now){this.now=now;}public ZoneId getZone(){return ZoneOffset.UTC;}public Clock withZone(ZoneId zone){return this;}public Instant instant(){return now;}}
 }
