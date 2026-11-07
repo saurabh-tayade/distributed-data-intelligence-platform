@@ -116,9 +116,9 @@ class NarrowContentFetchReservationIT extends NarrowContentAdmissionFixtures {
     @Test void populatedVersionElevenUpgradePreservesProbeWithoutNativeBackfill()throws Exception{
         versionEleven=true;setup();prepared();assertThatThrownBy(()->NarrowContentOperationTestSupport.probe(jdbc,tx,workers,guard,owner,UUID.randomUUID(),b->{if(b.equals("RESERVED"))throw new IllegalStateException("TEST_BOUNDARY");})).hasMessage("TEST_BOUNDARY");
         var metadata=metadata();var files=filesystem();var probes=jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_operations t",String.class);
-        var migration=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();assertThat(migration.migrate().migrationsExecuted).isEqualTo(3);
+        var migration=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();assertThat(migration.migrate().migrationsExecuted).isEqualTo(4);
         new SchemaLifecycle(migration,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(false);
-        assertThat(metadata()).isEqualTo(metadata);assertThat(filesystem()).isEqualTo(files);assertThat(jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_operations t",String.class)).isEqualTo(probes);assertThat(count("content_native_operations")).isZero();assertThatThrownBy(()->reserve(b->{})).hasMessage("STATE_CONFLICT");
+        assertThat(metadataBeforeRecoveryPolicyUpgrade()).isEqualTo(metadata);assertThat(filesystem()).isEqualTo(files);assertThat(jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_operations t",String.class)).isEqualTo(probes);assertThat(count("content_native_operations")).isZero();assertThatThrownBy(()->reserve(b->{})).hasMessage("STATE_CONFLICT");
     }
     Process operationChild(String mode,UUID run,UUID attempt)throws Exception{
         Path descriptor=Files.createTempFile(temp,"operation-child-",".json");Files.write(descriptor,binding.descriptor());
@@ -348,9 +348,9 @@ class NarrowContentFetchReservationIT extends NarrowContentAdmissionFixtures {
         var registrations=jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.execution_profiles t ORDER BY profile_id",String.class);
         var rows=jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_native_operations t",String.class);
         var migration=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();
-        assertThat(migration.migrate().migrationsExecuted).isEqualTo(2);
+        assertThat(migration.migrate().migrationsExecuted).isEqualTo(3);
         new SchemaLifecycle(migration,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(false);
-        assertThat(metadata()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);assertThat(facts()).isEqualTo(original);
+        assertThat(metadataBeforeRecoveryPolicyUpgrade()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);assertThat(facts()).isEqualTo(original);
         assertThat(jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.execution_profiles t ORDER BY profile_id",String.class)).isEqualTo(registrations);
         assertThat(jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_native_operations t",String.class)).isEqualTo(rows);
         assertThat(count("content_fetch_launch_profiles")).isZero();assertThat(count("content_native_launch_phases")).isZero();

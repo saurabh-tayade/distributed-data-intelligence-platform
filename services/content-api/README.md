@@ -1864,3 +1864,12 @@ process observations. It never grants quiescence or continuation authority. Miss
 do not erase historical checkpoints; incomplete intents are never promoted. Legacy recovery handoff
 and its qualification diagnostic reject narrow histories. [ADR 0034](../../docs/adr/0034-inactive-native-fetch-recovery-assessment.md)
 records this inactive boundary. Recovery actions, #49, Gate B0 and Content dispatch remain open.
+
+### Inactive FETCH checkpoint-only recovery handoff
+
+The [checkpoint-only handoff](../../docs/operations/native-fetch-checkpoint-recovery-handoff.md)
+adds a fresh trusted-local review and a distinct, separately versioned recovery owner for an intact
+durable FETCH checkpoint. It preserves the occupied slot and original evidence, with atomic SQL
+fencing and receipt-only acknowledgment lookup. Partial intents are not completed; no refetch,
+repair, continuation or release is exposed. [ADR 0035](../../docs/adr/0035-inactive-fetch-checkpoint-recovery-handoff.md)
+records this inactive boundary. It has test callers only; #49, Gate B0 and Content dispatch stay open.

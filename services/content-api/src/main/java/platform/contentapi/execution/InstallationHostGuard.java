@@ -79,8 +79,12 @@ public final class InstallationHostGuard implements AutoCloseable {
         ImportOwnershipFailure.require(Arrays.equals(raw,(b.installationId()+"\n").getBytes(StandardCharsets.US_ASCII)),HOST_BINDING_INVALID);
         privateEntry(b.root().resolve("installation.id"),false,b.installationIdentity());
     }
-    public void checkHeld(UUID installation) {
+    /** In-memory lease veto for short SQL transactions; full path validation stays outside. */
+    void checkLeaseHeld(UUID installation) {
         ImportOwnershipFailure.require(binding.installationId().equals(installation) && lock.isValid() && channel.isOpen(),HOST_BINDING_INVALID);
+    }
+    public void checkHeld(UUID installation) {
+        checkLeaseHeld(installation);
         try { validate(binding); } catch(IOException ex) { throw new ImportOwnershipFailure(HOST_BINDING_INVALID); }
     }
     public Binding binding() {return binding;}

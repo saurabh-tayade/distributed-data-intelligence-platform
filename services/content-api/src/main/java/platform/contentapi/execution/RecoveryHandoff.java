@@ -278,13 +278,23 @@ final class RecoveryHandoff {
         pack.set("frozen",FrozenRunSelection.canonical((byte[])rows.get("captured_selection"),(String)rows.get("selection_sha256"),PreflightFiles.LARGE));
         var inherited=contentAncestry(guard,s,b.runtime,null);
         if(inherited!=null){
-            pack.set("ancestry",inherited);var stages=pack.withArray("stages");var plan=inherited.get("plan");
+            pack.set("ancestry",contentPackAncestry(inherited));var stages=pack.withArray("stages");var plan=inherited.get("plan");
             for(var prior:inherited.get("stages"))if(ContentRecoveryAncestry.inherited(plan,prior.get("stage").stringValue())){
                 need(stages.valueStream().noneMatch(current->current.get("stage").equals(prior.get("stage")) && current.get("item_ordinal").equals(prior.get("item_ordinal"))),EVIDENCE_CHANGED);
                 var stage=(tools.jackson.databind.node.ObjectNode)prior.deepCopy();stage.put("recordedAttemptId",plan.get("originalAttemptId").stringValue()).put("recordedEpoch",inherited.get("epoch").stringValue());stages.add(stage);
             }
         }
         return pack;
+    }
+    /** Seal identities, not transient ABSENT/REUSED observations. Fresh review still vetoes live or unknown processes. */
+    static JsonNode contentPackAncestry(JsonNode inherited){
+        var stable=(tools.jackson.databind.node.ObjectNode)inherited.deepCopy();
+        var identities=new ArrayList<RecoveryQuiescence.Identity>();
+        for(var p:inherited.get("recordedProcesses"))identities.add(new RecoveryQuiescence.Identity(Long.parseLong(p.get("pid").stringValue()),Instant.parse(p.get("startedAt").stringValue())));
+        var processes=stable.putArray("recordedProcesses");
+        identities.stream().distinct().sorted(Comparator.comparingLong(RecoveryQuiescence.Identity::pid).thenComparing(RecoveryQuiescence.Identity::startedAt))
+            .forEach(p->processes.addObject().put("pid",Long.toString(p.pid())).put("startedAt",p.startedAt().toString()));
+        return stable;
     }
     private JsonNode contentAncestry(InstallationHostGuard guard,Snapshot s,RecoveryRuntime runtime,RecoveryQuiescence.Review review){return new ContentRecoveryAncestry(jdbc,tx,processes,clock).inspect(guard,s.runId(),s.oldId(),runtime.content,review);}
     JsonNode verificationPack(InstallationHostGuard guard,Bootstrap evidence,Owner owner) {

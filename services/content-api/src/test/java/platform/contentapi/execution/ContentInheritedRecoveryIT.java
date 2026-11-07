@@ -75,6 +75,8 @@ class ContentInheritedRecoveryIT extends ContentRecoveryFixture {
                     assertThat(j.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isEqualTo(control);assertThat(j.queryForObject("SELECT count(*) FROM ddip_management.artifacts WHERE kind='CONTENT'",Integer.class)).isZero();assertThat(j.queryForObject("SELECT state FROM ddip_management.controls WHERE control_id=?",String.class,control)).isEqualTo("REQUESTED");assertThat(snapshot(outputRoot(frozen))).isEqualTo(contentFiles);
                 }
                 ContentRecovery.Receipt result;
+                var currentPack=h.contentPack(fresh,bootstrap,proof.owner);
+                assertThat(changedPackFields(proof.pack,currentPack)).withFailMessage("Inherited content pack changed before finish at fields: %s",changedPackFields(proof.pack,currentPack)).isEmpty();
                 if(mode.equals("GOLD") && expected.equals("SUCCEEDED"))try(var proxy=new RecoveryAcknowledgmentProxy(n.get("url").stringValue(),"RECOVERY_FINALIZED")){
                     var lost=new JdbcTemplate(new org.springframework.jdbc.datasource.DriverManagerDataSource(proxy.url(),System.getenv("DDIP_TEST_DB_USER"),System.getenv("DDIP_TEST_DB_PASSWORD")));var lostTx=ReliabilityExecutionFixtures.transactions(lost);var finalizer=new ContentRecovery(lost,lostTx,new RecoveryHandoff(lost,lostTx,binding.installationId()));
                     assertThatThrownBy(()->finalizer.finish(fresh,proof,finalReview)).hasMessage("MANAGEMENT_UNAVAILABLE");assertThat(proxy.dropped.get()).isTrue();result=recovery.resolve(fresh,control);
@@ -94,5 +96,16 @@ class ContentInheritedRecoveryIT extends ContentRecoveryFixture {
                 System.out.println("D5B2B_INHERITED boundary="+mode+" stop="+stop+" original="+original+" resume="+interrupted+" reconciliation="+control+" state="+result.state()+" artifact="+result.artifact()+" immutableContentFiles="+contentFiles.size());
             }
         }finally{child.destroyForcibly();child.waitFor(10,TimeUnit.SECONDS);}
+    }
+    // Report field paths only, never the private evidence or captured configuration values.
+    static List<String> changedPackFields(JsonNode expected,JsonNode actual){
+        var changed=new ArrayList<String>();var fields=new TreeSet<String>(expected.propertyNames());fields.addAll(actual.propertyNames());
+        for(String field:fields)if(!Objects.equals(expected.get(field),actual.get(field))){
+            if(field.equals("ancestry") && expected.has(field) && actual.has(field)){
+                var nested=new TreeSet<String>(expected.get(field).propertyNames());nested.addAll(actual.get(field).propertyNames());
+                for(String name:nested)if(!Objects.equals(expected.get(field).get(name),actual.get(field).get(name)))changed.add("$.ancestry."+name);
+            }else changed.add("$."+field);
+        }
+        return changed;
     }
 }
