@@ -33,6 +33,10 @@ public class OperatorRecoveryConfiguration {
         Command(JdbcTemplate jdbc,ManagementTransactions tx,UUID installation,Environment env){this.jdbc=jdbc;this.tx=tx;this.installation=installation;this.env=env;}
         public void run(ApplicationArguments arguments) {
             try {
+                String nativeAction=env.getProperty("ddip.recovery.action","");
+                if(Set.of("native-fetch-end","native-fetch-inspect").contains(nativeAction)){
+                    exitCode=new NarrowContentFetchOperator(jdbc,tx,installation,env).run(nativeAction);return;
+                }
                 UUID control=uuid(env.getProperty("ddip.recovery.control-id",""));
                 String action=env.getProperty("ddip.recovery.action","");need(Set.of("inspect","recover","resume","execute-resume").contains(action),INVALID_REQUEST);
                 if(action.equals("resume") || action.equals("execute-resume")){

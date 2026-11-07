@@ -13,7 +13,7 @@ import tools.jackson.databind.node.ObjectNode;
 import static platform.contentapi.execution.RecoveryFailure.Code.*;
 import static platform.contentapi.execution.RecoveryFailure.need;
 
-/** Inactive, trusted-local, checkpoint-only ownership transfer. No dispatcher or operational caller. */
+/** Trusted-local checkpoint-only ownership transfer. Only the terminal operator may consume its new owner. */
 final class NarrowContentFetchRecoveryHandoff {
     static final String POLICY="ddip-content-fetch-checkpoint-recovery-v1";
     enum Boundary { BEFORE_TRANSFER, OLD_ATTEMPT, SUCCESSOR, COORDINATOR, RUN, HANDOFF, AUDIT, COMMITTED }
@@ -52,6 +52,7 @@ final class NarrowContentFetchRecoveryHandoff {
         private Target(Snapshot snapshot,WorkerRepository.Session recovery,UUID recoveryAttempt,UUID handoff){this.snapshot=snapshot;this.recovery=recovery;this.recoveryAttempt=recoveryAttempt;this.handoff=handoff;}
         String digest(){return hash(ancestry(this));} UUID checkpoint(){return snapshot.checkpoint();}
         UUID recoveryAttempt(){return recoveryAttempt;} UUID handoffId(){return handoff;}
+        UUID runId(){return snapshot.runId();} UUID originalAttemptId(){return snapshot.oldId();}
         List<RecoveryQuiescence.Identity> processes(){return snapshot.processes();}
         @Override public String toString(){return "NativeFetchRecoveryTarget[redacted]";}
     }

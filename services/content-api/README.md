@@ -1873,3 +1873,14 @@ durable FETCH checkpoint. It preserves the occupied slot and original evidence, 
 fencing and receipt-only acknowledgment lookup. Partial intents are not completed; no refetch,
 repair, continuation or release is exposed. [ADR 0035](../../docs/adr/0035-inactive-fetch-checkpoint-recovery-handoff.md)
 records this inactive boundary. It has test callers only; #49, Gate B0 and Content dispatch stay open.
+
+### Trusted-local native FETCH terminal operator
+
+The [terminal-only operator procedure](../../docs/operations/native-fetch-terminal-operator.md)
+and [ADR 0037](../../docs/adr/0037-native-fetch-terminal-operator.md) supersede the preceding
+handoff/finalizer test-only caller restriction for a bounded packaged `operator-recovery` action.
+Two fresh exact-target human reviews and actual local process observations are required.
+Only the first returned live owner can end the run as `FAILED / NATIVE_FETCH_INTERRUPTED` and
+release the slot. Timeout or death after handoff can strand occupied ownership; receipt inspection
+cannot restore it. No execution, continuation or restart authority is added. Adapter validation
+is pending; #49, Gate B0 and ordinary Content dispatch remain open.
