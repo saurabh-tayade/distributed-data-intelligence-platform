@@ -18,7 +18,12 @@ public final class NarrowContentFetchRecoveryHandoffTestSupport {
         private final NarrowContentFetchRecoveryHandoff.Qualified value;
         private Qualified(NarrowContentFetchRecoveryHandoff.Qualified value){this.value=value;}
     }
+    public static final class Owner {
+        final NarrowContentFetchRecoveryHandoff.Owner value;
+        private Owner(NarrowContentFetchRecoveryHandoff.Owner value){this.value=value;}
+    }
     public record Result(String status,boolean ownerPresent) {}
+    public Owner transferOwner(InstallationHostGuard guard,Qualified q){return new Owner(repository.transfer(guard,q.value).owner());}
     public record ProcessIdentity(long pid,Instant startedAt) {}
     public NarrowContentFetchRecoveryHandoffTestSupport(JdbcTemplate jdbc,ManagementTransactions tx,UUID installation,Clock clock,Supplier<String> state,Consumer<String> boundary){
         this(jdbc,tx,installation,clock,p->state.get(),boundary);
