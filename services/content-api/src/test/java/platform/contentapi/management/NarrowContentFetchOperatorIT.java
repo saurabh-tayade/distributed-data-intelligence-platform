@@ -17,6 +17,7 @@ import static org.assertj.core.api.Assertions.*;
 class NarrowContentFetchOperatorIT extends NarrowContentFetchLaunchFixtures {
     final List<Process> processes=new ArrayList<>();
     UUID control;
+    Process originalProcess;
     @AfterEach void stopProcesses() throws Exception {
         for(var p:processes){p.destroyForcibly();assertThat(p.waitFor(10,TimeUnit.SECONDS)).isTrue();}
         processes.clear();
@@ -24,17 +25,36 @@ class NarrowContentFetchOperatorIT extends NarrowContentFetchLaunchFixtures {
     Process disposable() throws Exception {
         var p=new ProcessBuilder("sleep","120").start();processes.add(p);return p;
     }
-    void recordOldProcess(Process p) {
-        jdbc.update("UPDATE ddip_management.worker_instances SET pid=?,process_started_at=? WHERE instance_id=?",
-                p.pid(),Timestamp.from(p.info().startInstant().orElseThrow()),owner.worker().instanceId());
+    @Override void ready() {
+        guard=InstallationHostGuard.acquire(binding);
+        try{originalProcess=disposable();}catch(java.io.IOException ex){throw new java.io.UncheckedIOException(ex);}catch(Exception ex){throw new IllegalStateException(ex);}
+        var started=Timestamp.from(originalProcess.info().startInstant().orElseThrow());
+        // Fixture-only identity injection at the ORIGINAL INSERT, before any immutable history exists.
+        // The guard/capability remain test fixtures; recovery always uses the production LOCAL observer.
+        var insertions=new java.util.concurrent.atomic.AtomicInteger();
+        var registration=new org.springframework.jdbc.core.JdbcTemplate(jdbc.getDataSource()) {
+            @Override public int update(String sql,Object... args) {
+                if(sql.startsWith("INSERT INTO ddip_management.worker_instances(")){
+                    insertions.incrementAndGet();return super.update(sql,NativeFetchOperatorFixtureIdentity.atInsert(sql,args,originalProcess.pid(),started));
+                }
+                return super.update(sql,args);
+            }
+        };
+        workers=WorkerTestSupport.enabled(registration,tx,INSTALL);
+        session=workers.register(guard,CONTENT_PROFILE,digest(CONTENT_PROFILE),NarrowContentFetchReservationTestSupport.deploymentDigest(jdbc,CONTENT_PROFILE));
+        assertThat(insertions).hasValue(1);
     }
-    void admitted() throws Exception {
+    void admitted() throws Exception {admitted(false);}
+    void admitted(boolean keepOwnerAlive) throws Exception {
         prepared();launch(b->{});NarrowContentFetchCompletionTestSupport.complete(jdbc,tx,workers,guard,owner,operation,b->{});
-        // Do not replace the LOCAL process checker. Capture an actual identity, then prove it exited.
-        var p=disposable();recordOldProcess(p);p.destroy();assertThat(p.waitFor(10,TimeUnit.SECONDS)).isTrue();
+        // Capture at insertion, then prove it exited. Never rewrite immutable PID/start columns.
+        if(!keepOwnerAlive){originalProcess.destroy();assertThat(originalProcess.waitFor(10,TimeUnit.SECONDS)).isTrue();}
         long version=jdbc.queryForObject("SELECT row_version FROM ddip_management.runs WHERE run_id=?",Long.class,owner.runId());
         var request=SourceJson.object().put("action","RECONCILE").put("attemptId",owner.attemptId().toString()).put("quiescenceConfirmed",true);
-        control=UUID.fromString(new ControlRepository(jdbc,tx,INSTALL).request(ControlCommands.parse(owner.runId().toString(),SourceJson.canonical(request),"native-operator","\""+version+"\"")).get("controlId").stringValue());
+        // The live-owner negative case needs an admitted fixture intent to reach the adapter veto.
+        // Only intent admission uses its existing test seam; no recovery observation is substituted.
+        var controls=keepOwnerAlive?new ControlRepository(jdbc,tx,INSTALL,identities->{}):new ControlRepository(jdbc,tx,INSTALL);
+        control=UUID.fromString(controls.request(ControlCommands.parse(owner.runId().toString(),SourceJson.canonical(request),"native-operator","\""+version+"\"")).get("controlId").stringValue());
         guard.close();guard=null;
     }
     Child start(String action,JsonNode plan) throws Exception {return start(action,plan,url,true);}
@@ -97,9 +117,9 @@ class NarrowContentFetchOperatorIT extends NarrowContentFetchLaunchFixtures {
         var before=history();var inspect=start("native-fetch-inspect",plan);assertThat(inspect.await("NATIVE_FETCH_INSPECTED").toString()).contains("CONFIRMED_HANDOFF");inspect.exited(2);assertThat(history()).isEqualTo(before);
     }
     @Test void liveOldOwnerCannotBeOverriddenByApproval() throws Exception {
-        admitted();recordOldProcess(disposable());var files=filesystem();var child=start("native-fetch-end",null);
+        admitted(true);assertThat(originalProcess.isAlive()).isTrue();var files=filesystem();var child=start("native-fetch-end",null);
         var event=child.await("RECOVERY_REQUIRED","CONFIRMATION_REQUIRED");
-        if(event.get("status").stringValue().equals("CONFIRMATION_REQUIRED")){child.send(answer(event));child.await("RECOVERY_REQUIRED");}
+        assertThat(event.get("status").stringValue()).isEqualTo("RECOVERY_REQUIRED");assertThat(event.get("code").stringValue()).isEqualTo("PROCESS_UNRESOLVED");
         child.exited(2);unresolved();assertThat(count("content_fetch_recovery_handoffs")).isZero();assertThat(count("attempts")).isEqualTo(1);assertThat(filesystem()).isEqualTo(files);
     }
     @Test void processDeathAfterHandoffAllowsInspectionButNeverReconstructsOwner() throws Exception {
