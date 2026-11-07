@@ -23,6 +23,11 @@ class VerifierProcessTest {
     }
     ReadOnlyVerifierProcess.Result run(String mode,Observer observer){return process().run(command(mode,temp.resolve("marker").toString()),Map.of("PATH","/usr/bin:/bin","TZ","UTC","LANG","C.UTF-8"),temp,Duration.ofSeconds(10),observer);}
     @Test void cleanExitHasActualIdentityAndClosedStdinAndIsolatedEnvironment(){var observer=new Observer();var r=run("environment",observer);assertThat(r.exitCode()).isZero();assertThat(r.child().pid()).isPositive();assertThat(r.child().startedAt()).isNotNull();assertThat(r.stdoutBytes()).isZero();assertThat(r.stderrBytes()).isZero();assertThat(observer.authorizations).isEqualTo(1);}
+    @Test void onlyDigestOfBoundedStderrIsReturned(){
+        var result=run("small-stderr",new Observer());assertThat(result.stderrBytes()).isEqualTo(7);assertThat(result.stdoutBytes()).isZero();
+        assertThat(result.stderrSha256()).isEqualTo(platform.contentapi.management.SourceJson.sha("message".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        assertThat(result.toString()).doesNotContain("message");
+    }
     @Test void nonzeroExitIsNotSuccessEvidence(){assertThat(run("failed",new Observer()).exitCode()).isEqualTo(1);}
     @Test void startupFailureHasSafeClassification(){assertThatThrownBy(()->process().run(List.of(temp.resolve("missing").toString()),Map.of(),temp,Duration.ofSeconds(1),new Observer())).isInstanceOf(PreflightFailure.class).hasMessage("PROCESS_START_FAILED").hasNoCause();}
     @Test void authorizationFailurePreventsLaunch(){var observer=new Observer(){public void beforeStart(){throw new WorkerFailure(WorkerFailure.Code.OWNERSHIP_LOST);}};assertThatThrownBy(()->run("marker",observer)).hasMessage("OWNERSHIP_LOST");assertThat(Files.exists(temp.resolve("marker"))).isFalse();}
@@ -67,6 +72,7 @@ class VerifierProcessTest {
                 case "native-failed"->{var command=platform.contentapi.management.SourceJson.parse(Files.readAllBytes(Path.of(args[1])));var n=platform.contentapi.management.SourceJson.object().put("protocolVersion",1).put("runId",command.get("runId").stringValue()).put("attemptId",command.get("attemptId").stringValue()).put("stage","CHECK_INPUTS").put("itemOrdinal",0).put("status","FAILED").put("code","EVIDENCE_UNAVAILABLE").putNull("evidenceId");n.putObject("counts");var file=Path.of(args[1]).resolveSibling("result.json");Files.write(file,platform.contentapi.management.SourceJson.canonical(n));Files.setPosixFilePermissions(file,java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));System.exit(1);}
                 case "stdout"->System.out.write(new byte[4096]);
                 case "stderr"->System.err.write(new byte[4096]);
+                case "small-stderr"->System.err.print("message");
                 case "hang"->new CountDownLatch(1).await();
                 case "descendant"->{var child=new ProcessBuilder(command("hang","unused")).redirectError(ProcessBuilder.Redirect.DISCARD).redirectOutput(ProcessBuilder.Redirect.DISCARD).start();Runtime.getRuntime().addShutdownHook(Thread.ofPlatform().unstarted(()->{child.destroyForcibly();try{child.waitFor(1,TimeUnit.SECONDS);}catch(InterruptedException ex){Thread.currentThread().interrupt();}}));Files.writeString(Path.of(args[1]),"STARTED");child.waitFor();}
                 default->throw new IllegalArgumentException();

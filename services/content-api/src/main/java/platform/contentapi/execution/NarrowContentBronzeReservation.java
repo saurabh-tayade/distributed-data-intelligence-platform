@@ -18,7 +18,7 @@ final class NarrowContentBronzeReservation {
         boolean nativeLaunchCompatible(){return false;}
         @Override public String toString(){return "NativeBronzeReservation[historical; non-launchable]";}
     }
-    private record Material(NarrowContentEvidenceContext.Expected ready,UUID fetchOperation,UUID fetchCheckpoint,
+    record Material(NarrowContentEvidenceContext.Expected ready,UUID fetchOperation,UUID fetchCheckpoint,
                             byte[] fetchCommand,byte[] marker,byte[] descriptor,byte[] reference,
                             byte[] command,byte[] reservation,Path credentials,String credentialsSha,JsonNode credentialsStamp) { }
     private record Stamp(InstallationHostGuard.Identity identity,String modified,long size) { }
@@ -78,6 +78,29 @@ final class NarrowContentBronzeReservation {
             return new Facts(operation,fetch,attempt,checkpoint(ready),(String)row.get("command_sha256"),(String)row.get("reservation_sha256"));
         });
     }
+    /** SQL-only reconstruction retains the persisted credential observation, never secret bytes. */
+    static Material historicalMaterial(JdbcTemplate jdbc,ManagementTransactions tx,NarrowContentEvidenceContext.Expected ready,UUID operation){
+        var facts=inspect(jdbc,tx,operation);require(facts.attempt().equals(ready.attempt()),RUNTIME_MISMATCH);
+        return tx.required(()->{
+            var row=one(jdbc.queryForList("SELECT command_bytes FROM ddip_management.content_bronze_reservations WHERE operation_id=?",operation));
+            var storage=PreflightFiles.canonical((byte[])row.get("command_bytes"),65536).get("storage");
+            var credential=SourceJson.object();credential.set("sha256",storage.get("credentialsSha256"));credential.set("stamp",storage.get("credentialsStamp"));
+            var m=material(jdbc,tx,ready,facts.fetchOperation(),operation,NarrowContentFetchReservation.metadata(jdbc,ready.attempt()).current().epoch(),credential);
+            require(SourceJson.sha(m.command()).equals(facts.commandSha256()) && SourceJson.sha(m.reservation()).equals(facts.reservationSha256()),RUNTIME_MISMATCH);return m;
+        });
+    }
+    /** Rebuild from registered identity and fresh credentials; reservation bytes are never a packet. */
+    static Material reconstruct(JdbcTemplate jdbc,ManagementTransactions tx,NarrowContentEvidenceContext.Expected ready,UUID operation){
+        var facts=inspect(jdbc,tx,operation);require(facts.attempt().equals(ready.attempt()),RUNTIME_MISMATCH);
+        var runtime=NarrowContentRuntimeQualification.inspect(jdbc,tx,ready);var bronze=runtime.configuration("BRONZE");JsonNode storage=null;
+        for(var b:runtime.frozenSelection().get("storageBindings"))if(b.get("bindingId").equals(bronze.get("storageBindingId")))storage=b;
+        require(storage!=null,RUNTIME_MISMATCH);var credential=credential(Path.of(storage.get("configuration").get("credentialsFile").stringValue()));
+        var m=tx.required(()->material(jdbc,tx,ready,facts.fetchOperation(),operation,
+                NarrowContentFetchReservation.metadata(jdbc,ready.attempt()).current().epoch(),credential));
+        require(SourceJson.sha(m.command()).equals(facts.commandSha256()) && SourceJson.sha(m.reservation()).equals(facts.reservationSha256()),RUNTIME_MISMATCH);
+        return m;
+    }
+    static void reopenForLaunch(InstallationHostGuard guard,Material material,boolean released){reopen(guard,material,b->{},true,released);}
     private static Material material(JdbcTemplate jdbc,ManagementTransactions tx,NarrowContentEvidenceContext.Expected ready,
             UUID fetch,UUID operation,long epoch,JsonNode credential){
         require(ready.kind()==NarrowContentEvidenceContext.PlanKind.ORIGINAL,RUNTIME_MISMATCH);validateCredential(credential);
@@ -109,21 +132,26 @@ final class NarrowContentBronzeReservation {
         return new Material(ready,fetch,completed.checkpoint(),payload.commandBytes(),marker,descriptor,reference,bytes,facts,
                 Path.of(storage.get("configuration").get("credentialsFile").stringValue()),credential.get("sha256").stringValue(),credential.get("stamp"));
     }
-    private static void reopen(InstallationHostGuard guard,Material m,Consumer<Boundary> fault){
-        var ready=m.ready();var context=new NarrowContentEvidenceContext(ready);context.check(guard,ready.frozen());absent(ready);
+    private static void reopen(InstallationHostGuard guard,Material m,Consumer<Boundary> fault){reopen(guard,m,fault,false,false);}
+    private static void reopen(InstallationHostGuard guard,Material m,Consumer<Boundary> fault,boolean launch,boolean released){
+        var ready=m.ready();var context=new NarrowContentEvidenceContext(ready);context.check(guard,ready.frozen());if(!launch)absent(ready);
         Path directory=ContentOperationPlan.original(context.root(),ready.run(),ready.attempt(),ready.source()).directory("FETCH_SOURCE",0);
-        ContentEvidenceBudget.inspectFetchCompletion(context,guard,directory);var before=stamps(context.root(),directory);
+        scope(context,guard,directory,launch,released);var before=stamps(context.root(),directory);
         var journal=new RssJournalFiles(guard,ready.run(),ready.attempt(),m.fetchCheckpoint(),ready.source(),guard.binding().root().relativize(directory).toString(),false);
         require(Arrays.equals(m.marker(),journal.read("complete.json")),RUNTIME_MISMATCH);
         NarrowContentFetchCandidateVerification.metadataSchema(journal.read("metadata.json"));PreflightFiles.canonical(journal.read("descriptor.json"),65536);
         var evidence=journal.reopen(m.fetchCommand(),SourceJson.sha(m.marker()));fault.accept(Boundary.JOURNAL_REOPENED);
         require(Arrays.equals(m.descriptor(),evidence.descriptorBytes()) && Arrays.equals(m.reference(),evidence.checkpointReference()),RUNTIME_MISMATCH);
-        ContentEvidenceBudget.inspectFetchCompletion(context,guard,directory);
+        scope(context,guard,directory,launch,released);
         var finalEvidence=journal.reopen(m.fetchCommand(),SourceJson.sha(m.marker()));
         require(Arrays.equals(m.descriptor(),finalEvidence.descriptorBytes()) && Arrays.equals(m.reference(),finalEvidence.checkpointReference())
                 && before.equals(stamps(context.root(),directory)),RUNTIME_MISMATCH);
         var credential=credential(m.credentials());require(m.credentialsSha().equals(credential.get("sha256").stringValue()) && m.credentialsStamp().equals(credential.get("stamp")),RUNTIME_MISMATCH);
-        absent(ready);context.check(guard,ready.frozen());
+        if(!launch)absent(ready);context.check(guard,ready.frozen());
+    }
+    private static void scope(NarrowContentEvidenceContext context,InstallationHostGuard guard,Path fetch,boolean launch,boolean released){
+        if(launch)ContentEvidenceBudget.inspectBronzeLaunch(context,guard,context.originalDirectory("STORE_BRONZE",0),released);
+        else ContentEvidenceBudget.inspectFetchCompletion(context,guard,fetch);
     }
     private static JsonNode credential(Path path){
         try{

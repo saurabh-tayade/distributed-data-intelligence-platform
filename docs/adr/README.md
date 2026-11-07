@@ -136,3 +136,5 @@ reservation. It does not authorize Bronze launch, legacy history translation or 
 
 ADR 0039 adds a separate child-only ledger-v2 candidate producer. It preserves native storage
 semantics and does not activate a launcher, receipt commit or ordinary Content dispatch.
+
+- [0040: Inactive guarded native Bronze launch](0040-inactive-guarded-bronze-launch.md)

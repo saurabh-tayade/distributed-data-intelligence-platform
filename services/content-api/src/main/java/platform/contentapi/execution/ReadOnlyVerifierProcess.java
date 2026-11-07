@@ -22,7 +22,10 @@ class ReadOnlyVerifierProcess {
         byte[] release(InstallationHostGuard.ProcessIdentity child);
         default void beforeDelivery(){}
     }
-    record Result(int exitCode,InstallationHostGuard.ProcessIdentity child,long stdoutBytes,long stderrBytes,Set<String> descendants) { }
+    record Result(int exitCode,InstallationHostGuard.ProcessIdentity child,long stdoutBytes,long stderrBytes,Set<String> descendants,String stderrSha256) {
+        // Historical synthetic observations retain no invented diagnostic digest.
+        Result(int exitCode,InstallationHostGuard.ProcessIdentity child,long stdoutBytes,long stderrBytes,Set<String> descendants){this(exitCode,child,stdoutBytes,stderrBytes,descendants,null);}
+    }
     private record Observed(ProcessHandle handle,Instant start) { }
     private java.util.function.BooleanSupplier stopping=()->false;
     private final boolean spark;private final int outputLimit;private final Duration graceful,forced,drain;
@@ -68,7 +71,7 @@ class ReadOnlyVerifierProcess {
                 for(var child:children)if(observed.size()<32)observed.putIfAbsent(child.pid(),new Observed(child,child.info().startInstant().orElse(null)));
                 if(out.overflow || err.overflow)throw new PreflightFailure(STAGE_OUTPUT_LIMIT);
                 if(out.failed || err.failed)throw new PreflightFailure(RESULT_INVALID);
-                if(!p.isAlive() && out.done && err.done){result=new Result(p.exitValue(),identity,out.total,err.total,Set.copyOf(observed.keySet().stream().map(Object::toString).toList()));break;}
+                if(!p.isAlive() && out.done && err.done){result=new Result(p.exitValue(),identity,out.total,err.total,Set.copyOf(observed.keySet().stream().map(Object::toString).toList()),err.sha256);break;}
                 if(System.nanoTime()>=deadline)throw new PreflightFailure(STAGE_TIMEOUT);
                 if(System.nanoTime()>=nextHeartbeat){observer.heartbeat();nextHeartbeat=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);}
                 TimeUnit.MILLISECONDS.sleep(5);
@@ -154,9 +157,15 @@ class ReadOnlyVerifierProcess {
     List<ProcessHandle> descendants(Process process){return process.descendants().limit(33).toList();}
     private static final class Drain implements Runnable {
         static final Drain EMPTY=new Drain(InputStream.nullInputStream(),1);
-        final InputStream input;final int limit;volatile boolean done,overflow,failed;volatile long total;Thread thread;
+        final InputStream input;final int limit;volatile boolean done,overflow,failed;volatile long total;volatile String sha256;Thread thread;
         Drain(InputStream input,int limit){this.input=input;this.limit=limit;}
         void start(){thread=Thread.ofVirtual().name("reliability-preflight-drain").start(this);}
-        public void run(){try(input){byte[] buffer=new byte[8192];int n;while((n=input.read(buffer))!=-1){total=Math.min((long)limit+1,total+n);if(total>limit)overflow=true;}}catch(IOException ex){failed=true;}finally{done=true;}}
+        public void run(){
+            try(input){
+                var digest=java.security.MessageDigest.getInstance("SHA-256");byte[] buffer=new byte[8192];int n;
+                while((n=input.read(buffer))!=-1){total=Math.min((long)limit+1,total+n);if(total>limit)overflow=true;digest.update(buffer,0,n);}
+                sha256=HexFormat.of().formatHex(digest.digest());
+            }catch(IOException|java.security.NoSuchAlgorithmException ex){failed=true;}finally{done=true;}
+        }
     }
 }

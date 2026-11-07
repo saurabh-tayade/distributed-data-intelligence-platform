@@ -29,7 +29,7 @@ final class NarrowContentFetchReservation {
         Identity {require(installation!=null && instance!=null && epoch>0 && run!=null && attempt!=null,RUNTIME_MISMATCH);}
         @Override public String toString(){return "ReservationIdentity[redacted]";}
     }
-    private record Metadata(NarrowContentEvidenceContext.Expected ready,Identity expected,Identity current) { }
+    record Metadata(NarrowContentEvidenceContext.Expected ready,Identity expected,Identity current) { }
     private final JdbcTemplate jdbc;
     private final ManagementTransactions tx;
     private final WorkerRepository workers;
@@ -157,7 +157,7 @@ final class NarrowContentFetchReservation {
         return new Payload(operation,ready.attempt(),checkpoint,commandBytes,bootstrapBytes);
     }
     /** Immutable enrollment and READY, plus separately observed durable attempt ownership. */
-    private static Metadata metadata(JdbcTemplate jdbc,UUID attempt){
+    static Metadata metadata(JdbcTemplate jdbc,UUID attempt){
         try{
             var row=one(jdbc.queryForList("SELECT n.admission_bytes,n.admission_sha256,m.receipt_bytes,m.receipt_sha256,a.run_id,a.instance_id,a.owner_epoch,w.installation_id FROM ddip_management.content_attempt_admissions n JOIN ddip_management.content_admission_milestones m ON m.attempt_id=n.attempt_id AND m.phase='READY' JOIN ddip_management.attempts a ON a.attempt_id=n.attempt_id JOIN ddip_management.worker_instances w ON w.instance_id=a.instance_id WHERE n.attempt_id=?",attempt));
             var n=canonical((byte[])row.get("admission_bytes"),(String)row.get("admission_sha256"),65536);

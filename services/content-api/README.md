@@ -1901,3 +1901,9 @@ The [strict child record](../../docs/operations/narrow-strict-bronze-child.md) a
 boundary. It does not alter V17 reservation identity, historical runtime registrations or managed
 launch authority. Production execution, receipt commitment and ordinary Content dispatch remain
 separate work.
+
+The bounded original-run Bronze launch seam is described in
+[ADR 0040](../../docs/adr/0040-inactive-guarded-bronze-launch.md) and its
+[verification record](../../docs/operations/narrow-guarded-bronze-launch.md).
+It separately qualifies installed runtime bytes and records candidate inventory only; it does not
+verify remote storage, commit a Bronze receipt, enable ordinary dispatch or expand recovery authority.
