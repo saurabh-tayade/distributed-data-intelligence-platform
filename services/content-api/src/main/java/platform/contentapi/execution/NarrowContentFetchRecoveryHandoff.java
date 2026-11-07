@@ -214,6 +214,7 @@ final class NarrowContentFetchRecoveryHandoff {
         var old=one(workers.stream().filter(w->w.get("instance_id").equals(a.get("instance_id"))).toList());var next=one(workers.stream().filter(w->w.get("instance_id").equals(recovery)).toList());
         var history=jdbc.queryForList("SELECT * FROM ddip_management.attempts WHERE run_id=? ORDER BY attempt_no LIMIT 21",r.get("run_id"));need(history.size()<=20,CAPACITY_EXCEEDED);
         need(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.stage_invocations s JOIN ddip_management.attempts a USING(attempt_id) WHERE a.run_id=?) OR EXISTS(SELECT 1 FROM ddip_management.rss_deliveries WHERE run_id=?) OR EXISTS(SELECT 1 FROM ddip_management.content_operations o JOIN ddip_management.attempts a USING(attempt_id) WHERE a.run_id=?)",Boolean.class,r.get("run_id"),r.get("run_id"),r.get("run_id")),EVIDENCE_UNAVAILABLE);
+        need(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.content_bronze_reservations b JOIN ddip_management.attempts a USING(attempt_id) WHERE a.run_id=?)",Boolean.class,r.get("run_id")),EVIDENCE_UNAVAILABLE);
         var lineage=new LinkedHashMap<String,Object>();
         lineage.put("admission",jdbc.queryForList("SELECT * FROM ddip_management.content_attempt_admissions WHERE attempt_id=?",a.get("attempt_id")));
         lineage.put("milestones",jdbc.queryForList("SELECT * FROM ddip_management.content_admission_milestones WHERE attempt_id=? ORDER BY phase",a.get("attempt_id")));

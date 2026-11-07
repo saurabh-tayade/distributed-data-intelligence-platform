@@ -1884,3 +1884,12 @@ Only the first returned live owner can end the run as `FAILED / NATIVE_FETCH_INT
 release the slot. Timeout or death after handoff can strand occupied ownership; receipt inspection
 cannot restore it. No execution, continuation or restart authority is added. Adapter validation
 is pending; #49, Gate B0 and ordinary Content dispatch remain open.
+
+### Inactive native Bronze reservation
+
+[ADR 0038](../../docs/adr/0038-inactive-native-bronze-reservation.md) and the
+[reservation record](../../docs/operations/narrow-native-bronze-reservation.md) describe the
+original-live-owner native FETCH-to-Bronze reservation. It retains the new execution journal,
+without synthesizing legacy delivery or VERIFIED stage history. It does not launch Bronze.
+FETCH-only terminal recovery refuses downstream Bronze reservation history; no downstream
+recovery, ordinary Content dispatch or complete UI readiness is claimed.
