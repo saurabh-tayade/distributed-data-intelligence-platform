@@ -40,7 +40,10 @@ class NarrowContentFetchOperatorIT extends NarrowContentFetchLaunchFixtures {
                 return super.update(sql,args);
             }
         };
-        workers=WorkerTestSupport.enabled(registration,tx,INSTALL);
+        // Admission/launch/completion require the exact same JdbcTemplate, not merely its DataSource.
+        // Publish the wrapper to every inherited fixture helper before constructing the worker.
+        jdbc=registration;
+        workers=WorkerTestSupport.enabled(jdbc,tx,INSTALL);
         session=workers.register(guard,CONTENT_PROFILE,digest(CONTENT_PROFILE),NarrowContentFetchReservationTestSupport.deploymentDigest(jdbc,CONTENT_PROFILE));
         assertThat(insertions).hasValue(1);
     }
