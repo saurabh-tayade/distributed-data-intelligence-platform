@@ -92,12 +92,21 @@ mvn -f services/content-api/pom.xml -Ppostgres -DskipUnitTests=true \
   -Dit.test=NarrowContentPressureIT verify
 ```
 
-The new class belongs to the exhaustive native-publication partition. Existing restart tests share
-its unchanged explicit restart procedure. No cases are removed and no timeout or required gate is
-weakened. The preceding final-head CI #217 ran all 237 native-publication cases in 53m05s Maven (about
-54 minutes including setup), leaving approximately 36 minutes of the unchanged 90-minute job
-budget. The focused pressure cases total about 14m25s locally; this supports retaining the current
-partition pending actual combined measurement, rather than raising a timeout or weakening coverage.
-Final-head full CI and measured combined partition headroom remain pending before this milestone is
-verified. A bounded envelope/authority closure verdict and ordinary-worker activation plus
-operational/UI acceptance remain separate prerequisites for completion of issue #49.
+The pressure class ran in the exhaustive native-publication partition in final-head
+[CI #219](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/42495925021).
+All 19 jobs passed, including all 240 native-publication cases and all three pressure cases.
+[PR #135](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/pull/135)
+merged as `d54fa397`. Native publication took about 75 minutes in Maven and 77 minutes including
+job setup, within the unchanged 90-minute budget. No cases or required gates were removed.
+
+The preceding [main CI #218](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/42495790204)
+also passed all 19 jobs; its 237 native-publication cases took about 81 minutes in Maven and
+82 minutes for the job. These actual measurements supersede the earlier estimate based on focused
+local timings. Their variability and limited headroom motivate an exhaustive partition split;
+verification of the split's exact-head capacity remains pending. See [CI operations](ci.md).
+
+The [bounded B0 closure matrix](content-b0-closure.md) records the supported original-only envelope,
+readers, refusal behavior and evidence. Its remaining conditions are split-capacity verification
+and independent acceptance of the matrix, not an unspecified additional pressure corpus.
+Ordinary-worker integration, activation acceptance and later Operations/UI acceptance remain
+separate work. This pressure result neither closes Gate B0 by itself nor completes issue #49.

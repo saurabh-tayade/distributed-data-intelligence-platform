@@ -11,7 +11,7 @@ import re
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
-GROUPS = ('core', 'reliability', 'ingestion', 'gold', 'content_recovery', 'native_fetch_recovery', 'native_bronze', 'native_publication')
+GROUPS = ('core', 'reliability', 'ingestion', 'gold', 'content_recovery', 'native_fetch_recovery', 'native_bronze', 'native_publication', 'native_pipeline_recovery')
 INCLUDES = ['**/IT*.java', '**/*IT.java', '**/*ITCase.java']
 HTTP_CLASSES = ('platform.contentapi.GoldApiIT', 'platform.contentapi.ReliabilityApiIT', 'platform.contentapi.ContentApiIT')
 HTTP_EXCLUDES = ['**/' + name.rsplit('.', 1)[1] + '.java' for name in HTTP_CLASSES]

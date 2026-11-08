@@ -63,12 +63,14 @@
     "platform.contentapi.management.NarrowContentSilverReservationIT",
     "platform.contentapi.management.NarrowContentSilverReservationSqlIT",
     "platform.contentapi.management.NarrowContentPipelineIT",
-    "platform.contentapi.management.NarrowContentPressureIT",
     "platform.contentapi.management.NarrowContentPipelineSqlIT",
+    "platform.contentapi.management.NarrowContentSubmissionDiscoveryIT"
+  ],
+  "native_pipeline_recovery": [
+    "platform.contentapi.management.NarrowContentPressureIT",
     "platform.contentapi.management.NarrowContentPipelineCrashIT",
     "platform.contentapi.management.NarrowContentPipelineRestartIT",
     "platform.contentapi.management.NarrowContentPipelineRecoveryAssessmentIT",
-    "platform.contentapi.management.NarrowContentSubmissionDiscoveryIT",
     "platform.contentapi.management.ContentTerminalSqlIT",
     "platform.contentapi.management.NarrowContentTerminalIT",
     "platform.contentapi.management.NarrowContentTerminalOperatorIT"
