@@ -32,9 +32,9 @@ class NarrowContentBronzeReservationIT extends NarrowContentFetchLaunchFixtures 
         versionSeventeen=true;closeServer();setup();checkpoint();var reservation=reserve();var files=filesystem();var before=metadata();
         var row=jdbc.queryForObject("SELECT to_jsonb(b)::text FROM ddip_management.content_bronze_reservations b",String.class);
         var migration=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();
-        assertThat(migration.migrate().migrationsExecuted).isEqualTo(4);new SchemaLifecycle(migration,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(false);
+        assertThat(migration.migrate().migrationsExecuted).isEqualTo(5);new SchemaLifecycle(migration,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(false);
         assertThat(reservationFacts()).isEqualTo(reservation);assertThat(jdbc.queryForObject("SELECT to_jsonb(b)::text FROM ddip_management.content_bronze_reservations b",String.class)).isEqualTo(row);
-        assertThat(metadata()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);assertThat(count("content_bronze_launch_profiles")).isZero();assertThat(count("content_bronze_launch_phases")).isZero();retained();
+        assertThat(metadataBeforeTerminalPolicyUpgrade()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);assertThat(count("content_bronze_launch_profiles")).isZero();assertThat(count("content_bronze_launch_phases")).isZero();retained();
     }
     @BeforeEach void bronzeIdentity(){bronzeOperation=UUID.randomUUID();}
     @Override void storage(String id,String product,String role){

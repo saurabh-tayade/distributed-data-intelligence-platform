@@ -176,7 +176,24 @@ final class NarrowContentFetchRecoveryHandoff {
                 && text(successor,"instance_id").equals(h.get("recovery_instance_id").toString()) && Long.parseLong(text(successor,"owner_epoch"))==number(h,"original_epoch")+1 && "0".equals(text(successor,"row_version"))
                 && successor.get("finished_at").isNull() && successor.get("outcome_code").isNull() && successor.get("content_admission_policy").isNull() && successor.get("reused_checkpoint_id").isNull()
                 && Long.parseLong(text(successor,"attempt_no"))==before.get("history").valueStream().mapToLong(v->Long.parseLong(text(v,"attempt_no"))).max().orElse(0)+1,EVIDENCE_CHANGED);
-        history.add(successor);return expected.equals(actual);
+        history.add(successor);return sameHistoricalAttemptSchema(expected,actual);
+    }
+    /** V22 added one nullable field. Preserve the recorded hash and compare every other byte-derived value. */
+    static boolean sameHistoricalAttemptSchema(JsonNode expected,JsonNode actual){
+        var comparable=(ObjectNode)actual.deepCopy();
+        if(!normalizeAbsentTerminalMarker(expected.get("attempt"),(ObjectNode)comparable.get("attempt")))return false;
+        for(var current:comparable.get("history")){
+            var matches=expected.get("history").valueStream().filter(prior->prior.get("attempt_id").equals(current.get("attempt_id"))).toList();
+            if(matches.size()!=1 || !normalizeAbsentTerminalMarker(matches.getFirst(),(ObjectNode)current))return false;
+        }
+        return expected.equals(comparable);
+    }
+    private static boolean normalizeAbsentTerminalMarker(JsonNode historical,ObjectNode current){
+        String field="content_terminal_policy";
+        // Never discard a present historical field, a non-null marker, or any unrelated field.
+        if(current.has(field) && !current.get(field).isNull())return false;
+        if(!historical.has(field) && current.has(field))current.remove(field);
+        return true;
     }
     /** These seams consume the same opaque owner; none can reconstruct or return one. */
     void terminalGuard(InstallationHostGuard guard,Owner owner){
@@ -213,6 +230,12 @@ final class NarrowContentFetchRecoveryHandoff {
         var workers=jdbc.queryForList("SELECT * FROM ddip_management.worker_instances WHERE instance_id IN (?,?) ORDER BY instance_id FOR UPDATE",a.get("instance_id"),recovery);need(workers.size()==2,OWNERSHIP_LOST);
         var old=one(workers.stream().filter(w->w.get("instance_id").equals(a.get("instance_id"))).toList());var next=one(workers.stream().filter(w->w.get("instance_id").equals(recovery)).toList());
         var history=jdbc.queryForList("SELECT * FROM ddip_management.attempts WHERE run_id=? ORDER BY attempt_no LIMIT 21",r.get("run_id"));need(history.size()<=20,CAPACITY_EXCEEDED);
+        boolean terminalSchema=a.containsKey("content_terminal_policy");
+        need(history.stream().allMatch(attempt->attempt.containsKey("content_terminal_policy")==terminalSchema && attempt.get("content_terminal_policy")==null),EVIDENCE_UNAVAILABLE);
+        // A V22 attempt shape requires its receipt table: a missing table must fail closed.
+        // Pre-V22 snapshots have neither; coordinator fencing above applies in either schema.
+        if(terminalSchema)
+            need(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.content_original_terminal_receipts WHERE run_id=?)",Boolean.class,r.get("run_id")),EVIDENCE_UNAVAILABLE);
         need(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.stage_invocations s JOIN ddip_management.attempts a USING(attempt_id) WHERE a.run_id=?) OR EXISTS(SELECT 1 FROM ddip_management.rss_deliveries WHERE run_id=?) OR EXISTS(SELECT 1 FROM ddip_management.content_operations o JOIN ddip_management.attempts a USING(attempt_id) WHERE a.run_id=?)",Boolean.class,r.get("run_id"),r.get("run_id"),r.get("run_id")),EVIDENCE_UNAVAILABLE);
         need(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.content_bronze_reservations b JOIN ddip_management.attempts a USING(attempt_id) WHERE a.run_id=?)",Boolean.class,r.get("run_id")),EVIDENCE_UNAVAILABLE);
         var lineage=new LinkedHashMap<String,Object>();

@@ -52,7 +52,13 @@ NATIVE_PUBLICATION = (
     'platform.contentapi.management.NarrowContentSilverReservationSqlIT',
     "platform.contentapi.management.NarrowContentPipelineIT",
     "platform.contentapi.management.NarrowContentPipelineSqlIT",
+    "platform.contentapi.management.NarrowContentPipelineCrashIT",
+    "platform.contentapi.management.NarrowContentPipelineRestartIT",
+    "platform.contentapi.management.NarrowContentPipelineRecoveryAssessmentIT",
     "platform.contentapi.management.NarrowContentSubmissionDiscoveryIT",
+    "platform.contentapi.management.ContentTerminalSqlIT",
+    "platform.contentapi.management.NarrowContentTerminalIT",
+    "platform.contentapi.management.NarrowContentTerminalOperatorIT",
 )
 CONTENT_RECOVERY = (
     'platform.contentapi.execution.ContentRecoveryIT',
@@ -144,8 +150,8 @@ class PostgresInventoryTests(unittest.TestCase):
         self.assertEqual(PARTITIONS.inventory(self.root), self.groups)
         self.assertEqual(len(sum(self.groups.values(), [])), len(set(sum(self.groups.values(), []))))
         self.assertEqual({k: len(v) for k, v in self.groups.items()},
-                         dict(core=14, reliability=7, ingestion=3, gold=3, content_recovery=3, native_fetch_recovery=11, native_bronze=5, native_publication=5))
-        self.assertEqual(len(sum(self.groups.values(), [])), 51)
+                         dict(core=14, reliability=7, ingestion=3, gold=3, content_recovery=3, native_fetch_recovery=11, native_bronze=5, native_publication=11))
+        self.assertEqual(len(sum(self.groups.values(), [])), 57)
         self.assertEqual(tuple(self.groups['gold']), GOLD)
         self.assertEqual(tuple(self.groups['content_recovery']), CONTENT_RECOVERY)
         self.assertEqual(tuple(self.groups['native_fetch_recovery']), NATIVE_FETCH_RECOVERY)
