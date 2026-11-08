@@ -81,14 +81,19 @@ counted as passing evidence.
 All 30 focused Java command tests and 66 CI-policy tests passed. Markdown/local links, repository
 hygiene, whitespace and complete PostgreSQL partition inventory checks passed. Independent review
 found no remaining blockers after correcting artifact coverage, exact rejection assertions and the
-VERIFY_SILVER SQL ceiling. Complete final-head hosted CI and partition timing remain pending.
+VERIFY_SILVER SQL ceiling. Final-head CI #217 passed all selected jobs and aggregate gates; all
+eight PostgreSQL partitions ran. Native publication passed 237 cases with no failures/errors/skips
+in 53m05s Maven (about 54 minutes including setup), within the unchanged 90-minute budget. The
+trusted classifier skipped untouched Python processing, ingestion and JDBC jobs; main CI #216
+passed those broader regressions. PR #134 merged as `91ca818`.
 
 ## Remaining activation gates
 
-This finite corpus does not establish every admitted workload fits. Qualification still needs
-producer-reachable row/reference/layout pressure, current-chain interruption/safe-end envelope
-composition under that pressure, and complete final-head CI with measured partition headroom.
-Historical legacy envelope measurements and synthetic shape mirrors cannot substitute for these
+This finite corpus does not establish every admitted workload fits. The
+[producer-pressure qualification](content-pressure-qualification.md) adds the concrete pending
+row/reference/layout and interrupted safe-end observations using the unchanged producer. Its focused
+results do not replace final-head CI with measured partition headroom or a bounded envelope/authority
+closure verdict. Historical legacy measurements and synthetic shape mirrors cannot substitute for
 current-chain observations. Any necessary change to admission limits or supported workload requires
 its own reviewed decision. Ordinary dispatch activation and later end-to-end Operations/UI acceptance
 remain separate work; no successful test or detached assessment authorizes them.
