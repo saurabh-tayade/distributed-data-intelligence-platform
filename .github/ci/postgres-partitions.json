@@ -63,6 +63,7 @@
     "platform.contentapi.management.NarrowContentSilverReservationIT",
     "platform.contentapi.management.NarrowContentSilverReservationSqlIT",
     "platform.contentapi.management.NarrowContentPipelineIT",
+    "platform.contentapi.management.NarrowContentPressureIT",
     "platform.contentapi.management.NarrowContentPipelineSqlIT",
     "platform.contentapi.management.NarrowContentPipelineCrashIT",
     "platform.contentapi.management.NarrowContentPipelineRestartIT",

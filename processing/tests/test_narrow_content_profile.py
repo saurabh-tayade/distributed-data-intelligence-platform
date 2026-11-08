@@ -297,5 +297,114 @@ class ReportTest(ProfileAssertions):
         self.bad(n.validate_report_row,'unknown',{})
 
 
+class PressureFixtureTest(unittest.TestCase):
+    def test_reference_maximum_is_native_qualified_and_plus_one_has_no_completion(self):
+        import content_pressure_fixture as pressure
+        import publisher_reference
+        import csv
+        import io
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / 'reference'; root.mkdir()
+            qualification = pressure.reference(root, 'reference-binding', 10000)
+            self.assertEqual(qualification['verification']['evidenceVersion'], 1)
+            rows = list(csv.DictReader(io.StringIO(pressure.reference_csv(10000).decode())))
+            self.assertEqual(len({row['source_id'] for row in rows}), 10000)
+            self.assertEqual(rows[0]['source_id'], 'demo-feed')
+            self.assertTrue(all(len(row['source_id']) == 128 for row in rows[1:]))
+            self.assertTrue(all(len(row['publisher_name']) == 200 for row in rows))
+            self.assertEqual(rows[0]['publisher_name'], pressure.publisher_name(0))
+            self.assertTrue((root / 'reference_id=fixture-publishers/revision=r1/complete.json').is_file())
+            too_many = Path(temp) / 'overflow'; too_many.mkdir()
+            with self.assertRaises(publisher_reference.ReferenceFailure) as caught:
+                pressure.reference(too_many, 'reference-binding', 10001)
+            self.assertEqual(caught.exception.code, 'RESOURCE_LIMIT')
+            self.assertEqual(list(too_many.rglob('complete.json')), [])
+
+    def test_feed_padding_and_late_oversize_use_public_canonical_shape(self):
+        import content_pressure_fixture as pressure
+        import xml.etree.ElementTree as ET
+        ns = {'a': 'http://www.w3.org/2005/Atom'}
+        for target, count in [('61439,61440,61441', None), ('61440', 2), ('late-oversize', None)]:
+            with self.subTest(target=target):
+                targets = pressure.feed_targets(target, count)
+                entries = ET.fromstring(pressure.feed(target, count)).findall('a:entry', ns)
+                self.assertEqual(len(entries), len(targets))
+                rows = []
+                for index, (entry, size) in enumerate(zip(entries, targets)):
+                    title = entry.find('a:title', ns).text
+                    row = pressure.modeled_catalog_row(index, title)
+                    self.assertEqual(set(row), set(analytics.CATALOG_COLUMNS))
+                    self.assertEqual(len(canonical_bytes(analytics.public(row))), size)
+                    self.assertIn('"', title); self.assertIn(chr(92), title); self.assertIn('🙂', title)
+                    self.assertEqual(entry.find('a:id', ns).text, row['source_article_id'])
+                    self.assertIsNone(entry.find('a:published', ns))
+                    self.assertEqual(entry.find('a:updated', ns).text, 'deliberately-invalid')
+                    rows.append(row)
+                if target == 'late-oversize':
+                    sizes = [len(canonical_bytes(analytics.public(row))) for row in sorted(rows, key=lambda r: r['article_id'])]
+                    self.assertTrue(all(size == 2048 for size in sizes[:10]))
+                    self.assertEqual(sizes[-1], 61441)
+                    self.assertEqual(sizes.count(61441), 1)
+
+    def test_inspection_full_native_scan_includes_ten_thousand_references(self):
+        import content_pressure_fixture as pressure
+        pages, checks = [], []
+        with analytics.connection() as conn, tempfile.TemporaryDirectory() as temp:
+            m = pressure.metadata
+            for table, schema in m.SCHEMAS.items():
+                conn.execute('CREATE TABLE ' + table + ' (' + ','.join(name + ' ' + kind for name, kind in schema) + ')')
+            for i in range(2):
+                row = pressure.modeled_catalog_row(i, pressure.padded_title(i, 61440))
+                conn.execute('INSERT INTO ' + m.CATALOG + ' (' + ','.join(row) + ') VALUES ('
+                             + ','.join('?' for _ in row) + ')', list(row.values()))
+            conn.execute("INSERT INTO " + m.DAILY + " VALUES (1,'demo-feed',DATE '2026-11-08',2,0)")
+            conn.execute("""CREATE TABLE coverage AS SELECT
+                CASE WHEN i=0 THEN 'demo-feed' ELSE 'source-' || i END AS source_id,
+                'MATCHED' AS reference_status,
+                CASE WHEN i=0 THEN 'USED' ELSE 'UNUSED' END AS reference_usage,
+                'Publisher' AS publisher_name, 'science' AS publisher_category,
+                'en' AS declared_language, 'CA' AS country_code,
+                CASE WHEN i=0 THEN 2 ELSE 0 END::BIGINT AS article_count,
+                0::BIGINT AS articles_missing_reference_count,
+                []::VARCHAR[] AS missing_optional_attributes FROM range(10000) r(i)""")
+            class Reader:
+                _conn = conn
+                def __enter__(self): return self
+                def __exit__(self, *args): return False
+                def _check(self): checks.append(True)
+                def report(self, name, limit, offset):
+                    pages.append((name, limit, offset))
+                    return {'rows': [], 'has_more': True}  # Deliberately not full counts.
+            command = Path(temp) / 'command.json'
+            command.write_text(json.dumps(dict(prepared={'fingerprint': 'a' * 64},
+                content={'root': temp}, referenceBinding={'root': temp},
+                goldProof={'command': {'gold': {'root': temp}}})))
+            with patch.object(pressure.analytics, 'open_publication', return_value=Reader()):
+                result = pressure.inspection(command)
+            self.assertEqual(result['reportCounts'], dict(catalog=2, reference_coverage=10000, source_discovery_daily=1))
+            self.assertEqual(result['coverageTotals']['reference_source_count'], '10000')
+            self.assertEqual(result['coverage']['unused_reference_source_count'], '9999')
+            self.assertEqual(result['catalogMinBytes'], 61440)
+            self.assertEqual(result['catalogMaxBytes'], 61440)
+            self.assertEqual(pages, [(name, 1, 0) for name in analytics.REPORTS])
+            self.assertEqual(len(checks), 2)
+            self.assertTrue(result['verified'])
+            self.assertEqual(result['referenceCoverageRows'], 10000)
+            self.assertEqual(result['catalogRows'], 2)
+            self.assertEqual(result['oversizedCatalogRows'], 0)
+            self.assertIsNone(result['oversizedFirstRank'])
+
+    def test_catalog_inspection_refuses_more_than_one_hundred_rows(self):
+        import content_pressure_fixture as pressure
+        with analytics.connection() as conn:
+            schema = pressure.metadata.SCHEMAS[pressure.metadata.CATALOG]
+            conn.execute('CREATE TABLE ' + pressure.metadata.CATALOG + ' ('
+                         + ','.join(name + ' ' + kind for name, kind in schema) + ')')
+            conn.execute('INSERT INTO ' + pressure.metadata.CATALOG
+                         + ' (article_id) SELECT CAST(i AS VARCHAR) FROM range(101) r(i)')
+            with self.assertRaisesRegex(ValueError, 'at most 100'):
+                pressure.bounded_catalog(conn)
+
+
 if __name__ == '__main__':
     unittest.main()

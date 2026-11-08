@@ -24,10 +24,15 @@ abstract class NarrowContentPipelineFixtures extends NarrowContentSilverReservat
     }
     @Override void artifact(String id,ObjectNode evidence){
         if(id.equals(PUB))try{
-            var p=new ProcessBuilder(System.getenv("DDIP_TEST_PYTHON"),"-I","-B",Path.of("../../processing/tests/managed_content_fixture.py").toRealPath().toString(),"reference",roots.get(REFS).toString(),REFS).redirectError(ProcessBuilder.Redirect.INHERIT).start();
-            byte[] bytes=p.getInputStream().readAllBytes();assertThat(p.waitFor(30,java.util.concurrent.TimeUnit.SECONDS)).isTrue();assertThat(p.exitValue()).isZero();evidence=(ObjectNode)SourceJson.parse(bytes,512*1024);
+            Path output=Files.createTempFile(temp,"reference-qualification-",".json");
+            var p=new ProcessBuilder(referenceCommand()).redirectError(ProcessBuilder.Redirect.INHERIT).redirectOutput(output.toFile()).start();
+            try{assertThat(p.waitFor(30,java.util.concurrent.TimeUnit.SECONDS)).isTrue();assertThat(p.exitValue()).isZero();assertThat(Files.size(output)).isLessThanOrEqualTo(512*1024);evidence=(ObjectNode)SourceJson.parse(Files.readAllBytes(output),512*1024);}
+            finally{if(p.isAlive()){p.destroyForcibly();p.waitFor(10,java.util.concurrent.TimeUnit.SECONDS);}}
         }catch(Exception ex){throw new IllegalStateException(ex);}
         super.artifact(id,evidence);
+    }
+    List<String> referenceCommand()throws Exception{
+        return List.of(System.getenv("DDIP_TEST_PYTHON"),"-I","-B",Path.of("../../processing/tests/managed_content_fixture.py").toRealPath().toString(),"reference",roots.get(REFS).toString(),REFS);
     }
     @BeforeEach void pipelineProfile()throws Exception{
         emptyFeed=false;

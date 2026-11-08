@@ -99,3 +99,6 @@ open gates; local pipeline success does not complete those gates or issue #49.
 The [current execution-envelope qualification](current-content-envelope-qualification.md) adds
 transport-boundary and composed-command checks against this integrated implementation. Its explicit
 corpus and limitations do not turn finite measurements into Gate B0 or dispatch activation approval.
+
+The [producer-pressure qualification](content-pressure-qualification.md) exercises current native
+row/reference limits and interrupted safe-end durability under that pressure.
