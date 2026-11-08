@@ -65,7 +65,6 @@ Final-head hosted CI, actual partition timings and remaining restart/recovery ga
 separately. Do not count earlier foundation PRs or a standalone publisher pass as full integrated
 pipeline qualification.
 
-
 ## Local integration evidence
 
 The real Java/PostgreSQL chain passed all 17 operations through exact native Content verification,

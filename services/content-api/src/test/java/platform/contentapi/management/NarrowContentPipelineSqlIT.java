@@ -33,6 +33,28 @@ class NarrowContentPipelineSqlIT extends NarrowContentPipelineFixtures {
             assertThatThrownBy(()->jdbc.execute(sql)).isInstanceOf(RuntimeException.class);
         assertThat(objectRequests).hasValue(calls);assertThat(count("content_pipeline_phases")).isZero();
     }
+    @Test void visibleAttemptStageExclusionStillWaitsForCoordinatorFence()throws Exception{
+        capture();insert();var locked=new java.util.concurrent.CountDownLatch(1);
+        var release=new java.util.concurrent.CountDownLatch(1);var started=new java.util.concurrent.CountDownLatch(1);
+        try(var pool=java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()){
+            var holder=pool.submit(()->tx.required(()->{
+                jdbc.queryForObject("SELECT singleton_id FROM ddip_management.coordinator WHERE singleton_id=1 FOR UPDATE",Integer.class);
+                locked.countDown();try{assertThat(release.await(10,java.util.concurrent.TimeUnit.SECONDS)).isTrue();}
+                catch(InterruptedException ex){throw new RuntimeException(ex);}return null;
+            }));
+            assertThat(locked.await(10,java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var stage=pool.submit(()->{
+                var other=new JdbcTemplate(jdbc.getDataSource());other.setQueryTimeout(5);started.countDown();
+                assertThatThrownBy(()->other.update("INSERT INTO ddip_management.stage_invocations(attempt_id,stage,item_ordinal,checkpoint_id,state,input_evidence_sha256) VALUES (?,'CHECK_INPUTS',0,?,'INTENT',?)",
+                        owner.attemptId(),UUID.randomUUID(),"a".repeat(64)))
+                        .hasStackTraceContaining("CONTENT_PIPELINE_LEGACY_HISTORY_FORBIDDEN");
+            });
+            assertThat(started.await(10,java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            Thread.sleep(150);assertThat(stage.isDone()).isFalse();release.countDown();
+            holder.get(10,java.util.concurrent.TimeUnit.SECONDS);stage.get(10,java.util.concurrent.TimeUnit.SECONDS);
+        }finally{release.countDown();}
+        assertThat(count("stage_invocations")).isZero();assertThat(count("content_pipeline_operations")).isEqualTo(1);
+    }
     @ParameterizedTest @ValueSource(strings={"step","stage","ordinal","slot","native-slot","predecessor","profile","cv","wv","rv","av"})
     void alteredJournalCoordinatesAndOwnerCannotReserve(String key){
         capture();switch(key){case "step"->operation[4]=3;case "stage"->operation[5]="SILVER";case "ordinal"->operation[6]=1;

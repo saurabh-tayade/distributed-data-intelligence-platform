@@ -727,10 +727,15 @@ CREATE FUNCTION guard_content_pipeline_legacy_exclusion() RETURNS trigger
 LANGUAGE plpgsql SET search_path=ddip_management,pg_catalog AS $$
 DECLARE target uuid;
 BEGIN
- PERFORM 1 FROM coordinator WHERE singleton_id=1 FOR UPDATE;
+ -- Preserve V10's immediate rejection of an absent/invisible attempt. This trigger
+ -- sorts before content_stage_readiness and must not wait on its uncommitted owner.
  IF TG_TABLE_NAME='stage_invocations' THEN
   SELECT run_id INTO target FROM attempts WHERE attempt_id=NEW.attempt_id;
+  IF NOT FOUND THEN
+   RAISE EXCEPTION USING MESSAGE='CONTENT_ADMISSION_ATTEMPT_REQUIRED',ERRCODE='23503'; END IF;
  ELSE target:=NEW.run_id; END IF;
+ -- Visible attempts still serialize exclusion with pipeline reservation/ownership.
+ PERFORM 1 FROM coordinator WHERE singleton_id=1 FOR UPDATE;
  IF EXISTS(SELECT 1 FROM content_pipeline_operations o JOIN attempts a USING(attempt_id) WHERE a.run_id=target) THEN
   RAISE EXCEPTION USING MESSAGE='CONTENT_PIPELINE_LEGACY_HISTORY_FORBIDDEN',ERRCODE='23514'; END IF;
  RETURN NEW;
