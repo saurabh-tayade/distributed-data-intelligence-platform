@@ -33,6 +33,8 @@ NATIVE_FETCH_RECOVERY = (
     "platform.contentapi.management.NarrowContentBronzeLaunchSqlIT",
     "platform.contentapi.management.NarrowContentBronzeCompletionIT",
     "platform.contentapi.management.NarrowContentBronzeCheckpointSqlIT",
+    "platform.contentapi.management.NarrowContentSilverReservationIT",
+    "platform.contentapi.management.NarrowContentSilverReservationSqlIT",
     "platform.contentapi.management.NarrowContentFetchOperatorIT",
     "platform.contentapi.management.NarrowContentFetchRecoveryCompositionIT",
     "platform.contentapi.management.NarrowContentFetchRecoveryFinalizationIT",
@@ -135,8 +137,8 @@ class PostgresInventoryTests(unittest.TestCase):
         self.assertEqual(PARTITIONS.inventory(self.root), self.groups)
         self.assertEqual(len(sum(self.groups.values(), [])), len(set(sum(self.groups.values(), []))))
         self.assertEqual({k: len(v) for k, v in self.groups.items()},
-                         dict(core=14, reliability=7, ingestion=3, gold=3, content_recovery=3, native_fetch_recovery=16))
-        self.assertEqual(len(sum(self.groups.values(), [])), 46)
+                         dict(core=14, reliability=7, ingestion=3, gold=3, content_recovery=3, native_fetch_recovery=18))
+        self.assertEqual(len(sum(self.groups.values(), [])), 48)
         self.assertEqual(tuple(self.groups['gold']), GOLD)
         self.assertEqual(tuple(self.groups['content_recovery']), CONTENT_RECOVERY)
         self.assertEqual(tuple(self.groups['native_fetch_recovery']), NATIVE_FETCH_RECOVERY)
@@ -196,7 +198,7 @@ class PostgresInventoryTests(unittest.TestCase):
         smoke = PARTITIONS.selection(self.groups, 'native_fetch_recovery', 'smoke')
         remaining = PARTITIONS.selection(self.groups, 'native_fetch_recovery', 'remaining')
         self.assertEqual(smoke, [PARTITIONS.NATIVE_SMOKE])
-        self.assertEqual(len(remaining), 15)
+        self.assertEqual(len(remaining), 17)
         self.assertFalse(set(smoke) & set(remaining))
         self.assertCountEqual(smoke + remaining, NATIVE_FETCH_RECOVERY)
         for partition in PARTITIONS.GROUPS:
@@ -254,7 +256,7 @@ class PostgresInventoryTests(unittest.TestCase):
                     self.assertCountEqual(invocations[1].split(','),
                                           PARTITIONS.selection(self.groups, 'native_fetch_recovery', 'remaining'))
                 if not mode:
-                    self.assertIn('16 passing integration cases', result.stdout)
+                    self.assertIn('18 passing integration cases', result.stdout)
 
     def test_missing_or_extra_partition_fails(self):
         path = self.root / '.github/ci/postgres-partitions.json'

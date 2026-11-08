@@ -1912,3 +1912,7 @@ verify remote storage, commit a Bronze receipt, enable ordinary dispatch or expa
 [Bronze checkpoint verification record](../../docs/operations/narrow-bronze-verification-checkpoint.md)
 describe independent GET-only verification and the bounded original-owner native checkpoint.
 That historical observation grants no successor, dispatch, restart, recovery or release authority.
+
+[ADR 0042](../../docs/adr/0042-inactive-native-silver-reservation.md) describes the inactive
+[original-owner Silver reservation](../../docs/operations/narrow-native-silver-reservation.md).
+It does not launch Silver or satisfy the distinct INSPECT_BRONZE/0 prerequisite.
