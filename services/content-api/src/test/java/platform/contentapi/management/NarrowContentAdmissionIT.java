@@ -27,6 +27,15 @@ import static platform.contentapi.management.SourceFixtures.*;
 /** Real PostgreSQL admission/receipt protocol only. No native runtime, subprocess job or publication. */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class NarrowContentAdmissionIT extends NarrowContentAdmissionFixtures {
+    @Test void persistentStopAfterPreparingCommitRetainsOccupancyWithoutCreatingFiles()throws Exception{
+        claimed();var before=filesystem();var stopping=new AtomicBoolean();var w=WorkerTestSupport.enabled(jdbc,tx,INSTALL,stopping::get);
+        assertThatThrownBy(()->NarrowContentAdmissionTestSupport.prepare(jdbc,tx,w,guard,owner,boundary->{
+            if(boundary.equals("PREPARING_COMMITTED")){stopping.set(true);Thread.interrupted();}
+        })).hasMessage("WORKER_NOT_READY");
+        assertThat(phases()).containsExactly("PREPARING");assertThat(filesystem()).isEqualTo(before);noExecution();
+        assertThat(jdbc.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isEqualTo(owner.attemptId());
+        assertThat(jdbc.queryForObject("SELECT state FROM ddip_management.attempts WHERE attempt_id=?",String.class,owner.attemptId())).isEqualTo("CLAIMED");
+    }
     @Test void claimAtomicallyEnrollsFrozenIdentitiesWithoutTouchingAttemptFilesystem() throws Exception {
         UUID run=queue("claim");ready();var before=filesystem();
         owner=claim(workers,guard,session,UUID.randomUUID(),run).owner();
@@ -425,6 +434,6 @@ class NarrowContentAdmissionIT extends NarrowContentAdmissionFixtures {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.attempts WHERE content_admission_policy IS NOT NULL OR content_recovery_policy IS NOT NULL OR content_terminal_policy IS NOT NULL",Long.class)).isZero();
         assertThat(jdbc.queryForList("SELECT (to_jsonb(a)-'content_admission_policy'-'content_recovery_policy'-'content_terminal_policy')::text FROM ddip_management.attempts a ORDER BY attempt_no",String.class)).isEqualTo(history);
         assertThat(count("content_attempt_admissions")).isZero();assertThat(count("content_admission_milestones")).isZero();
-        assertThat(all.info().pending()).isEmpty();assertThat(all.info().current().getVersion().getVersion()).isEqualTo("22");
+        assertThat(all.info().pending()).isEmpty();assertThat(all.info().current().getVersion().getVersion()).isEqualTo("23");
     }
 }

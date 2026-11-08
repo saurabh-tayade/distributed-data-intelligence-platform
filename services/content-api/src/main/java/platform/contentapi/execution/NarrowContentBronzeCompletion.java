@@ -70,7 +70,7 @@ final class NarrowContentBronzeCompletion {
         byte[] bootstrap=bootstrap(material,registered,metadata.expected(),metadata.current(),runtime.protocolDigest(),launch.candidateSha256());
         check(guard,current[0],material,runtime,launch,pins,false,false);
         phase(guard,current[0],operation,"VERIFY_BOUND",runtime,launch.candidateSha256(),null,null,null,null,()->{});fault.accept(Boundary.VERIFY_BOUND);
-        var result=ReadOnlyVerifierProcess.receiptReader().run(runtime.command(),runtime.environment(),guard.binding().root(),Duration.ofSeconds(90),new ReadOnlyVerifierProcess.BootstrapObserver(){
+        var result=ReadOnlyVerifierProcess.receiptReader(workers::stopping).run(runtime.command(),runtime.environment(),guard.binding().root(),Duration.ofSeconds(90),new ReadOnlyVerifierProcess.BootstrapObserver(){
             public void beforeStart(){
                 check(guard,current[0],material,runtime,launch,pins,false,false);
                 phase(guard,current[0],operation,"START_AUTHORIZED",null,null,null,null,null,null,()->{});fault.accept(Boundary.START_AUTHORIZED);
@@ -256,7 +256,7 @@ final class NarrowContentBronzeCompletion {
             var profileRows=jdbc.queryForList("SELECT configuration_bytes,configuration_sha256 FROM ddip_management.content_bronze_verification_profiles WHERE verification_profile_id=?",profile);
             require(profileRows.size()==1,RUNTIME_MISMATCH);byte[] config=(byte[])profileRows.getFirst().get("configuration_bytes");
             require(digest.equals(profileRows.getFirst().get("configuration_sha256")) && digest.equals(SourceJson.sha(config)),RUNTIME_MISMATCH);
-            var registered=NarrowContentRuntimeQualification.inspect(jdbc,tx,ready);StrictBronzeVerificationRuntime.validate(PreflightFiles.canonical(config,65536),registered,ready.host());
+            var registered=NarrowContentRuntimeQualification.inspect(jdbc,tx,ready);StrictBronzeVerificationRuntime.validateRegistration(jdbc,tx,PreflightFiles.canonical(config,65536),registered.registration(),ready.host());
             var metadata=NarrowContentFetchReservation.metadata(jdbc,ready.attempt());
             byte[] bootstrap=bootstrap(material,registered,metadata.expected(),metadata.current(),SourceJson.parse(config).get("strictRuntimeSha256").stringValue(),launch.candidateSha256());
             require(SourceJson.sha(packet(bootstrap,((Number)phases.get(2).get("child_pid")).longValue())).equals(phases.get(3).get("bootstrap_sha256")),RUNTIME_MISMATCH);

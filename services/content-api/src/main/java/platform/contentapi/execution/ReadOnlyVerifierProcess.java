@@ -34,6 +34,7 @@ class ReadOnlyVerifierProcess {
     private boolean captureStdout;
     /** Opt-in bounded protocol output. Ordinary launchers continue discarding all raw output. */
     static ReadOnlyVerifierProcess receiptReader(){var process=new ReadOnlyVerifierProcess(65536,Duration.ofSeconds(5),Duration.ofSeconds(5),Duration.ofSeconds(5));process.captureStdout=true;return process;}
+    static ReadOnlyVerifierProcess receiptReader(java.util.function.BooleanSupplier stopping){var process=receiptReader();process.stopping=Objects.requireNonNull(stopping);return process;}
     private final boolean spark;private final int outputLimit;private final Duration graceful,forced,drain;
     ReadOnlyVerifierProcess(){this(false);}
     ReadOnlyVerifierProcess(boolean spark){this(spark,16*1024*1024,Duration.ofSeconds(5),Duration.ofSeconds(5),Duration.ofSeconds(5));}

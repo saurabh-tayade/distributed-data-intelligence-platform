@@ -21,11 +21,45 @@ final class NarrowContentRuntimeQualification {
     private record Registered(String id,String digest,byte[] bytes) {
         JsonNode configuration(){return SourceJson.parse(bytes);}
     }
+    /** Immutable registered description only. Contains no selected source, run, attempt or READY identity. */
+    static final class Registration {
+        private final Map<Family,Registered> chain;
+        private final Registered profile;
+        private final byte[] storage;
+        private Registration(Map<Family,Registered> chain,Registered profile,JsonNode storage){this.chain=Map.copyOf(chain);this.profile=profile;this.storage=SourceJson.canonical(storage);}
+        String profileId(){return profile.id();}
+        String profileDigest(){return profile.digest();}
+        JsonNode storageBindings(){return SourceJson.parse(storage,256*1024);}
+        String id(Family family){return chain.get(family).id();}
+        String digest(String family){return chain.get(Family.valueOf(family)).digest();}
+        JsonNode configuration(String family){return chain.get(Family.valueOf(family)).configuration();}
+    }
+    static Registration registration(JdbcTemplate j,ManagementTransactions tx,InstallationHostGuard guard,String profileId,String digest,String deployment){
+        guard.checkHeld(guard.binding().installationId());
+        return tx.required(()->{
+            var profile=load(j,profileId);need(profile.digest().equals(digest),RUNTIME_MISMATCH);
+            FrozenRunSelection.profile(profile.bytes(),digest,deployment);
+            need("CONTENT_RSS_V1".equals(text(profile.configuration(),"pipeline")),RUNTIME_MISMATCH);
+            integer(profile.configuration(),"runProfileVersion",2,2);
+            var rows=j.queryForList("SELECT b.* FROM ddip_management.storage_bindings b JOIN ddip_management.execution_profile_storage p USING(binding_id) WHERE p.profile_id=? ORDER BY b.binding_id LIMIT 129",profileId);
+            need(!rows.isEmpty() && rows.size()<=128,RUNTIME_MISMATCH);
+            var storage=SourceJson.object().putArray("bindings");Set<String> roles=new HashSet<>();
+            for(var row:rows){
+                need(guard.binding().installationId().equals(row.get("installation_id")) && ("content-intelligence".equals(row.get("product")) || "CONTROL".equals(row.get("role"))),RUNTIME_MISMATCH);
+                var b=SourceJson.object().put("bindingId",(String)row.get("binding_id")).put("productId",(String)row.get("product")).put("role",(String)row.get("role")).put("configurationSha256",(String)row.get("configuration_sha256"));
+                b.set("configuration",FrozenRunSelection.canonical((byte[])row.get("configuration_bytes"),(String)row.get("configuration_sha256"),65536));storage.add(b);roles.add((String)row.get("role"));
+            }
+            need(roles.containsAll(Set.of("BRONZE","SILVER","REFERENCE","GOLD","CONTENT","CONTROL","STAGING","TEMP")),RUNTIME_MISMATCH);
+            return correspondence(j,profile,storage,guard.binding(),load(j,text(profile.configuration(),"contentRuntimeId")).digest());
+        });
+    }
     static final class Snapshot {
         private final Map<Family,Registered> chain;
+        private final Registration registration;
         private final byte[] frozen;
         private final UUID run,attempt;
-        private Snapshot(Map<Family,Registered> chain,JsonNode frozen,NarrowContentEvidenceContext.Expected ready){this.chain=Map.copyOf(chain);this.frozen=SourceJson.canonical(frozen);run=ready.run();attempt=ready.attempt();}
+        private Snapshot(Registration registration,JsonNode frozen,NarrowContentEvidenceContext.Expected ready){this.registration=registration;this.chain=registration.chain;this.frozen=SourceJson.canonical(frozen);run=ready.run();attempt=ready.attempt();}
+        Registration registration(){return registration;}
         UUID run(){return run;}
         UUID attempt(){return attempt;}
         JsonNode frozenSelection(){return SourceJson.parse(frozen,256*1024);}
@@ -69,24 +103,30 @@ final class NarrowContentRuntimeQualification {
         FrozenRunSelection.profile(registeredProfile.bytes(),registeredProfile.digest(),deployment);
         integer(profile,"runProfileVersion",2,2);
         need(ready.source().equals(text(frozen.get("sources").get(0),"sourceId")),RUNTIME_MISMATCH);
+        var registration=correspondence(j,registeredProfile,frozen.get("storageBindings"),ready.host(),ready.frozen().runtimeSha256());
+        need(text(frozen.get("sources").get(0).get("configuration"),"inputStorageProfileId").equals(text(registration.configuration("BRONZE"),"storageBindingId")),RUNTIME_MISMATCH);
+        return new Snapshot(registration,frozen,ready);
+    }
+    private static Registration correspondence(JdbcTemplate j,Registered registeredProfile,JsonNode storageBindings,InstallationHostGuard.Binding host,String runtimeHash){
+        String profileId=registeredProfile.id();var profile=registeredProfile.configuration();String deployment=text(profile.get("runtime"),"deploymentSha256");
         Map<String,JsonNode> bindings=new HashMap<>();Set<Path> roots=new HashSet<>();
-        need(frozen.get("storageBindings").isArray() && frozen.get("storageBindings").size()<=128,RUNTIME_MISMATCH);
-        for(var b:frozen.get("storageBindings")){
+        need(storageBindings.isArray() && storageBindings.size()<=128,RUNTIME_MISMATCH);
+        for(var b:storageBindings){
             SourceJson.fields(b,"bindingId","productId","role","configurationSha256","configuration");
             need(bindings.put(text(b,"bindingId"),b)==null,RUNTIME_MISMATCH);
             need(SourceJson.sha(SourceJson.canonical(b.get("configuration"))).equals(text(b,"configurationSha256")),RUNTIME_MISMATCH);
-            membership(j,ready,profileId,b);
+            membership(j,host,profileId,b);
             if(b.get("configuration").has("root")){
                 Path root=absolute(b.get("configuration"),"root");
                 for(Path other:roots)need(!root.startsWith(other) && !other.startsWith(root),RUNTIME_MISMATCH);
                 roots.add(root);
             }
         }
-        var control=binding(bindings,ready.host().id(),"CONTROL");
-        need(Arrays.equals(SourceJson.canonical(control.get("configuration")),ready.host().descriptor())
-                && text(control,"configurationSha256").equals(ready.host().digest()),RUNTIME_MISMATCH);
+        var control=binding(bindings,host.id(),"CONTROL");
+        need(Arrays.equals(SourceJson.canonical(control.get("configuration")),host.descriptor())
+                && text(control,"configurationSha256").equals(host.digest()),RUNTIME_MISMATCH);
         var chain=new EnumMap<Family,Registered>(Family.class);Set<String> ids=new HashSet<>();
-        String id=text(profile,"contentRuntimeId");String expectedHash=ready.frozen().runtimeSha256();
+        String id=text(profile,"contentRuntimeId");String expectedHash=runtimeHash;
         for(Family family:Family.values()){
             need(ids.add(id),RUNTIME_MISMATCH);var registered=load(j,id);
             need(registered.digest().equals(expectedHash),RUNTIME_MISMATCH);chain.put(family,registered);
@@ -95,7 +135,7 @@ final class NarrowContentRuntimeQualification {
         }
         var content=chain.get(Family.CONTENT).configuration();var gold=chain.get(Family.GOLD).configuration();
         var silver=chain.get(Family.SILVER).configuration();var bronze=chain.get(Family.BRONZE).configuration();var fetch=chain.get(Family.FETCH).configuration();
-        need(text(bronze,"controlBindingId").equals(ready.host().id()) && text(fetch,"controlBindingId").equals(ready.host().id()),RUNTIME_MISMATCH);
+        need(text(bronze,"controlBindingId").equals(host.id()) && text(fetch,"controlBindingId").equals(host.id()),RUNTIME_MISMATCH);
         var storage=binding(bindings,text(bronze,"storageBindingId"),"BRONZE");
         var storageConfig=storage.get("configuration");
         SourceJson.fields(storageConfig,"importBronzeVersion","endpoint","region","bucket","credentialsFile");
@@ -106,20 +146,19 @@ final class NarrowContentRuntimeQualification {
                 && endpoint.getQuery()==null && endpoint.getFragment()==null && Set.of("","/").contains(endpoint.getPath()),RUNTIME_MISMATCH);
         need(text(storageConfig,"region").matches("[A-Za-z0-9_-]{1,128}") && !text(storageConfig,"bucket").isBlank(),RUNTIME_MISMATCH);
         absolute(storageConfig,"credentialsFile");
-        need(text(storage,"configurationSha256").equals(text(bronze,"storageBindingSha256"))
-                && text(frozen.get("sources").get(0).get("configuration"),"inputStorageProfileId").equals(text(storage,"bindingId")),RUNTIME_MISMATCH);
+        need(text(storage,"configurationSha256").equals(text(bronze,"storageBindingSha256")),RUNTIME_MISMATCH);
         for(Family family:Family.values()){
-            var r=chain.get(family);membership(j,ready,r.id(),control);
+            var r=chain.get(family);membership(j,host,r.id(),control);
             switch(family){
-                case CONTENT->{member(j,ready,r,bindings,content,"referenceBindingId","REFERENCE");member(j,ready,r,bindings,content,"contentBindingId","CONTENT");member(j,ready,r,bindings,gold,"goldBindingId","GOLD");member(j,ready,r,bindings,silver,"tempBindingId","TEMP");}
-                case GOLD->{member(j,ready,r,bindings,gold,"goldBindingId","GOLD");member(j,ready,r,bindings,silver,"outputBindingId","SILVER");member(j,ready,r,bindings,silver,"tempBindingId","TEMP");}
-                case SILVER->{member(j,ready,r,bindings,silver,"outputBindingId","SILVER");member(j,ready,r,bindings,silver,"tempBindingId","TEMP");}
-                case BRONZE->membership(j,ready,r.id(),storage);
+                case CONTENT->{member(j,host,r,bindings,content,"referenceBindingId","REFERENCE");member(j,host,r,bindings,content,"contentBindingId","CONTENT");member(j,host,r,bindings,gold,"goldBindingId","GOLD");member(j,host,r,bindings,silver,"tempBindingId","TEMP");}
+                case GOLD->{member(j,host,r,bindings,gold,"goldBindingId","GOLD");member(j,host,r,bindings,silver,"outputBindingId","SILVER");member(j,host,r,bindings,silver,"tempBindingId","TEMP");}
+                case SILVER->{member(j,host,r,bindings,silver,"outputBindingId","SILVER");member(j,host,r,bindings,silver,"tempBindingId","TEMP");}
+                case BRONZE->membership(j,host,r.id(),storage);
                 case FETCH->{ }
             }
         }
         Path processing=absolute(silver,"processingRoot");for(Path root:roots)need(!root.startsWith(processing) && !processing.startsWith(root),RUNTIME_MISMATCH);
-        return new Snapshot(chain,frozen,ready);
+        return new Registration(chain,registeredProfile,storageBindings);
     }
     private static void validate(Family family,JsonNode c,String profile,String profileHash,String deployment){
         switch(family){
@@ -133,9 +172,9 @@ final class NarrowContentRuntimeQualification {
     }
     private static void modules(JsonNode c,List<String> legacy){var names=ContentEvidenceProfile.modules(legacy,2);SourceJson.fields(c.get("modules"),names.toArray(String[]::new));for(String name:names)need(text(c.get("modules"),name).matches("[0-9a-f]{64}"),RUNTIME_MISMATCH);}
     private static void links(JsonNode c,String profile,String deployment){need(profile.equals(text(c,"runProfileSha256")) && deployment.equals(text(c,"deploymentSha256")),RUNTIME_MISMATCH);}
-    private static void member(JdbcTemplate j,NarrowContentEvidenceContext.Expected ready,Registered r,Map<String,JsonNode> bindings,JsonNode c,String field,String role){membership(j,ready,r.id(),binding(bindings,text(c,field),role));}
+    private static void member(JdbcTemplate j,InstallationHostGuard.Binding host,Registered r,Map<String,JsonNode> bindings,JsonNode c,String field,String role){membership(j,host,r.id(),binding(bindings,text(c,field),role));}
     private static JsonNode binding(Map<String,JsonNode> bindings,String id,String role){var b=bindings.get(id);need(b!=null && role.equals(text(b,"role")),RUNTIME_MISMATCH);return b;}
-    private static void membership(JdbcTemplate j,NarrowContentEvidenceContext.Expected ready,String profile,JsonNode b){need(Boolean.TRUE.equals(j.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.execution_profile_storage p JOIN ddip_management.storage_bindings b USING(binding_id) WHERE p.profile_id=? AND b.binding_id=? AND b.installation_id=? AND b.role=? AND b.product=? AND b.configuration_sha256=? AND b.configuration_bytes=?)",Boolean.class,profile,text(b,"bindingId"),ready.host().installationId(),text(b,"role"),text(b,"productId"),text(b,"configurationSha256"),SourceJson.canonical(b.get("configuration")))),RUNTIME_MISMATCH);}
+    private static void membership(JdbcTemplate j,InstallationHostGuard.Binding host,String profile,JsonNode b){need(Boolean.TRUE.equals(j.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.execution_profile_storage p JOIN ddip_management.storage_bindings b USING(binding_id) WHERE p.profile_id=? AND b.binding_id=? AND b.installation_id=? AND b.role=? AND b.product=? AND b.configuration_sha256=? AND b.configuration_bytes=?)",Boolean.class,profile,text(b,"bindingId"),host.installationId(),text(b,"role"),text(b,"productId"),text(b,"configurationSha256"),SourceJson.canonical(b.get("configuration")))),RUNTIME_MISMATCH);}
     private static Registered load(JdbcTemplate j,String id){need(id!=null && id.matches("[A-Za-z0-9_-]{1,128}"),RUNTIME_MISMATCH);var r=one(j.queryForList("SELECT configuration_bytes,configuration_sha256 FROM ddip_management.execution_profiles WHERE profile_id=?",id));String hash=(String)r.get("configuration_sha256");var c=FrozenRunSelection.canonical((byte[])r.get("configuration_bytes"),hash,65536);return new Registered(id,hash,SourceJson.canonical(c));}
     private static Map<String,Object> one(List<Map<String,Object>> rows){need(rows.size()==1,RUNTIME_MISMATCH);return rows.getFirst();}
     private static String text(JsonNode n,String key){return SourceJson.text(n.get(key));}

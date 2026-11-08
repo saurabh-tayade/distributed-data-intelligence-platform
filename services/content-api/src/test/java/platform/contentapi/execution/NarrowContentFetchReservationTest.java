@@ -52,4 +52,43 @@ class NarrowContentFetchReservationTest {
         var different=new NarrowContentFetchReservation.Identity(owner.installation(),owner.instance(),7,UUID.randomUUID(),f.attempt);
         assertThatThrownBy(()->NarrowContentFetchReservation.build(f.ready(),f.inspect(),different,different,operation)).hasMessage("RUNTIME_MISMATCH");
     }
+    @Test void publicReservationAddsExactIndependentPolicyBindingWithoutChangingNativeCommand(){
+        PublicContentProfileTestSupport.publicSource(f);var config=PublicContentProfileTestSupport.fetchLaunch(f);
+        var profile=new ContentFetchLaunchRuntime.Profile("public-fetch",SourceJson.sha(SourceJson.canonical(config)),config);
+        var legacy=build();var value=NarrowContentFetchReservation.buildPublic(f.ready(),f.inspect(),owner,owner,operation,profile);
+        assertThat(value.commandBytes()).containsExactly(legacy.commandBytes());
+        assertThat(SourceJson.parse(legacy.bootstrapBytes()).get("reservationVersion").intValue()).isEqualTo(1);
+        var reservation=SourceJson.parse(value.bootstrapBytes());
+        SourceJson.fields(reservation,"reservationVersion","mode","operationId","expected","current","fetch","publicFetch");
+        assertThat(reservation.get("reservationVersion").intValue()).isEqualTo(2);
+        assertThat(reservation.get("operationId").stringValue()).isEqualTo(operation.toString());
+        var publicFetch=reservation.get("publicFetch");
+        SourceJson.fields(publicFetch,"launchProfileId","launchProfileSha256","networkPolicySha256","selectedEndpoint","networkPolicy");
+        assertThat(publicFetch.get("selectedEndpoint")).isEqualTo(f.frozen.get("sources").get(0).get("endpoint"));
+        assertThat(publicFetch.get("launchProfileSha256").stringValue()).isEqualTo(profile.digest());
+        assertThat(publicFetch.get("networkPolicySha256").stringValue()).isEqualTo(SourceJson.sha(SourceJson.canonical(publicFetch.get("networkPolicy"))));
+        var packet=SourceJson.parse(NarrowContentFetchLaunch.packet(value.bootstrapBytes(),123));
+        SourceJson.fields(packet,"bootstrapVersion","mode","childPid","expected","current","fetch","publicFetch");
+        assertThat(packet.get("bootstrapVersion").intValue()).isEqualTo(2);
+        assertThat(packet.get("mode").stringValue()).isEqualTo("PUBLIC_FETCH_SOURCE_CANDIDATE");
+        assertThat(packet.get("publicFetch")).isEqualTo(publicFetch);
+        assertThat(packet.has("operationId")).isFalse();
+        assertThat(value.bootstrapBytes().length).isLessThan(65536);
+    }
+    @Test void publicReservationRejectsPolicyAndFrozenEndpointSubstitution(){
+        PublicContentProfileTestSupport.publicSource(f);var config=PublicContentProfileTestSupport.fetchLaunch(f);
+        var profile=new ContentFetchLaunchRuntime.Profile("public-fetch",SourceJson.sha(SourceJson.canonical(config)),config);
+        ((tools.jackson.databind.node.ObjectNode)f.frozen.get("sources").get(0)).put("endpointSha256","0".repeat(64));
+        assertThatThrownBy(()->NarrowContentFetchReservation.buildPublic(f.ready(),f.inspect(),owner,owner,operation,profile)).hasMessage("RUNTIME_MISMATCH");
+    }
+    @Test void releasePacketRejectsVersionModeMismatchAndExtraFields(){
+        var original=SourceJson.parse(build().bootstrapBytes());
+        for(String changed:List.of("version","mode","extra")){
+            var value=(tools.jackson.databind.node.ObjectNode)original.deepCopy();
+            if(changed.equals("version"))value.put("reservationVersion",2);
+            if(changed.equals("mode"))value.put("mode","PUBLIC_FETCH_SOURCE_RESERVATION");
+            if(changed.equals("extra"))value.putObject("publicFetch");
+            assertThatThrownBy(()->NarrowContentFetchLaunch.packet(SourceJson.canonical(value),123)).isInstanceOf(RuntimeException.class);
+        }
+    }
 }

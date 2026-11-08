@@ -144,3 +144,17 @@ semantics and does not activate a launcher, receipt commit or ordinary Content d
 - [0042: Inactive native Silver reservation](0042-inactive-native-silver-reservation.md)
 
 - [0043: Integrated original-run Content pipeline](0043-integrated-original-content-pipeline.md)
+
+- [0044: Interrupted Content safe-end contract](0044-interrupted-content-safe-end-contract.md)
+
+- [0045: Ordinary original-only narrow Content worker](0045-ordinary-narrow-content-worker.md)
+
+ADR 0045 implementation is authorized for disposable qualification installations. Public source
+reachability, packaged acceptance, independent code review and exact-head CI remain merge and
+deployment gates. Earlier startup/session/stopping checks alone did not establish readiness.
+
+- [0046: Separately identified bounded public FETCH lane](0046-bounded-public-fetch-lane.md)
+
+ADR 0046 is accepted as an implementation contract after independent network and compatibility
+review. Implementation and operational qualification remain pending. Historical loopback profiles
+remain unchanged. Ordinary dispatch is being qualified on the unmerged branch, not deployed.

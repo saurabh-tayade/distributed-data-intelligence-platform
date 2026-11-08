@@ -72,6 +72,13 @@ class VerifierProcessTest {
         assertThatThrownBy(()->new ReadOnlyVerifierProcess(false,stopping::get).run(command("marker",temp.resolve("marker").toString()),Map.of(),temp,Duration.ofSeconds(5),observer)).hasMessage("PROCESS_START_FAILED");
         assertThat(observer.child).isNull();assertThat(Files.exists(temp.resolve("marker"))).isFalse();Thread.interrupted();
     }
+    @Test void receiptReaderKeepsPersistentStopAfterInterruptWasCleared(){
+        var observer=new Observer();Thread.interrupted();
+        try{
+            assertThatThrownBy(()->ReadOnlyVerifierProcess.receiptReader(()->true).run(command("marker",temp.resolve("marker").toString()),Map.of(),temp,Duration.ofSeconds(5),observer)).hasMessage("PROCESS_START_FAILED");
+            assertThat(observer.authorizations).isZero();assertThat(observer.child).isNull();assertThat(temp.resolve("marker")).doesNotExist();
+        }finally{Thread.interrupted();}
+    }
     public static final class Child {
         public static void main(String[] args)throws Exception {
             switch(args[0]) {

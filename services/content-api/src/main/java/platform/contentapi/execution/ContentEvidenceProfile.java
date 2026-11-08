@@ -9,7 +9,7 @@ import tools.jackson.databind.JsonNode;
 import static platform.contentapi.execution.PreflightFailure.*;
 import static platform.contentapi.execution.PreflightFailure.Code.*;
 
-/** Fixed validation candidate; production Content dispatch stays disabled. Legacy admission is unchanged. */
+/** Fixed narrow reader bounds shared by admission and qualified original Content execution. */
 final class ContentEvidenceProfile {
     static final List<String> MODULES=List.of("bounded_evidence.py","bounded_content_producer.py");
     static boolean bounded(JsonNode frozen){return frozen.get("executionProfile").get("configuration").get("runProfileVersion").intValue()==2;}

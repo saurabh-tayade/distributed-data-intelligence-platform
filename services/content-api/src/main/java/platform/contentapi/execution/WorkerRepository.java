@@ -19,12 +19,19 @@ public final class WorkerRepository {
     public enum PrelaunchFailure { PROCESS_START_FAILED, RUNTIME_MISMATCH }
     private final JdbcTemplate jdbc;private final ManagementTransactions tx;private final UUID installation;
     private final WorkerExecutionCapability capability;
+    private final java.util.function.BooleanSupplier stopping;
     private volatile boolean authorizationStopped;
     public WorkerRepository(JdbcTemplate jdbc,ManagementTransactions tx,UUID installation) {this(jdbc,tx,installation,WorkerExecutionCapability.NONE);}
     WorkerRepository(JdbcTemplate jdbc,ManagementTransactions tx,UUID installation,WorkerExecutionCapability capability) {
-        this.jdbc=jdbc;this.tx=tx;this.installation=installation;this.capability=Objects.requireNonNull(capability);
+        this(jdbc,tx,installation,capability,()->false);
+    }
+    WorkerRepository(JdbcTemplate jdbc,ManagementTransactions tx,UUID installation,WorkerExecutionCapability capability,java.util.function.BooleanSupplier stopping) {
+        this.jdbc=jdbc;this.tx=tx;this.installation=installation;this.capability=Objects.requireNonNull(capability);this.stopping=Objects.requireNonNull(stopping);
     }
     public boolean executionAvailable(){return capability.available();}
+    /** A durable ownership check is still required; this is only the local shutdown veto. */
+    boolean stopping(){return stopping.getAsBoolean() || Thread.currentThread().isInterrupted();}
+    void checkNarrowActive(){require(!stopping(),WORKER_NOT_READY);}
     public Session register(InstallationHostGuard guard,String profileId,String profileDigest,String deploymentDigest) {
         outsideTransaction();
         guard.checkHeld(installation);
@@ -43,9 +50,12 @@ public final class WorkerRepository {
     }
     public Claim claim(InstallationHostGuard guard,Session session,UUID attemptId) {return claim(guard,session,attemptId,null,false);}
     Claim claimResumed(InstallationHostGuard guard,Session session,UUID attemptId,UUID run){return claim(guard,session,attemptId,Objects.requireNonNull(run),false);}
-    /** Explicit inactive admission seam, never selected by ordinary dispatch. */
+    /** Exact-run internal admission seam; ordinary dispatch uses the profile-pinned queue variant. */
     Claim claimNarrow(InstallationHostGuard guard,Session session,UUID attemptId,UUID run){return claim(guard,session,attemptId,Objects.requireNonNull(run),true);}
+    /** Packaged original-only dispatcher: profile-pinned queue order, never resume/adopt. */
+    Claim claimNextNarrow(InstallationHostGuard guard,Session session,UUID attemptId){return claim(guard,session,attemptId,null,true);}
     private Claim claim(InstallationHostGuard guard,Session session,UUID attemptId,UUID exactRun,boolean narrow) {
+        if(narrow)checkNarrowActive();
         held(guard,session);require(attemptId!=null,WORKER_CONFIGURATION_INVALID);
         // Only the fixed packaged adapter or isolated test capability supplies eligibility.
         if(!capability.available())return new Claim("NO_EXECUTOR",null,null,session,null);
@@ -82,6 +92,7 @@ public final class WorkerRepository {
             var resume=exactRun==null || narrow?null:ContentResumeLineage.queued(jdbc,runId,number(r,"row_version"));
             int attemptNo=jdbc.queryForObject("SELECT COALESCE(max(attempt_no),0)+1 FROM ddip_management.attempts WHERE run_id=?",Integer.class,runId);
             require(attemptNo<=(narrow?19:20),WORKER_NOT_READY);long epoch=Math.addExact(session.epoch(),1);
+            if(narrow)checkNarrowActive();
             jdbc.update("INSERT INTO ddip_management.attempts(attempt_id,run_id,attempt_no,kind,instance_id,owner_epoch,state,reused_checkpoint_id,content_admission_policy) VALUES (?,?,?,'EXECUTE',?,?,'CLAIMED',?,?)",attemptId,runId,attemptNo,session.instanceId(),epoch,resume==null || resume.get("checkpointId").isNull()?null:UUID.fromString(resume.get("checkpointId").stringValue()),narrow?NarrowContentProfile.POLICY:null);
             exactly(jdbc.update("UPDATE ddip_management.runs SET state='RUNNING',current_attempt_id=?,row_version=row_version+1 WHERE run_id=? AND state='QUEUED' AND row_version=? AND current_attempt_id IS NULL",attemptId,runId,number(r,"row_version")));
             exactly(jdbc.update("UPDATE ddip_management.coordinator SET epoch=?,active_attempt_id=?,owner_instance_id=?,heartbeat_at=clock_timestamp(),row_version=row_version+1 WHERE singleton_id=1 AND installation_id=? AND mode='READY' AND epoch=? AND row_version=? AND active_attempt_id IS NULL AND owner_instance_id IS NULL AND active_import_id IS NULL",epoch,attemptId,session.instanceId(),installation,session.epoch(),session.coordinatorVersion()));
@@ -154,7 +165,7 @@ public final class WorkerRepository {
             catch(org.springframework.dao.DataAccessException ex){throw ex;}catch(RuntimeException ex){throw new WorkerFailure(RUNTIME_MISMATCH);}
         });
     }
-    /** D1 internal seam only. Production capability/dispatch still supports Reliability exclusively. */
+    /** Historical D1 seam. Narrow-marked attempts cannot enter this legacy execution path. */
     public record FetchStage(Owner owner,UUID checkpoint,int ordinal,String source,String configSha,String commandSha,
                              String namespace,long version,String state,boolean authorized) { }
     public FetchStage beginFetch(InstallationHostGuard guard,Owner owner,int ordinal,UUID checkpoint,String source,String configSha,String commandSha) {return beginFetch(guard,owner,ordinal,checkpoint,source,configSha,commandSha,null);}
@@ -682,11 +693,12 @@ public final class WorkerRepository {
     }
     /** Owner-fenced JDBC-only transition; filesystem preparation is deliberately outside this callback. */
     <T> T narrowAdmissionTransaction(InstallationHostGuard guard,Owner owner,java.util.function.Supplier<T> metadata){
+        checkNarrowActive();
         held(guard,owner.worker());require("CLAIMED".equals(owner.attemptState()),WORKER_NOT_READY);
         return ownerTransaction(()->{owned(owner);controls(owner);attemptDeadline(owner);
             require(Boolean.TRUE.equals(jdbc.queryForObject("SELECT content_admission_policy=? FROM ddip_management.attempts WHERE attempt_id=?",Boolean.class,NarrowContentProfile.POLICY,owner.attemptId())),WORKER_NOT_READY);
             require(jdbc.queryForObject("SELECT count(*) FROM ddip_management.stage_invocations WHERE attempt_id=?",Long.class,owner.attemptId())==0,WORKER_NOT_READY);
-            return metadata.get();
+            checkNarrowActive();return metadata.get();
         });
     }
     /** Inactive operation fence. Never perform filesystem/process work inside this transaction. */
@@ -698,9 +710,10 @@ public final class WorkerRepository {
         });
     }
     /** JDBC-only native final proof transaction. No legacy stage or delivery rows are invented. */
-    void finishNarrowContent(InstallationHostGuard guard,Owner owner,UUID artifact,Runnable nativeCompletion){
-        narrowOperationTransaction(guard,owner,()->{
+    Session finishNarrowContent(InstallationHostGuard guard,Owner owner,UUID artifact,Runnable nativeCompletion){
+        return narrowOperationTransaction(guard,owner,()->{
             nativeCompletion.run();
+            checkNarrowActive();
             require(jdbc.queryForObject("SELECT count(*) FROM ddip_management.content_pipeline_completions WHERE attempt_id=? AND artifact_id=?",Long.class,owner.attemptId(),artifact)==1,RUNTIME_MISMATCH);
             var evidence=SourceJson.parse(jdbc.queryForObject("SELECT evidence_bytes FROM ddip_management.artifacts WHERE artifact_id=?",byte[].class,artifact),1024*1024);
             var output=evidence.get("verification").get("completion").get("output_counts");
@@ -708,7 +721,10 @@ public final class WorkerRepository {
             byte[] counts=SourceJson.canonical(SourceJson.object().put("articles",output.get("content_catalog_v1").toString()).put("rows",output.get("content_source_discovery_daily_v1").toString()));
             finishAttempt(owner,"SUCCEEDED","SUCCEEDED");
             exactly(jdbc.update("UPDATE ddip_management.runs SET state='SUCCEEDED',finished_at=clock_timestamp(),result_artifact_id=?,counts_bytes=?,outcome_code='SUCCEEDED',retry_eligible=false,row_version=row_version+1 WHERE run_id=? AND current_attempt_id=? AND state='RUNNING' AND row_version=?",artifact,counts,owner.runId(),owner.attemptId(),owner.runVersion()));
-            releaseOwned(owner);audit(owner.runId(),owner.attemptId(),"RUN_SUCCEEDED","RUNNING","SUCCEEDED",owner.runVersion(),owner.runVersion()+1,"SUCCEEDED");return null;
+            releaseOwned(owner);audit(owner.runId(),owner.attemptId(),"RUN_SUCCEEDED","RUNNING","SUCCEEDED",owner.runVersion(),owner.runVersion()+1,"SUCCEEDED");
+            // Only the acknowledged transaction may export this exact idle token. A historical
+            // completion receipt, or an uncertain commit, cannot reconstruct it for dispatch.
+            var s=owner.worker();return with(s,"READY",s.epoch(),s.coordinatorVersion()+1,s.workerVersion());
         });
     }
     private void legacyExecution(Owner owner){

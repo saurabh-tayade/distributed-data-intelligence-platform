@@ -86,12 +86,17 @@ and supplements, rather than replaces, those tests. See the
 
 ## Finite ordinary-worker activation checklist
 
-[WorkerExecutionCapability.RELIABILITY_V2](../../services/content-api/src/main/java/platform/contentapi/execution/WorkerExecutionCapability.java)
-supports only Reliability, and
-[WorkerIdleLifecycle](../../services/content-api/src/main/java/platform/contentapi/execution/WorkerIdleLifecycle.java)
-starts and executes only that pipeline. The deliberately missing transition is ordinary packaged
-claim/admission → strict original Content execution → confirmed release or retained occupied failure.
-It requires a reviewed implementation, not a capability flag flip.
+At the #136 review baseline,
+[WorkerExecutionCapability](../../services/content-api/src/main/java/platform/contentapi/execution/WorkerExecutionCapability.java)
+and [WorkerIdleLifecycle](../../services/content-api/src/main/java/platform/contentapi/execution/WorkerIdleLifecycle.java)
+supported ordinary Reliability only. [ADR 0045](../adr/0045-ordinary-narrow-content-worker.md) and
+[ADR 0046](../adr/0046-bounded-public-fetch-lane.md) now govern the unmerged implementation of
+ordinary packaged claim/admission → strict original Content execution → confirmed release or
+retained occupied failure. Candidate wiring is exercised only in disposable qualification
+installations. Public packaged acceptance, independent code review and exact-head CI remain open;
+this checklist does not turn the earlier internal-chain evidence into operational readiness.
+See the [candidate worker procedure](ordinary-content-worker-qualification.md) for exact startup
+selection, retained-failure behavior and the separate public acceptance gates.
 
 1. Accept the precise original-only scope and explicit blocked outcomes above. Preserve historical
    runtime/ledger meanings; metadata discovery must not imply installed readiness.

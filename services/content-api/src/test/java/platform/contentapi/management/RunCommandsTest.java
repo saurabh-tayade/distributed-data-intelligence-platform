@@ -31,4 +31,13 @@ class RunCommandsTest {
     @Test void maximumSelectionsAndReliabilityBatchBounds(){for(boolean content:List.of(true,false)){var n=request(content);var sources=n.withArray(content?"fetchSources":"sources");sources.removeAll();for(int i=0;i<(content?8:32);i++)sources.addObject().put("sourceId","s"+i).put("revision",1000);var inputs=n.withArray(content?"retainedSilverArtifactIds":"batchArtifactIds");inputs.removeAll();for(int i=0;i<(content?128:32);i++)inputs.add(new UUID(0,i).toString());assertThat(parse(n).sources()).hasSize(content?8:32);}var n=request(false);n.withArray("batchArtifactIds").removeAll();assertThatThrownBy(()->parse(n)).hasMessage("INVALID_ARGUMENT");for(int i=0;i<33;i++)n.withArray("batchArtifactIds").add(new UUID(0,i).toString());assertThatThrownBy(()->parse(n)).hasMessage("INVALID_ARGUMENT");}
     @Test void unknownNestedAndDuplicateSourceAtDifferentRevision(){var n=request(true);((ObjectNode)n.get("fetchSources").get(0)).put("endpoint","https://private.example");assertThatThrownBy(()->parse(n)).hasMessage("INVALID_ARGUMENT");var duplicate=request(false);duplicate.withArray("sources").addObject().put("sourceId","demo").put("revision",2);assertThatThrownBy(()->parse(duplicate)).hasMessage("INVALID_ARGUMENT");}
     @Test void profileOnlyApprovedFormatAndPinnedVersions(){var c=parse(request(false));var n=RunFixtures.profile(false,"request-jsonl-v2");assertThat(RunProfile.validate(n,c)).isEqualTo(n);n.put("sourceProfile","rss-atom-v1");assertThatThrownBy(()->RunProfile.validate(n,c)).hasMessage("INVALID_ARGUMENT");}
+    @org.junit.jupiter.api.Test void strictContentSubmissionMatchesFrozenAndReferenceReaderCeilings(){
+        var frozen=SourceJson.object();var reference=frozen.putArray("inputs").addObject().put("padding","");
+        int overhead=SourceJson.canonical(reference).length;
+        reference.put("padding","x".repeat(65536-overhead));
+        org.assertj.core.api.Assertions.assertThatCode(()->RunRepository.checkStrictContentEnvelope(frozen,256*1024)).doesNotThrowAnyException();
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->RunRepository.checkStrictContentEnvelope(frozen,256*1024+1)).hasMessage("MANAGEMENT_CAPACITY_EXCEEDED");
+        reference.put("padding","x".repeat(65537-overhead));
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->RunRepository.checkStrictContentEnvelope(frozen,256*1024)).hasMessage("MANAGEMENT_CAPACITY_EXCEEDED");
+    }
 }

@@ -12,7 +12,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import platform.contentapi.execution.*;
 import static org.assertj.core.api.Assertions.*;
 
-/** Real native original-run evidence survives an actual PostgreSQL restart, never authorizing replay. */
+/** Isolated loopback original-chain restart qualification with real PostgreSQL and native evidence. */
 class NarrowContentPipelineRestartIT extends NarrowContentPipelineFixtures {
     @ParameterizedTest
     @CsvSource({"BRONZE_BEFORE_SILVER,2", "RECHECK_SILVER,5", "RECHECK_CONTENT,16"})
@@ -94,7 +94,7 @@ class NarrowContentPipelineRestartIT extends NarrowContentPipelineFixtures {
     }
     private void noLegacyExecution() {
         assertThat(count("rss_deliveries")).isZero();assertThat(count("stage_invocations")).isZero();
-        assertThat(NarrowContentPipelineTestSupport.ordinaryContentDispatchAvailable()).isFalse();
+        assertThat(NarrowContentPipelineTestSupport.legacyCapabilitiesDispatchContent()).isFalse();
     }
     private Map<String,List<String>> allRows() {
         var rows=new TreeMap<String,List<String>>();

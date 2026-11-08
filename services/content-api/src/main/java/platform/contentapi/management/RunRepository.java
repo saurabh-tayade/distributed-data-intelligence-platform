@@ -44,10 +44,12 @@ public final class RunRepository {
             require(profile.size()==1);var p=profile.getFirst();JsonNode config=RunProfile.validate(canonical((byte[])p.get("configuration_bytes"),(String)p.get("configuration_sha256")),c);
             // The separate strict registration narrows new submissions only. Historical v1/v2
             // profiles and idempotent replays retain their original submission contract.
+            boolean strictContent=false;
             if(c.content()) {
                 var strict=jdbc.queryForList("SELECT profile_id FROM ddip_management.content_pipeline_profiles WHERE convert_from(configuration_bytes,'UTF8')::jsonb->>'runProfileId'=? LIMIT 2",String.class,c.profileId());
                 if(strict.size()>1)throw new SourceFailure(STATE_CONFLICT);
-                if(!strict.isEmpty())require(c.sources().size()==1 && c.artifacts().isEmpty());
+                strictContent=!strict.isEmpty();
+                if(strictContent)require(c.sources().size()==1 && c.artifacts().isEmpty());
             }
             var frozen=SourceJson.object().put("selectionVersion",1).put("pipeline",c.pipeline()).put("pipelineVersion",1).put("productId",c.product()).put("principalScope","local-operator").put("triggerType","OPERATOR");
             var runtime=frozen.putObject("executionProfile").put("profileId",c.profileId()).put("configurationSha256",(String)p.get("configuration_sha256"));runtime.set("configuration",config);
@@ -94,6 +96,7 @@ public final class RunRepository {
             require(c.content() || batchSources.equals(sourceConfigs.keySet()));
             if(rawFiles>128 || rawBytes>1024L*1024*1024 || occurrences>2000000 || silverBytes>1024L*1024*1024)throw new SourceFailure(MANAGEMENT_CAPACITY_EXCEEDED);
             byte[] captured=SourceJson.canonical(frozen);if(captured.length>MAX_EVIDENCE)throw new SourceFailure(MANAGEMENT_CAPACITY_EXCEEDED);
+            if(strictContent)checkStrictContentEnvelope(frozen,captured.length);
             UUID id=UUID.randomUUID();
             jdbc.update("INSERT INTO ddip_management.runs(run_id,product_id,pipeline,pipeline_version,principal_scope,idempotency_key,normalized_request,request_sha256,captured_selection,selection_sha256,execution_profile_id,state) VALUES (?,?,?,1,'local-operator',?,?,?,?,?,?,'QUEUED')",id,c.product(),c.pipeline(),c.key(),c.normalized(),SourceJson.sha(c.normalized()),captured,SourceJson.sha(captured),c.profileId());
             for(var s:sources)jdbc.update("INSERT INTO ddip_management.run_sources(run_id,product_id,source_id,revision,captured_gate_version,captured_enabled) VALUES (?,?,?,?,?,true)",id,c.product(),s.get("sourceId").stringValue(),s.get("revision").intValue(),Long.parseLong(s.get("capturedGateVersion").stringValue()));
@@ -102,6 +105,12 @@ public final class RunRepository {
             jdbc.update("INSERT INTO ddip_management.audit_events(actor_scope,run_id,action,after_state,after_version,safe_code,details_bytes) VALUES ('local-operator',?,'RUN_SUBMITTED','QUEUED',0,'ACCEPTED',?)",id,SourceJson.canonical(audit));
             return detail(id);
         });
+    }
+    /** Match the existing narrow reader ceilings before a queued run can occupy a worker. */
+    static void checkStrictContentEnvelope(JsonNode frozen,int capturedBytes){
+        if(capturedBytes>256*1024 || frozen.get("inputs").size()!=1
+                || SourceJson.canonical(frozen.get("inputs").get(0)).length>65536)
+            throw new SourceFailure(MANAGEMENT_CAPACITY_EXCEEDED);
     }
     private void readiness(Map<String,Object> slot) {
         if(!"READY".equals(slot.get("mode")) || slot.get("active_import_id")!=null)throw new SourceFailure(COORDINATOR_RECOVERY_REQUIRED);

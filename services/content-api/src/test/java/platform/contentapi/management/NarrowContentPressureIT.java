@@ -9,7 +9,7 @@ import platform.contentapi.execution.*;
 import tools.jackson.databind.JsonNode;
 import static org.assertj.core.api.Assertions.*;
 
-/** Real source/reference pressure. No widened runtime, synthetic native files or dispatch authority. */
+/** Isolated loopback source/reference pressure. No widened runtime or synthetic native files. */
 class NarrowContentPressureIT extends NarrowContentPipelineFixtures {
     byte[] pressurePayload;
     @Override List<String> referenceCommand()throws Exception{return command("reference",roots.get(REFS).toString(),REFS,"10000");}
@@ -56,7 +56,7 @@ class NarrowContentPressureIT extends NarrowContentPipelineFixtures {
         var report=NarrowContentEnvelopeTestSupport.measure(jdbc,attemptRoot(),owner.runId(),owner.attemptId(),"demo-feed");
         report.set("nativePressure",observed);System.out.println("CONTENT_PRESSURE_MEASUREMENT "+report);
         assertThat(filesystem()).isEqualTo(before);assertThat(objectRequests).hasValue(reads);assertThat(requests).hasValue(1);assertThat(objectWrites).hasValue(2);
-        assertThat(NarrowContentPipelineTestSupport.ordinaryContentDispatchAvailable()).isFalse();
+        assertThat(NarrowContentPipelineTestSupport.legacyCapabilitiesDispatchContent()).isFalse();
     }
     @Test void oversizedRowBeyondSmokePageFailsBeforeContentCompletionWithoutReplay()throws Exception{
         pressurePayload=fixture("feed","late-oversize");original();
@@ -74,7 +74,7 @@ class NarrowContentPressureIT extends NarrowContentPipelineFixtures {
         assertThatThrownBy(()->NarrowContentPipelineTestSupport.execute(jdbc,tx,workers,guard,owner,PIPELINE_PROFILE,e->{})).isInstanceOf(RuntimeException.class);
         assertThat(filesystem()).isEqualTo(before);assertThat(objectRequests).hasValue(reads);assertThat(requests).hasValue(1);assertThat(objectWrites).hasValue(2);
         assertThat(allRows()).isEqualTo(beforeRows);
-        assertThat(NarrowContentPipelineTestSupport.ordinaryContentDispatchAvailable()).isFalse();System.out.println("CONTENT_PRESSURE_REJECTION "+observed);
+        assertThat(NarrowContentPipelineTestSupport.legacyCapabilitiesDispatchContent()).isFalse();System.out.println("CONTENT_PRESSURE_REJECTION "+observed);
     }
     @Test void fullPressurePrefixSafelyEndsAfterWorkerDeathAndSurvivesDatabaseRestart()throws Exception{
         pressurePayload=fixture("feed","61440,61440");objectError=null;UUID run=queue("pressure-crash"),attempt=UUID.randomUUID();
@@ -115,7 +115,7 @@ class NarrowContentPressureIT extends NarrowContentPipelineFixtures {
         finally{if(lookup.isAlive()){lookup.destroyForcibly();lookup.waitFor(10,TimeUnit.SECONDS);}}
         assertThat(allRows()).isEqualTo(rows);
         assertThat(jdbc.queryForObject("SELECT state FROM ddip_management.runs WHERE run_id=?",String.class,run)).isEqualTo("FAILED");assertThat(jdbc.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isNull();
-        assertThat(filesystem()).isEqualTo(before);assertThat(objectRequests).hasValue(reads);assertThat(requests).hasValue(1);assertThat(objectWrites).hasValue(2);assertThat(NarrowContentPipelineTestSupport.ordinaryContentDispatchAvailable()).isFalse();
+        assertThat(filesystem()).isEqualTo(before);assertThat(objectRequests).hasValue(reads);assertThat(requests).hasValue(1);assertThat(objectWrites).hasValue(2);assertThat(NarrowContentPipelineTestSupport.legacyCapabilitiesDispatchContent()).isFalse();
         System.out.println("CONTENT_PRESSURE_TERMINAL "+sizes);
     }
     private Map<String,List<String>> allRows(){var rows=new TreeMap<String,List<String>>();for(String table:jdbc.queryForList("SELECT tablename FROM pg_tables WHERE schemaname='ddip_management' ORDER BY tablename",String.class))rows.put(table,jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.\""+table.replace("\"","\"\"")+"\" t ORDER BY to_jsonb(t)::text",String.class));return rows;}

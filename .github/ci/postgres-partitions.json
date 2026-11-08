@@ -13,7 +13,11 @@
     "platform.contentapi.management.NarrowContentFetchReservationIT",
     "platform.contentapi.management.NarrowContentInstalledRuntimeIT",
     "platform.contentapi.management.NarrowContentOperationJournalIT",
-    "platform.contentapi.management.ContentResumeControlIT"
+    "platform.contentapi.management.ContentResumeControlIT",
+    "platform.contentapi.management.StrictPublicFetchProfileIT",
+    "platform.contentapi.management.NarrowContentPublicHistoryIT",
+    "platform.contentapi.management.OrdinaryContentWorkerLifecycleIT",
+    "platform.contentapi.management.OrdinaryContentLegacyLifecycleIT"
   ],
   "reliability": [
     "platform.contentapi.execution.OperatorRecoveryIT",
@@ -50,21 +54,25 @@
     "platform.contentapi.management.NarrowContentFetchCandidateVerificationIT",
     "platform.contentapi.management.NarrowContentFetchCandidateVerificationRecoveryIT",
     "platform.contentapi.management.NarrowContentFetchLaunchIT",
-    "platform.contentapi.management.NarrowContentFetchLaunchRecoveryIT"
+    "platform.contentapi.management.NarrowContentFetchLaunchRecoveryIT",
+    "platform.contentapi.management.NarrowContentPublicReleaseHistoryIT",
+    "platform.contentapi.management.NarrowContentPublicCheckpointIT"
   ],
   "native_bronze": [
     "platform.contentapi.management.NarrowContentBronzeReservationIT",
     "platform.contentapi.management.NarrowContentBronzeLaunchIT",
     "platform.contentapi.management.NarrowContentBronzeLaunchSqlIT",
     "platform.contentapi.management.NarrowContentBronzeCompletionIT",
-    "platform.contentapi.management.NarrowContentBronzeCheckpointSqlIT"
+    "platform.contentapi.management.NarrowContentBronzeCheckpointSqlIT",
+    "platform.contentapi.management.NarrowContentPublicBronzeHistoryIT"
   ],
   "native_publication": [
     "platform.contentapi.management.NarrowContentSilverReservationIT",
     "platform.contentapi.management.NarrowContentSilverReservationSqlIT",
     "platform.contentapi.management.NarrowContentPipelineIT",
     "platform.contentapi.management.NarrowContentPipelineSqlIT",
-    "platform.contentapi.management.NarrowContentSubmissionDiscoveryIT"
+    "platform.contentapi.management.NarrowContentSubmissionDiscoveryIT",
+    "platform.contentapi.management.NarrowContentWorkerStartupIT"
   ],
   "native_pipeline_recovery": [
     "platform.contentapi.management.NarrowContentPressureIT",

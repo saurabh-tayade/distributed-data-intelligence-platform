@@ -11,7 +11,7 @@ import tools.jackson.databind.node.ObjectNode;
 import static platform.contentapi.execution.WorkerFailure.require;
 import static platform.contentapi.execution.WorkerFailure.Code.*;
 
-/** Inactive loopback-only native launch seam. No dispatcher, retry, checkpoint or recovery authority. */
+/** Versioned original-only native launch seam. No retry or recovered continuation authority. */
 final class NarrowContentFetchLaunch {
     enum Boundary { RESERVED, LAUNCH_BOUND, DIRECTORY_CREATED, COMMAND_WRITTEN, FILES_READY, START_AUTHORIZED,
         CHILD_RECORDED, BEFORE_RELEASE, BEFORE_RELEASE_PHASE, RELEASE_AUTHORIZED, BEFORE_DELIVERY, HEARTBEAT, BEFORE_CANDIDATE, BEFORE_CANDIDATE_PHASE, CANDIDATE_EXITED }
@@ -110,10 +110,12 @@ final class NarrowContentFetchLaunch {
         require(operation!=null && fault!=null,WORKER_CONFIGURATION_INVALID);
         var ready=NarrowContentAdmission.inspectReady(jdbc,tx,guard,owner.runId(),owner.attemptId());
         var registered=NarrowContentRuntimeQualification.inspect(jdbc,tx,ready);
-        var runtime=StrictFetchLaunchRuntime.load(jdbc,tx,guard,registered,launchProfile);
+        var profile=ContentFetchLaunchRuntime.registered(jdbc,tx,registered.registration(),guard.binding(),launchProfile);
+        var runtime=ContentFetchLaunchRuntime.load(jdbc,tx,guard,registered,launchProfile);
+        var publicProfile=profile.version()==2?profile:null;
         var reservation=new NarrowContentFetchReservation(jdbc,tx,workers);
-        var payload=reservation.prepare(guard,owner,operation);
-        var consumed=reservation.reserve(guard,owner,operation);
+        var payload=reservation.prepare(guard,owner,operation,publicProfile);
+        var consumed=reservation.reserve(guard,owner,operation,publicProfile,b->{});
         require(consumed.commandSha256().equals(SourceJson.sha(payload.commandBytes()))
                 && consumed.bootstrapSha256().equals(SourceJson.sha(payload.bootstrapBytes())),RUNTIME_MISMATCH);
         fault.accept(Boundary.RESERVED);
@@ -136,7 +138,7 @@ final class NarrowContentFetchLaunch {
         checkCommand(guard,owner,context,directory,command,false);
         phase(guard,owner,operation,"FILES_READY",null,null,null);fault.accept(Boundary.FILES_READY);
         var current=new WorkerRepository.Owner[]{owner};
-        var result=new ReadOnlyVerifierProcess().run(runtime.command(),runtime.environment(),guard.binding().root(),Duration.ofSeconds(45),new ReadOnlyVerifierProcess.BootstrapObserver(){
+        var result=new ReadOnlyVerifierProcess(false,workers::stopping).run(runtime.command(),runtime.environment(),guard.binding().root(),Duration.ofSeconds(45),new ReadOnlyVerifierProcess.BootstrapObserver(){
             public void beforeStart(){
                 runtime.check();checkCommand(guard,current[0],context,directory,command,false);
                 phase(guard,current[0],operation,"START_AUTHORIZED",null,null,null);fault.accept(Boundary.START_AUTHORIZED);
@@ -190,7 +192,17 @@ final class NarrowContentFetchLaunch {
                 id=(String)rows.getFirst().get("launch_profile_id");digest=(String)rows.getFirst().get("launch_profile_sha256");
                 var configs=jdbc.queryForList("SELECT configuration_bytes,configuration_sha256 FROM ddip_management.content_fetch_launch_profiles WHERE launch_profile_id=?",id);
                 require(configs.size()==1 && digest.equals(configs.getFirst().get("configuration_sha256")),RUNTIME_MISMATCH);
-                byte[] bytes=(byte[])configs.getFirst().get("configuration_bytes");require(digest.equals(SourceJson.sha(bytes)),RUNTIME_MISMATCH);PreflightFiles.canonical(bytes,65536);
+                byte[] bytes=(byte[])configs.getFirst().get("configuration_bytes");require(digest.equals(SourceJson.sha(bytes)),RUNTIME_MISMATCH);var launchConfiguration=PreflightFiles.canonical(bytes,65536);
+                // The reservation independently validated its public launch/policy chain even
+                // before LAUNCH_BOUND existed. Later phases must bind that same identity.
+                var reservation=PreflightFiles.canonical(jdbc.queryForObject("SELECT bootstrap_bytes FROM ddip_management.content_native_operations WHERE operation_id=?",byte[].class,operation),65535);
+                require(launchConfiguration.get("strictFetchLaunchVersion").isInt()
+                        && launchConfiguration.get("strictFetchLaunchVersion").intValue()==reservation.get("reservationVersion").intValue(),RUNTIME_MISMATCH);
+                if(reservation.get("reservationVersion").intValue()==2){
+                    var binding=reservation.get("publicFetch");
+                    require(id.equals(binding.get("launchProfileId").stringValue())
+                            && digest.equals(binding.get("launchProfileSha256").stringValue()),RUNTIME_MISMATCH);
+                }
             }
             if(rows.size()>=4){var row=rows.get(3);child=new InstallationHostGuard.ProcessIdentity((UUID)row.get("child_instance_id"),((Number)row.get("child_pid")).longValue(),((java.sql.Timestamp)row.get("child_started_at")).toInstant());}
             if(rows.size()>=5){
@@ -209,7 +221,7 @@ final class NarrowContentFetchLaunch {
         command.verify(guard,owner,guard.binding().root().relativize(directory).toString(),command.sha256);
         workers.narrowOperationTransaction(guard,owner,()->null);
     }
-    private void phase(InstallationHostGuard guard,WorkerRepository.Owner owner,UUID operation,String phase,StrictFetchLaunchRuntime runtime,InstallationHostGuard.ProcessIdentity child,String digest){
+    private void phase(InstallationHostGuard guard,WorkerRepository.Owner owner,UUID operation,String phase,ContentFetchLaunchRuntime runtime,InstallationHostGuard.ProcessIdentity child,String digest){
         workers.narrowOperationTransaction(guard,owner,()->{
             require(jdbc.queryForObject("SELECT count(*) FROM ddip_management.content_native_operations WHERE operation_id=? AND attempt_id=?",Long.class,operation,owner.attemptId())==1,WORKER_NOT_READY);
             return jdbc.update("INSERT INTO ddip_management.content_native_launch_phases(operation_id,phase,launch_profile_id,launch_profile_sha256,child_instance_id,child_pid,child_started_at,bootstrap_sha256,candidate_sha256) VALUES (?,?,?,?,?,?,?,?,?)",
@@ -219,9 +231,15 @@ final class NarrowContentFetchLaunch {
     }
     static byte[] packet(byte[] reservation,long pid){
         require(pid>0,RUNTIME_MISMATCH);var facts=PreflightFiles.canonical(reservation,65535);
-        require(facts.get("reservationVersion").intValue()==1 && facts.get("mode").stringValue().equals("FETCH_SOURCE_RESERVATION"),RUNTIME_MISMATCH);
-        var packet=SourceJson.object().put("bootstrapVersion",1).put("mode","FETCH_SOURCE_CANDIDATE").put("childPid",Long.toString(pid));
+        require(facts.get("reservationVersion")!=null && facts.get("reservationVersion").isInt(),RUNTIME_MISMATCH);
+        int version=facts.get("reservationVersion").intValue();
+        require(version==1 || version==2,RUNTIME_MISMATCH);
+        require(facts.get("mode").stringValue().equals(version==1?"FETCH_SOURCE_RESERVATION":"PUBLIC_FETCH_SOURCE_RESERVATION"),RUNTIME_MISMATCH);
+        if(version==1)SourceJson.fields(facts,"reservationVersion","mode","operationId","expected","current","fetch");
+        else SourceJson.fields(facts,"reservationVersion","mode","operationId","expected","current","fetch","publicFetch");
+        var packet=SourceJson.object().put("bootstrapVersion",version).put("mode",version==1?"FETCH_SOURCE_CANDIDATE":"PUBLIC_FETCH_SOURCE_CANDIDATE").put("childPid",Long.toString(pid));
         for(String field:List.of("expected","current","fetch"))packet.set(field,facts.get(field));
+        if(version==2)packet.set("publicFetch",facts.get("publicFetch"));
         byte[] bytes=SourceJson.canonical(packet);require(bytes.length<65536,RUNTIME_MISMATCH);return bytes;
     }
     /** Candidate inventory only, not independent native semantic verification or checkpoint success. */

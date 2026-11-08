@@ -32,35 +32,76 @@ final class StrictContentPipelineRuntime {
         var rows=tx.required(()->jdbc.queryForList("SELECT configuration_bytes,configuration_sha256 FROM ddip_management.content_pipeline_profiles WHERE profile_id=?",id));
         need(rows.size()==1,RUNTIME_MISMATCH);byte[] raw=(byte[])rows.getFirst().get("configuration_bytes");String digest=(String)rows.getFirst().get("configuration_sha256");
         need(digest.equals(SourceJson.sha(raw)),RUNTIME_MISMATCH);var c=PreflightFiles.canonical(raw,65536);
-        SourceJson.fields(c,"strictContentPipelineVersion","runProfileId","runProfileSha256","contentRuntimeId","contentRuntimeSha256",
-                "controlBindingId","strictRuntimeSha256","python","processingRoot","javaHome","modules","versions",
-                "fetchLaunchProfileId","bronzeLaunchProfileId","bronzeVerificationProfileId");
-        var frozen=registered.frozenSelection();var silver=registered.configuration("SILVER");
-        need(c.get("strictContentPipelineVersion").isInt() && c.get("strictContentPipelineVersion").intValue()==1
-                && c.get("runProfileId").equals(frozen.get("executionProfile").get("profileId"))
-                && c.get("runProfileSha256").equals(frozen.get("executionProfile").get("configurationSha256"))
-                && c.get("contentRuntimeId").stringValue().equals(registered.id(NarrowContentRuntimeQualification.Family.CONTENT))
-                && c.get("contentRuntimeSha256").stringValue().equals(registered.digest("CONTENT"))
-                && c.get("controlBindingId").stringValue().equals(guard.binding().id())
-                && c.get("strictRuntimeSha256").stringValue().equals(protocolDigest()),RUNTIME_MISMATCH);
-        for(String key:List.of("python","processingRoot","javaHome"))need(c.get(key).equals(silver.get(key)),RUNTIME_MISMATCH);
-        need(c.get("versions").equals(versions()) && c.get("modules").isObject() && c.get("modules").size()>0 && c.get("modules").size()<=128,RUNTIME_MISMATCH);
-        for(String key:List.of("fetchLaunchProfileId","bronzeLaunchProfileId","bronzeVerificationProfileId"))need(c.get(key).stringValue().matches("[A-Za-z0-9_-]{1,128}"),RUNTIME_MISMATCH);
+        validateRegistration(c,registered.registration(),guard);
+        validateComposition(jdbc,tx,c,registered.registration(),guard.binding());
+        var frozen=registered.frozenSelection();
         var runtime=RssContentRuntime.load(jdbc,tx,guard,registered.run(),frozen,registered.id(NarrowContentRuntimeQualification.Family.CONTENT));
-        StrictFetchLaunchRuntime.load(jdbc,tx,guard,registered,c.get("fetchLaunchProfileId").stringValue());
+        ContentFetchLaunchRuntime.load(jdbc,tx,guard,registered,c.get("fetchLaunchProfileId").stringValue());
         StrictBronzeLaunchRuntime.load(jdbc,tx,guard,registered,c.get("bronzeLaunchProfileId").stringValue());
         StrictBronzeVerificationRuntime.load(jdbc,tx,guard,registered,c.get("bronzeVerificationProfileId").stringValue());
         return new StrictContentPipelineRuntime(id,digest,c,registered,guard,runtime);
     }
+    static void validateRegistration(JsonNode c,NarrowContentRuntimeQualification.Registration registered,InstallationHostGuard guard){
+        need(guard!=null,RUNTIME_MISMATCH);validateRegistration(c,registered,guard.binding());
+    }
+    static void validateRegistration(JsonNode c,NarrowContentRuntimeQualification.Registration registered,InstallationHostGuard.Binding binding){
+        try{
+            int version=ContentFetchLaunchRuntime.version(c,"strictContentPipelineVersion");
+            var fields=new ArrayList<>(List.of("strictContentPipelineVersion","runProfileId","runProfileSha256","contentRuntimeId","contentRuntimeSha256",
+                    "controlBindingId","strictRuntimeSha256","python","processingRoot","javaHome","modules","versions",
+                    "fetchLaunchProfileId","bronzeLaunchProfileId","bronzeVerificationProfileId"));
+            if(version==2)fields.addAll(List.of("fetchLaunchProfileSha256","bronzeLaunchProfileSha256","bronzeVerificationProfileSha256"));
+            SourceJson.fields(c,fields.toArray(String[]::new));
+            var silver=registered.configuration("SILVER");
+            need(c.get("runProfileId").stringValue().equals(registered.profileId())
+                    && c.get("runProfileSha256").stringValue().equals(registered.profileDigest())
+                    && c.get("contentRuntimeId").stringValue().equals(registered.id(NarrowContentRuntimeQualification.Family.CONTENT))
+                    && c.get("contentRuntimeSha256").stringValue().equals(registered.digest("CONTENT"))
+                    && c.get("controlBindingId").stringValue().equals(binding.id())
+                    && c.get("strictRuntimeSha256").stringValue().equals(protocolDigest()),RUNTIME_MISMATCH);
+            for(String key:List.of("python","processingRoot","javaHome"))need(c.get(key).equals(silver.get(key)),RUNTIME_MISMATCH);
+            need(c.get("versions").equals(versions()) && c.get("modules").isObject() && c.get("modules").size()>0 && c.get("modules").size()<=128,RUNTIME_MISMATCH);
+            for(String key:List.of("fetchLaunchProfileId","bronzeLaunchProfileId","bronzeVerificationProfileId"))need(c.get(key).stringValue().matches("[A-Za-z0-9_-]{1,128}"),RUNTIME_MISMATCH);
+            if(version==2)for(String key:List.of("fetchLaunchProfileSha256","bronzeLaunchProfileSha256","bronzeVerificationProfileSha256"))
+                need(c.get(key).isString() && c.get(key).stringValue().matches("[0-9a-f]{64}"),RUNTIME_MISMATCH);
+        }catch(PreflightFailure ex){throw ex;}catch(RuntimeException ex){throw new PreflightFailure(RUNTIME_MISMATCH);}
+    }
+    /** Complete immutable composition only. Safe for historical reads without any installed executable. */
+    static ContentFetchLaunchRuntime.Profile validateComposition(JdbcTemplate jdbc,ManagementTransactions tx,JsonNode c,
+            NarrowContentRuntimeQualification.Registration registered,InstallationHostGuard.Binding binding){
+        validateRegistration(c,registered,binding);
+        var fetch=ContentFetchLaunchRuntime.registered(jdbc,tx,registered,binding,c.get("fetchLaunchProfileId").stringValue());
+        var bronze=ContentFetchLaunchRuntime.read(jdbc,tx,"content_bronze_launch_profiles","launch_profile_id",c.get("bronzeLaunchProfileId").stringValue());
+        var verifier=ContentFetchLaunchRuntime.read(jdbc,tx,"content_bronze_verification_profiles","verification_profile_id",c.get("bronzeVerificationProfileId").stringValue());
+        int version=ContentFetchLaunchRuntime.version(c,"strictContentPipelineVersion");
+        need(fetch.version()==version && ContentFetchLaunchRuntime.version(bronze.configuration(),"strictBronzeLaunchVersion")==version
+                && ContentFetchLaunchRuntime.version(verifier.configuration(),"strictBronzeVerificationVersion")==version,RUNTIME_MISMATCH);
+        if(version==1){
+            StrictBronzeLaunchRuntime.validateRegistration(bronze.configuration(),registered,binding);
+            StrictBronzeVerificationRuntime.validateRegistration(verifier.configuration(),registered,binding);
+        }else{
+            StrictBronzeLaunchRuntime.validatePublic(bronze.configuration(),registered,binding,fetch);
+            StrictBronzeVerificationRuntime.validatePublic(verifier.configuration(),registered,binding,fetch);
+            need(c.get("fetchLaunchProfileSha256").stringValue().equals(fetch.digest())
+                    && c.get("bronzeLaunchProfileSha256").stringValue().equals(bronze.digest())
+                    && c.get("bronzeVerificationProfileSha256").stringValue().equals(verifier.digest()),RUNTIME_MISMATCH);
+        }
+        return fetch;
+    }
     static JsonNode versions(){return SourceJson.object().put("python","3.12.15").put("pyspark","4.0.2").put("py4j","0.10.9.9")
             .put("boto3","1.43.114").put("botocore","1.43.114").put("duckdb","1.4.5").put("java","21");}
     /** All required imports, actual interpreter/package versions and full closure must pass before FETCH. */
-    void probe(Runnable fence){
-        check();fence.run();
+    void probe(Runnable fence){probe(fence,()->{},()->false);}
+    void probe(Runnable fence,java.util.function.BooleanSupplier stopping){probe(fence,()->{},stopping);}
+    void probe(Runnable fence,Runnable heartbeat,java.util.function.BooleanSupplier stopping){
+        probe(config,environment(),guard,this::check,fence,heartbeat,stopping);
+    }
+    static void probe(JsonNode config,Map<String,String> environment,InstallationHostGuard guard,Runnable check,Runnable fence,Runnable heartbeat,java.util.function.BooleanSupplier stopping){
+        check.run();fence.run();
         String script="import sys,json; sys.path.insert(0,sys.argv[1]); import strict_native_content as n; "
                 +"print(json.dumps({'versions':n.runtime_probe(),'modules':list(n.MODULES)},sort_keys=True,separators=(',',':')),end='')";
-        var observed=ReadOnlyVerifierProcess.receiptReader().run(command(script),environment(),guard.binding().root(),Duration.ofSeconds(30),new ReadOnlyVerifierProcess.Observer(){
-            public void beforeStart(){check();fence.run();}public void started(InstallationHostGuard.ProcessIdentity child){fence.run();}public void heartbeat(){check();fence.run();}
+        var observed=ReadOnlyVerifierProcess.receiptReader(stopping).run(probeCommand(config,script),environment,guard.binding().root(),Duration.ofSeconds(30),new ReadOnlyVerifierProcess.Observer(){
+            public void beforeStart(){check.run();fence.run();}public void started(InstallationHostGuard.ProcessIdentity child){fence.run();}public void heartbeat(){check.run();fence.run();heartbeat.run();fence.run();}
         });
         need(observed.exitCode()==0 && observed.stderrBytes()==0 && observed.descendants().isEmpty() && observed.stdout()!=null,RUNTIME_MISMATCH);
         var result=PreflightFiles.canonical(observed.stdout(),65536);SourceJson.fields(result,"versions","modules");
@@ -69,7 +110,7 @@ final class StrictContentPipelineRuntime {
         need(actual.equals(expected),RUNTIME_MISMATCH);
         var names=new TreeSet<String>();for(var name:result.get("modules"))need(names.add(name.stringValue()),RUNTIME_MISMATCH);
         need(names.equals(new TreeSet<>(config.get("modules").propertyNames())),RUNTIME_MISMATCH);
-        check();fence.run();
+        check.run();fence.run();
     }
     void check(){nativeRuntime.check();need(pins.equals(observe()),INPUT_CHANGED);}
     private Map<Path,Pin> observe(){
@@ -93,6 +134,7 @@ final class StrictContentPipelineRuntime {
     }
     List<String> command(){return command("import sys; sys.path.insert(0,sys.argv[1]); from strict_native_content import main; sys.argv=sys.argv[:1]; sys.exit(main())");}
     private List<String> command(String script){return List.of(config.get("python").stringValue(),"-I","-B","-X","utf8","-X","pycache_prefix=/dev/null","-c",script,config.get("processingRoot").stringValue());}
+    private static List<String> probeCommand(JsonNode config,String script){return List.of(config.get("python").stringValue(),"-I","-B","-X","utf8","-X","pycache_prefix=/dev/null","-c",script,config.get("processingRoot").stringValue());}
     Map<String,String> environment(){return nativeRuntime.gold.silver.environment();}
     int seconds(String family){return family.equals("BRONZE")?180:registered.configuration(family).get("seconds").intValue();}
 }

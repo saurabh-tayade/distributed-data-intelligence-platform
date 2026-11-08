@@ -28,6 +28,9 @@ public final class NarrowContentFetchReservationTestSupport {
         registerChain(jdbc,profileId,profile,product,null);
     }
     public static void registerChain(JdbcTemplate jdbc,String profileId,ObjectNode profile,String product,tools.jackson.databind.JsonNode fetchManifest){
+        registerChain(jdbc,profileId,profile,product,fetchManifest,true);
+    }
+    public static void registerChain(JdbcTemplate jdbc,String profileId,ObjectNode profile,String product,tools.jackson.databind.JsonNode fetchManifest,boolean testEndpoint){
         var fixture=new NarrowContentRuntimeQualificationTest.Fixture();
         String deployment=fetchManifest==null?fixture.deployment:SourceJson.sha(SourceJson.canonical(fetchManifest));
         if(fetchManifest!=null){
@@ -40,7 +43,7 @@ public final class NarrowContentFetchReservationTestSupport {
         String hash=NarrowContentRuntimeQualificationTest.sha(profile);
         var bindings=new HashMap<String,String>();
         for(var row:jdbc.queryForList("SELECT binding_id,role FROM ddip_management.storage_bindings WHERE product=?",product))bindings.put((String)row.get("role"),(String)row.get("binding_id"));
-        var fetch=fixture.configs.get("fetch");fetch.put("runProfileId",profileId).put("runProfileSha256",hash).put("controlBindingId",bindings.get("CONTROL"));
+        var fetch=fixture.configs.get("fetch");fetch.put("testEndpoint",testEndpoint).put("runProfileId",profileId).put("runProfileSha256",hash).put("controlBindingId",bindings.get("CONTROL"));
         var bronze=fixture.configs.get("bronze");bronze.put("runProfileId",profileId).put("runProfileSha256",hash).put("controlBindingId",bindings.get("CONTROL")).put("storageBindingId",bindings.get("BRONZE")).put("storageBindingSha256",jdbc.queryForObject("SELECT configuration_sha256 FROM ddip_management.storage_bindings WHERE binding_id=?",String.class,bindings.get("BRONZE")));
         fixture.configs.get("silver").put("runProfileSha256",hash).put("outputBindingId",bindings.get("SILVER")).put("tempBindingId",bindings.get("TEMP"));
         fixture.configs.get("gold").put("goldBindingId",bindings.get("GOLD"));

@@ -39,7 +39,7 @@ class NarrowContentFetchCompletionIT extends NarrowContentFetchLaunchFixtures {
     @Test void populatedVersionThirteenUpgradePreservesCandidateWithoutCompletionBackfill()throws Exception{
         versionThirteen=true;closeServer();setup();candidate();var before=metadata();var launch=facts();var files=filesystem();
         var migration=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();
-        assertThat(migration.migrate().migrationsExecuted).isEqualTo(9);new SchemaLifecycle(migration,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(false);
+        assertThat(migration.migrate().migrationsExecuted).isEqualTo(10);new SchemaLifecycle(migration,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(false);
         assertThat(metadataBeforeRecoveryPolicyUpgrade()).isEqualTo(before);assertThat(facts()).isEqualTo(launch);assertThat(filesystem()).isEqualTo(files);
         assertThat(count("content_fetch_completion_intents")).isZero();assertThat(count("content_fetch_checkpoints")).isZero();assertThat(checkpoint()).isEmpty();retained();
     }
@@ -50,14 +50,14 @@ class NarrowContentFetchCompletionIT extends NarrowContentFetchLaunchFixtures {
         var intents=jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_fetch_completion_intents t",String.class);
         var migrations=jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IS NOT NULL ORDER BY installed_rank");
         var migration=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();
-        assertThat(migration.migrate().migrationsExecuted).isEqualTo(8);
+        assertThat(migration.migrate().migrationsExecuted).isEqualTo(9);
         new SchemaLifecycle(migration,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(false);
-        assertThat(migration.info().current().getVersion().getVersion()).isEqualTo("22");
+        assertThat(migration.info().current().getVersion().getVersion()).isEqualTo("23");
         assertThat(metadataBeforeRecoveryPolicyUpgrade()).isEqualTo(before);assertThat(facts()).isEqualTo(launch);
         assertThat(checkpoint()).isEqualTo(durable);assertThat(filesystem()).isEqualTo(files);
         assertThat(jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_fetch_checkpoints t",String.class)).isEqualTo(checkpoints);
         assertThat(jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_fetch_completion_intents t",String.class)).isEqualTo(intents);
-        assertThat(jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IS NOT NULL AND version NOT IN ('15','16','17','18','19','20','21','22') ORDER BY installed_rank")).isEqualTo(migrations);
+        assertThat(jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IS NOT NULL AND version NOT IN ('15','16','17','18','19','20','21','22','23') ORDER BY installed_rank")).isEqualTo(migrations);
         assertThat(count("content_fetch_recovery_handoffs")).isZero();assertThat(requests).hasValue(1);retained();
     }
     @Test void freshCompletionWritesOnlyNativeMarkerAndImmutableReceipt()throws Exception{

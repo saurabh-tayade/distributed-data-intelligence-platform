@@ -28,7 +28,17 @@
   </dependencies>
   <build>
     <plugins>
-      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-resources-plugin</artifactId><version>3.5.0</version></plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-resources-plugin</artifactId><version>3.5.0</version>
+        <executions><execution><id>public-fetch-provider-resources</id><phase>prepare-package</phase><goals><goal>copy-resources</goal></goals>
+          <configuration><outputDirectory>${project.build.directory}/public-fetch-provider</outputDirectory><resources>
+            <resource><directory>${project.build.outputDirectory}</directory><filtering>false</filtering><includes>
+              <include>platform/ingestion/managed/PublicFetchResolverProvider*.class</include>
+              <include>platform/ingestion/managed/PublicFetchAddressPolicy*.class</include>
+            </includes></resource>
+            <resource><directory>src/public-fetch-resources</directory><filtering>false</filtering></resource>
+          </resources></configuration>
+        </execution></executions>
+      </plugin>
       <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.16.0</version>
         <configuration><compilerArgs><arg>-Xlint:all</arg><arg>-Werror</arg></compilerArgs></configuration>
       </plugin>
@@ -39,7 +49,17 @@
           <configuration><includeScope>runtime</includeScope></configuration>
         </execution></executions>
       </plugin>
-      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-jar-plugin</artifactId><version>3.5.1</version></plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-jar-plugin</artifactId><version>3.5.1</version>
+        <executions>
+          <execution><id>default-jar</id><configuration><excludes>
+            <exclude>platform/ingestion/managed/PublicFetchResolverProvider*.class</exclude>
+            <exclude>platform/ingestion/managed/PublicFetchAddressPolicy*.class</exclude>
+          </excludes></configuration></execution>
+          <execution><id>public-fetch-provider</id><goals><goal>jar</goal></goals><configuration>
+            <classifier>public-fetch-provider</classifier><classesDirectory>${project.build.directory}/public-fetch-provider</classesDirectory>
+          </configuration></execution>
+        </executions>
+      </plugin>
     </plugins>
   </build>
   <profiles>

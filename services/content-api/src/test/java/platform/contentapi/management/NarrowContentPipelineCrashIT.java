@@ -9,7 +9,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import platform.contentapi.execution.*;
 import static org.assertj.core.api.Assertions.*;
 
-/** Abrupt real worker death, not a caught exception in the fixture's JVM. */
+/** Isolated loopback chain with abrupt real worker death, not a caught fixture exception. */
 class NarrowContentPipelineCrashIT extends NarrowContentPipelineFixtures {
     @ParameterizedTest
     @CsvSource({
@@ -67,7 +67,7 @@ class NarrowContentPipelineCrashIT extends NarrowContentPipelineFixtures {
         var history=new RunHistoryRepository(jdbc,tx,new SourceCursor(SourceFixtures.KEY));
         var facts=history.nativeOperations(run.toString(),attempt.toString(),100,null).data();
         assertThat(facts).isNotEmpty();for(var fact:facts)assertThat(fact.get("continuationAuthorized").booleanValue()).isFalse();
-        assertThat(history()).isEqualTo(before);assertThat(NarrowContentPipelineTestSupport.ordinaryContentDispatchAvailable()).isFalse();
+        assertThat(history()).isEqualTo(before);assertThat(NarrowContentPipelineTestSupport.legacyCapabilitiesDispatchContent()).isFalse();
         guard=InstallationHostGuard.acquire(binding);workers=WorkerTestSupport.enabled(jdbc,tx,INSTALL);
         session=workers.register(guard,CONTENT_PROFILE,digest(CONTENT_PROFILE),NarrowContentFetchReservationTestSupport.deploymentDigest(jdbc,CONTENT_PROFILE));
         if(!success){

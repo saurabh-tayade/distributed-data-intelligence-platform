@@ -80,7 +80,9 @@ final class NarrowContentFetchCandidateVerification {
         require(launch.launchProfileSha256().equals(configuration.get("configuration_sha256"))
                 && launch.launchProfileSha256().equals(SourceJson.sha(bytes)),RUNTIME_MISMATCH);
         // Registered correspondence only: no requirement that an old installed runtime remains present.
-        StrictFetchLaunchRuntime.validate(PreflightFiles.canonical(bytes,65536),registered,guard.binding());
+        var profile=ContentFetchLaunchRuntime.registered(jdbc,tx,registered.registration(),guard.binding(),launch.launchProfileId());
+        require(profile.digest().equals(launch.launchProfileSha256()),RUNTIME_MISMATCH);
+        ContentFetchLaunchRuntime.validateSelection(profile,registered,guard.binding());
         return new Facts(ready,payload,launch);
     }
     private static Inventory inventory(NarrowContentEvidenceContext context,InstallationHostGuard guard,Path directory,Facts facts){

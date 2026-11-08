@@ -90,7 +90,7 @@ flowchart LR
 | content_postgres_content_recovery | Content recovery, explicit RESUME and inherited recovery integration | 90 minutes |
 | content_postgres_native_fetch_recovery | Native FETCH launch, completion, verification and recovery integration; operator adapter smoke first | 90 minutes |
 | content_postgres_native_bronze | Native Bronze reservation, launch, completion and checkpoint integration | 90 minutes |
-| content_postgres_native_publication | Native Silver reservation, original managed publication and submission discovery integration | 90 minutes |
+| content_postgres_native_publication | Native Silver reservation, original managed publication, submission discovery and read-only worker startup integration | 90 minutes |
 | content_postgres_native_pipeline_recovery | Native current-pipeline crash, restart, assessment, pressure and safe-end integration | 90 minutes |
 | content_postgres | Original PostgreSQL check; requires every selected partition to succeed | 5 minutes |
 | analytics_http | Fresh Gold, Reliability and Content fixtures; Content API units; GoldApiIT, ReliabilityApiIT and ContentApiIT HTTP/native compatibility; generated Content and Reliability envelopes through actual frontend parsers | 15 minutes |
@@ -129,27 +129,37 @@ with positive test counts and no failures, errors or skips. This guards selectio
 well as test success. [PR #72 evidence](pr72-postgres-partitions.md) records all class assignments,
 hosted timing inputs, local measurements, commands and remaining hosted acceptance requirements.
 
-The current inventory is **core=14, reliability=7, ingestion=3, gold=3,
-content_recovery=3, native_fetch_recovery=11, native_bronze=5, native_publication=5,
-native_pipeline_recovery=7 (58 total)**.
+The current inventory is **core=18, reliability=7, ingestion=3, gold=3,
+content_recovery=3, native_fetch_recovery=13, native_bronze=6, native_publication=6,
+native_pipeline_recovery=7 (66 total)**.
 Gold contains `RssGoldIT`, `RssContentIT` and
 `ContentFinalizationIT`. Content recovery contains `ContentRecoveryIT`, `ContentResumeIT` and
 `ContentInheritedRecoveryIT`; their native cases retain separate original/resumed worker processes,
 real storage and PostgreSQL restart coverage. No integration class or case is removed or weakened.
 
-The native FETCH partition contains the eleven `NarrowContentFetch*IT` classes in the inventory.
+The native FETCH partition contains the eleven `NarrowContentFetch*IT` classes and two public
+release/checkpoint historical-validation classes in the inventory.
 It runs the complete `NarrowContentFetchOperatorIT` adapter suite in an isolated Maven invocation
-first, then runs the ten remaining suites. These selections are disjoint and cover the complete
+first, then runs the twelve remaining suites. These selections are disjoint and cover the complete
 partition. No `clean` or report deletion occurs between invocations: the final XML coverage check
-requires successful reports from all eleven classes, including the initial smoke. A smoke failure
+requires successful reports from all thirteen classes, including the initial smoke. A smoke failure
 stops the job immediately; a missing smoke report fails the final check. Unit tests still run only
-in core. The former partial checkpoint/assessment warm-up is replaced by this full-class smoke;
+in core. The public profile and public history classes are metadata-only, offline checks in core.
+The two ordinary-worker lifecycle classes also run in core. They use installed artifacts and
+production catalog loading, with a separate database tripwire that prevents native network launch.
+Public history fixtures validate recorded formats and authority boundaries; they do not constitute
+a successful public FETCH. The standalone public-network qualification harness is opt-in, has no
+JUnit entrypoint, and is not part of ordinary CI.
+The former partial checkpoint/assessment warm-up is replaced by this full-class smoke;
 all checkpoint and assessment cases remain in the required remaining selection.
 
-The native Bronze partition contains five `NarrowContentBronze*IT` classes, including SQL
+The native Bronze partition contains five `NarrowContentBronze*IT` classes plus the public
+Bronze historical-validation class, including SQL
 checkpoint coverage. Native publication contains `NarrowContentSilverReservationIT`,
-`NarrowContentSilverReservationSqlIT`, `NarrowContentPipelineIT`, `NarrowContentPipelineSqlIT`
-and `NarrowContentSubmissionDiscoveryIT`. Native pipeline recovery contains `NarrowContentPressureIT`,
+`NarrowContentSilverReservationSqlIT`, `NarrowContentPipelineIT`, `NarrowContentPipelineSqlIT`,
+`NarrowContentSubmissionDiscoveryIT` and `NarrowContentWorkerStartupIT`. The startup class tests
+run-independent qualification and rejection without enabling ordinary Content dispatch.
+Native pipeline recovery contains `NarrowContentPressureIT`,
 `NarrowContentPipelineCrashIT`, `NarrowContentPipelineRestartIT`,
 `NarrowContentPipelineRecoveryAssessmentIT`, `ContentTerminalSqlIT`, `NarrowContentTerminalIT`
 and `NarrowContentTerminalOperatorIT`. The two selections are disjoint and together retain all twelve

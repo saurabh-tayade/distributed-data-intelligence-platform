@@ -135,7 +135,7 @@ public final class StrictManagedRssFetch {
                 text(node, "runId"), text(node, "attemptId"), text(node, "stage"), node.get("ordinal").intValue(),
                 text(node, "checkpointId"), text(node, "commandSha256"));
     }
-    private static RssSource source(StrictFetchEvidence.Expected expected, JsonNode fetch) throws IOException {
+    static RssSource source(StrictFetchEvidence.Expected expected, JsonNode fetch) throws IOException {
         var source = SourceCatalog.validate(List.of(new RssSource(expected.sourceId(), URI.create(text(fetch, "feedUri")), true))).getFirst();
         ManagedRssFetch.validateEndpoint(source.feedUri(), fetch.get("testEndpoint").booleanValue());
         return source;
@@ -154,7 +154,7 @@ public final class StrictManagedRssFetch {
         finally { if (restoreInterrupt[0]) Thread.currentThread().interrupt(); }
     }
 
-    private static ObjectNode command(Bootstrap bootstrap) throws IOException {
+    static ObjectNode command(Bootstrap bootstrap) throws IOException {
         var w = bootstrap.expected().writer();
         var c = object().put("protocolVersion", 1).put("runId", w.runId()).put("attemptId", w.attemptId())
                 .put("ownerEpoch", w.epoch()).put("stage", "FETCH_SOURCE").put("itemOrdinal", 0)
@@ -198,7 +198,7 @@ public final class StrictManagedRssFetch {
         }
     }
 
-    private static void candidate(StrictFetchEvidence sink, byte[] command, JsonNode c, RssSource source, RawFeed feed) throws Exception {
+    static void candidate(StrictFetchEvidence sink, byte[] command, JsonNode c, RssSource source, RawFeed feed) throws Exception {
         byte[] payload = feed.body(), metadata = S3BronzeStorage.preparedMetadata(source, feed);
         need(payload.length <= HttpFeedFetcher.DEFAULT_MAX_PAYLOAD_BYTES && metadata.length <= 65536);
         var keys = BronzeKeys.forFeed(feed);
@@ -219,7 +219,7 @@ public final class StrictManagedRssFetch {
         need(Arrays.equals(command, sink.readCommand()));
     }
 
-    private static byte[] result(JsonNode c, String code) throws IOException {
+    static byte[] result(JsonNode c, String code) throws IOException {
         var r = object();
         for (String key : List.of("protocolVersion", "runId", "attemptId", "stage", "itemOrdinal")) r.set(key, c.get(key));
         r.put("status", code == null ? "OK" : "FAILED");
