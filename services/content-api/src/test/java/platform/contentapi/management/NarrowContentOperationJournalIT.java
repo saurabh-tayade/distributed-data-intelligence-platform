@@ -22,6 +22,7 @@ class NarrowContentOperationJournalIT extends NarrowContentAdmissionFixtures {
         if(!versionTen){super.migrateFixtureSchema();return;}
         org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").target("10").load().migrate();
         new JdbcCoordinatorRepository(jdbc,tx,INSTALL).initialize();
+        historicalSubmissionForSchema(10);
     }
     @BeforeEach void operationId(){operation=UUID.randomUUID();}
     @AfterEach void currentSchema(){versionTen=false;}
@@ -209,7 +210,7 @@ class NarrowContentOperationJournalIT extends NarrowContentAdmissionFixtures {
         else assertThatThrownBy(()->NarrowContentAdmissionTestSupport.prepare(jdbc,tx,workers,guard,owner,b->{if(b.equals("PREPARING_COMMITTED"))throw new IllegalStateException("TEST_BOUNDARY");})).hasMessage("TEST_BOUNDARY");
         var metadata=metadata();var files=filesystem();
         var migration=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();
-        assertThat(migration.migrate().migrationsExecuted).isEqualTo(10);
+        assertThat(migration.migrate().migrationsExecuted).isEqualTo(11);
         new SchemaLifecycle(migration,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(false);
         assertThat(metadataBeforeRecoveryPolicyUpgrade()).isEqualTo(metadata);assertThat(filesystem()).isEqualTo(files);
         assertThat(count("content_operations")).isZero();assertThat(count("content_operation_phases")).isZero();

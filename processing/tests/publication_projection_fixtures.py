@@ -60,7 +60,10 @@ def content_command(args, prepared, gold, verification):
         inputs=[dict(artifactId=item['artifactId'], evidenceSha256=item['evidenceSha256']) for item in gold['inputs']],
         verification=verification)
     proof = dict(artifactId=ID, evidenceSha256=sha256(canonical_bytes(artifact)).hexdigest(), artifact=artifact, command=gold)
-    command = common(prepared, config) | dict(goldProof=proof, reference=measurement.reference_fixture(args, canonical_bytes),
+    reference = measurement.reference_fixture(args, canonical_bytes)
+    # The persisted catalog's native identity is distinct from its fingerprint.
+    reference['nativeIdentity'] = canonical_bytes(reference['qualification']['selection']['identity']).decode('utf-8')
+    command = common(prepared, config) | dict(goldProof=proof, reference=reference,
         referenceBindingId='reference', referenceBinding=measurement.binding(args['reference_root']),
         content=measurement.binding(args['output_root']))
     return command, config

@@ -24,6 +24,11 @@ final class NarrowContentSilverReservation {
         this.jdbc=Objects.requireNonNull(jdbc);this.tx=Objects.requireNonNull(tx);this.workers=Objects.requireNonNull(workers);workers.requireAdmissionRepository(jdbc,tx);
     }
     Facts reserve(InstallationHostGuard guard,NarrowContentBronzeCompletion.LiveCheckpoint live,UUID operation,Consumer<Boundary> fault){
+        return reserveThen(guard,live,operation,fault,owner->inspect(jdbc,tx,operation));
+    }
+    /** Acknowledged one-use live callback; the immutable reservation itself stays non-launchable. */
+    <T>T reserveThen(InstallationHostGuard guard,NarrowContentBronzeCompletion.LiveCheckpoint live,UUID operation,
+            Consumer<Boundary> fault,java.util.function.Function<WorkerRepository.Owner,T> successor){
         require(guard!=null && live!=null && operation!=null && !operation.equals(live.operation()) && fault!=null
                 && !TransactionSynchronizationManager.isActualTransactionActive(),WORKER_CONFIGURATION_INVALID);
         UUID bronze=live.operation();var owner=live.consume(bronze);
@@ -44,7 +49,7 @@ final class NarrowContentSilverReservation {
             fault.accept(Boundary.INSERTED);return null;
         });
         // No acknowledgement retry or readback restores this consumed live channel.
-        fault.accept(Boundary.RESERVED);return inspect(jdbc,tx,operation);
+        fault.accept(Boundary.RESERVED);live.check();return successor.apply(owner);
     }
     private void unconsumed(UUID attempt){require(jdbc.queryForObject("SELECT count(*) FROM ddip_management.content_silver_reservations WHERE attempt_id=?",Long.class,attempt)==0,WORKER_NOT_READY);}
     static Facts inspect(JdbcTemplate jdbc,ManagementTransactions tx,UUID operation){

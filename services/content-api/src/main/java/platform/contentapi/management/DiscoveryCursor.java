@@ -16,11 +16,12 @@ final class DiscoveryCursor {
         if(token==null)return new Position(null,now+LIFETIME_SECONDS);
         JsonNode n=signer.decode(token);SourceJson.fields(n,"v","kind","scope","after","expires");
         require(SourceJson.integer(n.get("v"))==1 && SourceJson.text(n.get("kind")).equals(endpoint) && SourceJson.text(n.get("scope")).equals(scope));
-        String after=SourceCommands.uuid(SourceJson.text(n.get("after")));long expires=RunPageCursor.number(n.get("expires"));
+        String after=identifier(endpoint,SourceJson.text(n.get("after")));long expires=RunPageCursor.number(n.get("expires"));
         require(now<expires && expires<=now+LIFETIME_SECONDS);return new Position(after,expires);
     }
     String next(String endpoint,String scope,Position p,String after) {
-        SourceCommands.uuid(after);
+        identifier(endpoint,after);
         return signer.encode(SourceJson.object().put("v",1).put("kind",endpoint).put("scope",scope).put("after",after).put("expires",Long.toString(p.expires())));
     }
+    private static String identifier(String endpoint,String after){return endpoint.equals("execution-profile-sources")?SourceCommands.source(after):SourceCommands.uuid(after);}
 }

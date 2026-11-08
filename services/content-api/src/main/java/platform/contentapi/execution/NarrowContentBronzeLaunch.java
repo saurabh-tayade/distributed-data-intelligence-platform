@@ -72,6 +72,15 @@ final class NarrowContentBronzeLaunch {
         return launchThen(guard,owner,fetchOperation,operation,launchProfile,b->{},current->
                 new NarrowContentBronzeCompletion(jdbc,tx,workers).completeAndReserveSilver(guard,current,verificationProfile,silverOperation,completionFault,fault));
     }
+    /** Same live call only; the callback is never reconstructed from a reservation or candidate fact. */
+    <T>T originalPipeline(InstallationHostGuard guard,WorkerRepository.Owner owner,UUID fetch,UUID operation,
+            String launchProfile,String verificationProfile,java.util.function.Function<NarrowContentBronzeCompletion.LiveCheckpoint,T> successor){
+        return launchThen(guard,owner,fetch,operation,launchProfile,b->{},candidate->{
+            var result=new java.util.concurrent.atomic.AtomicReference<T>();
+            new NarrowContentBronzeCompletion(jdbc,tx,workers).completeThen(guard,candidate,verificationProfile,b->{},live->result.set(successor.apply(live)));
+            require(result.get()!=null,OWNERSHIP_LOST);return result.get();
+        });
+    }
     private <T>T launchThen(InstallationHostGuard guard,WorkerRepository.Owner owner,UUID fetchOperation,UUID operation,
             String launchProfile,Consumer<Boundary> fault,java.util.function.Function<LiveCandidate,T> finish){
         require(guard!=null && owner!=null && operation!=null && fetchOperation!=null && !operation.equals(fetchOperation) && fault!=null,WORKER_CONFIGURATION_INVALID);

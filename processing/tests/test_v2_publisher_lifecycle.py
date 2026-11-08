@@ -72,6 +72,15 @@ class ContentLifecycleV2Test(unittest.TestCase):
     def verify(self):
         return publisher.verify_publication_v2(None, self.bound, expectations=self.expected)
 
+    def test_strict_fresh_requirement_rejects_raced_completed_namespace_without_adoption(self):
+        self.template.rename(self.directory)
+        before = snapshot(self.base)
+        with patch.object(publisher, '_actual', side_effect=AssertionError('existing output was adopted')):
+            with self.assertRaises(m.ContentFailure) as caught:
+                publisher.publish_v2(None, self.bound, expectations=self.expected, require_fresh=True)
+        self.assertEqual(caught.exception.code, 'PUBLICATION_CHANGED')
+        self.assertEqual(snapshot(self.base), before)
+
     def assert_incomplete(self):
         self.assertTrue((self.directory / 'complete.tmp').is_file())
         self.assertFalse((self.directory / 'complete.json').exists())
@@ -269,6 +278,15 @@ class GoldLifecycleV2Test(unittest.TestCase):
 
     def publish(self): return self.publisher.publish_v2(None, self.bound, expectations=self.expected)
     def verify(self): return self.publisher.verify_publication_v2(None, self.bound, expectations=self.expected)
+
+    def test_strict_fresh_requirement_rejects_raced_completed_namespace_without_adoption(self):
+        self.template.rename(self.directory)
+        before = snapshot(self.base)
+        with patch.object(self.publisher, '_actual', side_effect=AssertionError('existing output was adopted')):
+            with self.assertRaises(m.ContentFailure) as caught:
+                self.publisher.publish_v2(None, self.bound, expectations=self.expected, require_fresh=True)
+        self.assertEqual(caught.exception.code, 'PUBLICATION_CHANGED')
+        self.assertEqual(snapshot(self.base), before)
 
     def test_native_analytics_actual_projection_and_readonly_replay(self):
         with patch.object(self.publisher, '_actual', wraps=self.publisher._actual) as actual:

@@ -105,14 +105,17 @@ def verify_publication_v2(spark, bound, *, expectations):
     return actual
 
 
-def publish_v2(spark, bound, *, expectations):
+def publish_v2(spark, bound, *, expectations, require_fresh=False):
     """Return only actual verification, after complete projected and actual checks.
 
     Any failure retains artifacts. A post-rename failure never removes or demotes
     native completion; callers must use read-only reconciliation, not retry writes.
     This library does not own or report Spark shutdown and emits no result sidecar.
+    A strict original-run caller may require_fresh to reject a completed namespace
+    observed inside reservation, including one appearing after its prelaunch check.
     """
     context = _context(bound, expectations)
+    m.need(type(require_fresh) is bool, 'ARGUMENT_INVALID')
     command = context.bound.value()
     root, identity = life.roots(command)
     inputs = _load_inputs(spark, command)
@@ -122,6 +125,7 @@ def publish_v2(spark, bound, *, expectations):
     try:
         existing, guards = life.reserve(root, directory, identity)
         if existing:
+            m.need(not require_fresh, 'PUBLICATION_CHANGED')
             actual = _actual(command, inputs)
             life.qualify(context.bound, actual)
             _check_inputs(command, inputs)

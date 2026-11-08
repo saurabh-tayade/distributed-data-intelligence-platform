@@ -40,13 +40,6 @@
     "platform.contentapi.execution.ContentInheritedRecoveryIT"
   ],
   "native_fetch_recovery": [
-    "platform.contentapi.management.NarrowContentBronzeReservationIT",
-    "platform.contentapi.management.NarrowContentBronzeLaunchIT",
-    "platform.contentapi.management.NarrowContentBronzeLaunchSqlIT",
-    "platform.contentapi.management.NarrowContentBronzeCompletionIT",
-    "platform.contentapi.management.NarrowContentBronzeCheckpointSqlIT",
-    "platform.contentapi.management.NarrowContentSilverReservationIT",
-    "platform.contentapi.management.NarrowContentSilverReservationSqlIT",
     "platform.contentapi.management.NarrowContentFetchOperatorIT",
     "platform.contentapi.management.NarrowContentFetchRecoveryCompositionIT",
     "platform.contentapi.management.NarrowContentFetchRecoveryFinalizationIT",
@@ -58,5 +51,19 @@
     "platform.contentapi.management.NarrowContentFetchCandidateVerificationRecoveryIT",
     "platform.contentapi.management.NarrowContentFetchLaunchIT",
     "platform.contentapi.management.NarrowContentFetchLaunchRecoveryIT"
+  ],
+  "native_bronze": [
+    "platform.contentapi.management.NarrowContentBronzeReservationIT",
+    "platform.contentapi.management.NarrowContentBronzeLaunchIT",
+    "platform.contentapi.management.NarrowContentBronzeLaunchSqlIT",
+    "platform.contentapi.management.NarrowContentBronzeCompletionIT",
+    "platform.contentapi.management.NarrowContentBronzeCheckpointSqlIT"
+  ],
+  "native_publication": [
+    "platform.contentapi.management.NarrowContentSilverReservationIT",
+    "platform.contentapi.management.NarrowContentSilverReservationSqlIT",
+    "platform.contentapi.management.NarrowContentPipelineIT",
+    "platform.contentapi.management.NarrowContentPipelineSqlIT",
+    "platform.contentapi.management.NarrowContentSubmissionDiscoveryIT"
   ]
 }
