@@ -42,6 +42,13 @@ public final class RunRepository {
             readiness(slots.getFirst());capacity();
             var profile=jdbc.queryForList("SELECT configuration_bytes,configuration_sha256 FROM ddip_management.execution_profiles WHERE profile_id=?",c.profileId());
             require(profile.size()==1);var p=profile.getFirst();JsonNode config=RunProfile.validate(canonical((byte[])p.get("configuration_bytes"),(String)p.get("configuration_sha256")),c);
+            // The separate strict registration narrows new submissions only. Historical v1/v2
+            // profiles and idempotent replays retain their original submission contract.
+            if(c.content()) {
+                var strict=jdbc.queryForList("SELECT profile_id FROM ddip_management.content_pipeline_profiles WHERE convert_from(configuration_bytes,'UTF8')::jsonb->>'runProfileId'=? LIMIT 2",String.class,c.profileId());
+                if(strict.size()>1)throw new SourceFailure(STATE_CONFLICT);
+                if(!strict.isEmpty())require(c.sources().size()==1 && c.artifacts().isEmpty());
+            }
             var frozen=SourceJson.object().put("selectionVersion",1).put("pipeline",c.pipeline()).put("pipelineVersion",1).put("productId",c.product()).put("principalScope","local-operator").put("triggerType","OPERATOR");
             var runtime=frozen.putObject("executionProfile").put("profileId",c.profileId()).put("configurationSha256",(String)p.get("configuration_sha256"));runtime.set("configuration",config);
             var storage=storage(c);var bs=frozen.putArray("storageBindings");storage.values().forEach(bs::add);

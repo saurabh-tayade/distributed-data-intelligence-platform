@@ -207,12 +207,19 @@ def _reference(reference, binding_id):
         _equal(reference[key], selection[key])
     for key in ('contractVersion', 'processorRevision'):
         _need(type(reference[key]) is int and reference[key] == 1)
-    _hash(reference['nativeIdentity'])
-    _need(reference['nativeIdentity'] == selection['fingerprint']
+    # ImportCatalog.Entry.nativeIdentity is the canonical catalog identity JSON,
+    # not the publication fingerprint. Preserve the frozen value exactly rather
+    # than rewriting it or accepting semantically equivalent noncanonical text.
+    for value in selection['identity'].values():
+        _text(value)
+    _text(reference['nativeIdentity']); _hash(selection['fingerprint'])
+    _need(reference['nativeIdentity'] == _bytes(selection['identity']).decode('utf-8')
           and reference['storageBindingId'] == binding_id and reference['evidenceSha256'] == _digest(q))
     _fields(q['verification'], 'evidenceVersion native capture')
     _need(type(q['verification']['evidenceVersion']) is int and q['verification']['evidenceVersion'] == 1)
     _fields(q['verification']['native'], 'verifier fingerprint rowCount csvSchemaVersion validatorRevision dependencies')
+    _hash(q['verification']['native']['fingerprint'])
+    _need(q['verification']['native']['fingerprint'] == selection['fingerprint'])
     _fields(q['verification']['capture'], 'files directories guards completionBase64')
 
 

@@ -11,7 +11,7 @@ import re
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
-GROUPS = ('core', 'reliability', 'ingestion', 'gold', 'content_recovery', 'native_fetch_recovery')
+GROUPS = ('core', 'reliability', 'ingestion', 'gold', 'content_recovery', 'native_fetch_recovery', 'native_bronze', 'native_publication')
 INCLUDES = ['**/IT*.java', '**/*IT.java', '**/*ITCase.java']
 HTTP_CLASSES = ('platform.contentapi.GoldApiIT', 'platform.contentapi.ReliabilityApiIT', 'platform.contentapi.ContentApiIT')
 HTTP_EXCLUDES = ['**/' + name.rsplit('.', 1)[1] + '.java' for name in HTTP_CLASSES]
@@ -28,7 +28,7 @@ def inventory(root=ROOT):
             result[k] = v
         return result
     groups = json.loads((root / '.github/ci/postgres-partitions.json').read_text(), object_pairs_hook=unique)
-    if set(groups) != set(GROUPS):
+    if not isinstance(groups, dict) or set(groups) != set(GROUPS):
         raise ValueError('unexpected partition inventory')
     selected = []
     for group in GROUPS:
@@ -81,6 +81,8 @@ def verify_reports(groups, partition, directory):
     cases = 0
     for path in directory.glob('TEST-*.xml'):
         suite = ET.parse(path).getroot()
+        if suite.tag != 'testsuite':
+            raise ValueError('unexpected integration report root')
         full_name = suite.attrib['name']
         name = full_name.split('$', 1)[0]
         if name not in expected:
@@ -89,7 +91,11 @@ def verify_reports(groups, partition, directory):
             raise ValueError('duplicate integration report: ' + full_name)
         suites.add(full_name)
         tests = int(suite.attrib['tests'])
-        if tests <= 0 or len(suite.findall('testcase')) != tests or any(int(suite.attrib.get(k, '0')) for k in ('failures', 'errors', 'skipped')):
+        testcases = suite.findall('testcase')
+        if (tests <= 0 or len(testcases) != tests
+                or any(int(suite.attrib.get(k, '0')) for k in ('failures', 'errors', 'skipped'))
+                or any(case.find(tag) is not None for case in testcases for tag in ('failure', 'error', 'skipped'))
+                or any(case.attrib.get('classname', '').split('$', 1)[0] != name for case in testcases)):
             raise ValueError('incomplete or unsuccessful integration report: ' + name)
         seen.add(name)
         cases += tests

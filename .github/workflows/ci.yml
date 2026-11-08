@@ -71,6 +71,8 @@ jobs:
         run: npm run check:hygiene
       - name: Check complete PostgreSQL integration inventory
         run: python3 .github/ci/postgres_partitions.py
+      - name: Check complete Python processing inventory
+        run: python3 .github/ci/python_partitions.py
       - name: Test CI classification and required gate
         run: python3 -I -B -m unittest discover -s .github/ci/tests -v
       - name: Test local demo safety and analytics isolation
@@ -95,12 +97,12 @@ jobs:
       - name: Check batch launch script arguments without ingestion
         run: bash scripts/test-run-batch.sh
 
-  processing_python:
-    name: Python 3.12 processing, Spark and DuckDB
+  processing_python_core:
+    name: Python 3.12 core processing
     needs: changes
     if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.processing_python != 'false') }}
     runs-on: ubuntu-24.04
-    # Phase 1 main hosted test step: 18m21s; retain the existing timeout.
+    # Each independent execution partition retains the existing 30-minute limit.
     timeout-minutes: 30
     env:
       SPARK_LOCAL_IP: 127.0.0.1
@@ -122,14 +124,81 @@ jobs:
             processing/requirements-analytics.txt
       - name: Install pinned processing dependencies
         run: python -m pip install -r processing/requirements-bronze.txt -r processing/requirements-analytics.txt
-      - name: Run all processing tests with runner JDK 21
+      - name: Verify complete discovery and run the selected processing partition
         run: |
           export JAVA_HOME="$JAVA_HOME_21_X64"
           export PATH="$JAVA_HOME/bin:$PATH"
           export PYSPARK_PYTHON="$(command -v python)"
           python --version
           java -version
-          python -m unittest discover -s processing/tests -v
+          python .github/ci/python_partitions.py --partition core --run
+
+  processing_python_reliability:
+    name: Python 3.12 Reliability processing
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.processing_python != 'false') }}
+    runs-on: ubuntu-24.04
+    # Each independent execution partition retains the existing 30-minute limit.
+    timeout-minutes: 30
+    env:
+      SPARK_LOCAL_IP: 127.0.0.1
+      TZ: UTC
+      PYTHONPATH: processing
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12.15'
+          cache: pip
+          cache-dependency-path: |
+            processing/requirements.txt
+            processing/requirements-bronze.txt
+            processing/requirements-analytics.txt
+      - name: Install pinned processing dependencies
+        run: python -m pip install -r processing/requirements-bronze.txt -r processing/requirements-analytics.txt
+      - name: Verify complete discovery and run the selected processing partition
+        run: |
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          export PYSPARK_PYTHON="$(command -v python)"
+          python --version
+          java -version
+          python .github/ci/python_partitions.py --partition reliability --run
+
+  processing_python:
+    name: Python 3.12 processing, Spark and DuckDB
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs: [changes, processing_python_core, processing_python_reliability]
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.processing_python != 'false') }}
+    steps:
+      - name: Require every selected Python partition
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python3 -I -B - <<'PY'
+          import json
+          import os
+
+          def check_python(needs):
+              partitions = ('processing_python_core', 'processing_python_reliability')
+              if not isinstance(needs, dict) or set(needs) != {'changes', *partitions}:
+                  return False
+              changes = needs['changes']
+              if not isinstance(changes, dict) or changes.get('result') != 'success':
+                  return False
+              outputs = changes.get('outputs')
+              if not isinstance(outputs, dict) or outputs.get('classified') != 'true' or outputs.get('mode') not in ('full', 'selective') or outputs.get('processing_python') != 'true':
+                  return False
+              return all(isinstance(needs[p], dict) and needs[p].get('result') == 'success' for p in partitions)
+
+          if __name__ == '__main__':
+              raise SystemExit(0 if check_python(json.loads(os.environ['NEEDS_JSON'])) else 1)
+          PY
 
   analytics_jdbc:
     name: Java 21 JDBC and Gold fixture compatibility
@@ -214,11 +283,27 @@ jobs:
     with:
       partition: native_fetch_recovery
 
+  content_postgres_native_bronze:
+    name: PostgreSQL native Bronze integration
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.content_postgres != 'false') }}
+    uses: ./.github/workflows/postgres-partition.yml
+    with:
+      partition: native_bronze
+
+  content_postgres_native_publication:
+    name: PostgreSQL native publication integration
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.content_postgres != 'false') }}
+    uses: ./.github/workflows/postgres-partition.yml
+    with:
+      partition: native_publication
+
   content_postgres:
     name: Java 21 PostgreSQL execution and recovery
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    needs: [changes, content_postgres_core, content_postgres_reliability, content_postgres_ingestion, content_postgres_gold, content_postgres_content_recovery, content_postgres_native_fetch_recovery]
+    needs: [changes, content_postgres_core, content_postgres_reliability, content_postgres_ingestion, content_postgres_gold, content_postgres_content_recovery, content_postgres_native_fetch_recovery, content_postgres_native_bronze, content_postgres_native_publication]
     if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.content_postgres != 'false') }}
     steps:
       - name: Require every selected PostgreSQL partition
@@ -230,7 +315,7 @@ jobs:
           import os
 
           def check_postgres(needs):
-              partitions = ('content_postgres_core', 'content_postgres_reliability', 'content_postgres_ingestion', 'content_postgres_gold', 'content_postgres_content_recovery', 'content_postgres_native_fetch_recovery')
+              partitions = ('content_postgres_core', 'content_postgres_reliability', 'content_postgres_ingestion', 'content_postgres_gold', 'content_postgres_content_recovery', 'content_postgres_native_fetch_recovery', 'content_postgres_native_bronze', 'content_postgres_native_publication')
               if not isinstance(needs, dict) or set(needs) != {'changes', *partitions}:
                   return False
               changes = needs['changes']

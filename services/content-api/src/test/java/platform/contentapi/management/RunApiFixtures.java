@@ -50,7 +50,10 @@ abstract class RunApiFixtures {
         catalogFile=temp.resolve("catalog.json");Files.write(catalogFile,SourceJson.canonical(catalog()));
     }
     @AfterAll void cleanup(){close();if(admin!=null)admin.execute("DROP DATABASE "+database+" WITH (FORCE)");}
+    // Explicit old-schema seeding only; every ordinary setup exercises current production admission.
+    int historicalSubmissionVersion;
     @BeforeEach void setup(){
+        historicalSubmissionVersion=0;
         jdbc.execute("DROP SCHEMA IF EXISTS ddip_management CASCADE");migrateFixtureSchema();
         catalog=ReviewedSourceCatalog.from(catalog());sources=new SourceRepository(jdbc,tx,INSTALL,catalog,new SourceCursor(KEY));runs=new RunRepository(jdbc,tx,INSTALL,catalog);
         storage(BRONZE,CONTENT,"BRONZE");storage(BATCH,RELIABILITY,"BATCH");storage(REFS,CONTENT,"REFERENCE");storage(SERVICE_BINDING,RELIABILITY,"REFERENCE");storage(SILVER_BINDING,CONTENT,"SILVER");
@@ -72,7 +75,12 @@ abstract class RunApiFixtures {
     ObjectNode content(){var n=RunCommandsTest.request(true);((ObjectNode)n.get("fetchSources").get(0)).put("sourceId","demo-feed");n.withArray("retainedSilverArtifactIds").add(SILVER);return n;}
     ObjectNode reliability(boolean parquet){var n=RunCommandsTest.request(false).put("executionProfileId",parquet?PARQUET_PROFILE:JSON_PROFILE).put("serviceReferenceArtifactId",SERVICE);((ObjectNode)n.get("sources").get(0)).put("sourceId",parquet?"second-requests":"demo-requests");n.withArray("batchArtifactIds").removeAll().add(parquet?PARQUET_BATCH:JSON_BATCH);return n;}
     RunCommands.Command command(JsonNode n,String key){return RunCommands.parse(SourceJson.canonical(n),key);}
-    JsonNode submit(JsonNode n,String key){return runs.submit(command(n,key),UUID.randomUUID().toString());}
+    void historicalSubmissionForSchema(int version){historicalSubmissionVersion=version;}
+    JsonNode submit(JsonNode n,String key){
+        var parsed=command(n,key);String correlation=UUID.randomUUID().toString();
+        if(historicalSubmissionVersion!=0)return new HistoricalRunSubmissionFixture(jdbc,tx,INSTALL,catalog,historicalSubmissionVersion).submit(parsed,correlation);
+        return runs.submit(parsed,correlation);
+    }
     long count(String table){return jdbc.queryForObject("SELECT count(*) FROM ddip_management."+table,Long.class);}
     void start(){start(new Class<?>[0]);}
     void start(Class<?>... extra){if(context!=null)return;context=new SpringApplicationBuilder(ContentApiApplication.class).sources(extra).run("--ddip.role=api","--server.address=127.0.0.1","--server.port="+port,"--ddip.database.url="+url,"--ddip.database.username="+user,"--ddip.database.password="+password,"--ddip.installation-id="+INSTALL,"--ddip.management.catalog="+catalogFile,"--ddip.management.cursor-key="+KEY,"--ddip.management.origins="+origin,"--logging.level.root=OFF","--spring.main.banner-mode=off");mvc=MockMvcBuilders.webAppContextSetup((WebApplicationContext)context).addFilters(context.getBean(ManagementBoundary.class)).build();}

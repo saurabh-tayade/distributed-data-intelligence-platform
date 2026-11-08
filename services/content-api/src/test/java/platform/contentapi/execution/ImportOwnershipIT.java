@@ -104,7 +104,7 @@ class ImportOwnershipIT {
     }
     @Test void cleanMigrationAndRepeatedValidationRecognizeCurrentVersionAndOperationTables() {
         var schema=new SchemaLifecycle(flyway("latest"),jdbc,coordinator);schema.verify(false);schema.verify(true);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.flyway_schema_history WHERE success AND version IS NOT NULL",Integer.class)).isEqualTo(20);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.flyway_schema_history WHERE success AND version IS NOT NULL",Integer.class)).isEqualTo(21);
         assertThat(count("artifact_import_operations")).isZero();assertThat(coordinator.read().activeImportId()).isNull();
         assertThat(count("content_bronze_reservations")).isZero();assertThat(count("content_attempt_admissions")).isZero();assertThat(count("content_admission_milestones")).isZero();
         assertThat(count("content_operations")).isZero();assertThat(count("content_operation_phases")).isZero();assertThat(count("content_native_operations")).isZero();

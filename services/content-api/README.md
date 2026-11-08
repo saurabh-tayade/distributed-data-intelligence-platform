@@ -1916,3 +1916,8 @@ That historical observation grants no successor, dispatch, restart, recovery or 
 [ADR 0042](../../docs/adr/0042-inactive-native-silver-reservation.md) describes the inactive
 [original-owner Silver reservation](../../docs/operations/narrow-native-silver-reservation.md).
 It does not launch Silver or satisfy the distinct INSPECT_BRONZE/0 prerequisite.
+
+The integrated original-run Content implementation is described in
+[ADR 0043](../../docs/adr/0043-integrated-original-content-pipeline.md) and its
+[operational boundary and native diagnostics](../../docs/operations/integrated-original-content-pipeline.md).
+Normal Content dispatch remains disabled pending the existing restart/recovery qualification gate.

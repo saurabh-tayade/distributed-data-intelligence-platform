@@ -1,4 +1,4 @@
-"""Complete source inventory, actual Maven reports and six-way fail-closed fan-in."""
+"""Complete source inventory, actual Maven reports and eight-way fail-closed fan-in."""
 import importlib.util
 import itertools
 import json
@@ -28,24 +28,31 @@ GOLD = (
     'platform.contentapi.management.ContentFinalizationIT',
 )
 NATIVE_FETCH_RECOVERY = (
-    "platform.contentapi.management.NarrowContentBronzeReservationIT",
-    "platform.contentapi.management.NarrowContentBronzeLaunchIT",
-    "platform.contentapi.management.NarrowContentBronzeLaunchSqlIT",
-    "platform.contentapi.management.NarrowContentBronzeCompletionIT",
-    "platform.contentapi.management.NarrowContentBronzeCheckpointSqlIT",
-    "platform.contentapi.management.NarrowContentSilverReservationIT",
-    "platform.contentapi.management.NarrowContentSilverReservationSqlIT",
-    "platform.contentapi.management.NarrowContentFetchOperatorIT",
-    "platform.contentapi.management.NarrowContentFetchRecoveryCompositionIT",
-    "platform.contentapi.management.NarrowContentFetchRecoveryFinalizationIT",
-    "platform.contentapi.management.NarrowContentFetchRecoveryHandoffIT",
-    "platform.contentapi.management.NarrowContentFetchRecoveryAssessmentIT",
-    "platform.contentapi.management.NarrowContentFetchCompletionIT",
-    "platform.contentapi.management.NarrowContentFetchCompletionRecoveryIT",
-    "platform.contentapi.management.NarrowContentFetchCandidateVerificationIT",
-    "platform.contentapi.management.NarrowContentFetchCandidateVerificationRecoveryIT",
-    "platform.contentapi.management.NarrowContentFetchLaunchIT",
-    "platform.contentapi.management.NarrowContentFetchLaunchRecoveryIT",
+    'platform.contentapi.management.NarrowContentFetchOperatorIT',
+    'platform.contentapi.management.NarrowContentFetchRecoveryCompositionIT',
+    'platform.contentapi.management.NarrowContentFetchRecoveryFinalizationIT',
+    'platform.contentapi.management.NarrowContentFetchRecoveryHandoffIT',
+    'platform.contentapi.management.NarrowContentFetchRecoveryAssessmentIT',
+    'platform.contentapi.management.NarrowContentFetchCompletionIT',
+    'platform.contentapi.management.NarrowContentFetchCompletionRecoveryIT',
+    'platform.contentapi.management.NarrowContentFetchCandidateVerificationIT',
+    'platform.contentapi.management.NarrowContentFetchCandidateVerificationRecoveryIT',
+    'platform.contentapi.management.NarrowContentFetchLaunchIT',
+    'platform.contentapi.management.NarrowContentFetchLaunchRecoveryIT',
+)
+NATIVE_BRONZE = (
+    'platform.contentapi.management.NarrowContentBronzeReservationIT',
+    'platform.contentapi.management.NarrowContentBronzeLaunchIT',
+    'platform.contentapi.management.NarrowContentBronzeLaunchSqlIT',
+    'platform.contentapi.management.NarrowContentBronzeCompletionIT',
+    'platform.contentapi.management.NarrowContentBronzeCheckpointSqlIT',
+)
+NATIVE_PUBLICATION = (
+    'platform.contentapi.management.NarrowContentSilverReservationIT',
+    'platform.contentapi.management.NarrowContentSilverReservationSqlIT',
+    "platform.contentapi.management.NarrowContentPipelineIT",
+    "platform.contentapi.management.NarrowContentPipelineSqlIT",
+    "platform.contentapi.management.NarrowContentSubmissionDiscoveryIT",
 )
 CONTENT_RECOVERY = (
     'platform.contentapi.execution.ContentRecoveryIT',
@@ -137,11 +144,13 @@ class PostgresInventoryTests(unittest.TestCase):
         self.assertEqual(PARTITIONS.inventory(self.root), self.groups)
         self.assertEqual(len(sum(self.groups.values(), [])), len(set(sum(self.groups.values(), []))))
         self.assertEqual({k: len(v) for k, v in self.groups.items()},
-                         dict(core=14, reliability=7, ingestion=3, gold=3, content_recovery=3, native_fetch_recovery=18))
-        self.assertEqual(len(sum(self.groups.values(), [])), 48)
+                         dict(core=14, reliability=7, ingestion=3, gold=3, content_recovery=3, native_fetch_recovery=11, native_bronze=5, native_publication=5))
+        self.assertEqual(len(sum(self.groups.values(), [])), 51)
         self.assertEqual(tuple(self.groups['gold']), GOLD)
         self.assertEqual(tuple(self.groups['content_recovery']), CONTENT_RECOVERY)
         self.assertEqual(tuple(self.groups['native_fetch_recovery']), NATIVE_FETCH_RECOVERY)
+        self.assertEqual(tuple(self.groups['native_bronze']), NATIVE_BRONZE)
+        self.assertEqual(tuple(self.groups['native_publication']), NATIVE_PUBLICATION)
 
     def test_exact_analytics_http_inventory_is_separate(self):
         self.assertEqual(PARTITIONS.HTTP_CLASSES, HTTP_CLASSES)
@@ -188,7 +197,7 @@ class PostgresInventoryTests(unittest.TestCase):
                 path.write_text(original)
 
     def test_gold_and_content_recovery_selectors_are_exact(self):
-        for partition, classes in (('gold', GOLD), ('content_recovery', CONTENT_RECOVERY), ('native_fetch_recovery', NATIVE_FETCH_RECOVERY)):
+        for partition, classes in (('gold', GOLD), ('content_recovery', CONTENT_RECOVERY), ('native_fetch_recovery', NATIVE_FETCH_RECOVERY), ('native_bronze', NATIVE_BRONZE), ('native_publication', NATIVE_PUBLICATION)):
             with self.subTest(partition=partition):
                 result = subprocess.run([sys.executable, '-I', '-B', str(ROOT / '.github/ci/postgres_partitions.py'),
                                          '--partition', partition], check=True, capture_output=True, text=True)
@@ -198,7 +207,7 @@ class PostgresInventoryTests(unittest.TestCase):
         smoke = PARTITIONS.selection(self.groups, 'native_fetch_recovery', 'smoke')
         remaining = PARTITIONS.selection(self.groups, 'native_fetch_recovery', 'remaining')
         self.assertEqual(smoke, [PARTITIONS.NATIVE_SMOKE])
-        self.assertEqual(len(remaining), 17)
+        self.assertEqual(len(remaining), 10)
         self.assertFalse(set(smoke) & set(remaining))
         self.assertCountEqual(smoke + remaining, NATIVE_FETCH_RECOVERY)
         for partition in PARTITIONS.GROUPS:
@@ -256,7 +265,7 @@ class PostgresInventoryTests(unittest.TestCase):
                     self.assertCountEqual(invocations[1].split(','),
                                           PARTITIONS.selection(self.groups, 'native_fetch_recovery', 'remaining'))
                 if not mode:
-                    self.assertIn('18 passing integration cases', result.stdout)
+                    self.assertIn('11 passing integration cases', result.stdout)
 
     def test_missing_or_extra_partition_fails(self):
         path = self.root / '.github/ci/postgres-partitions.json'
@@ -303,7 +312,7 @@ class PostgresInventoryTests(unittest.TestCase):
         return directory
 
     def test_actual_success_reports_cover_exact_selection(self):
-        for partition in ('gold', 'content_recovery', 'native_fetch_recovery'):
+        for partition in PARTITIONS.GROUPS:
             with self.subTest(partition=partition):
                 for name in self.groups[partition]:
                     directory = self.report(name, partition)
@@ -312,7 +321,7 @@ class PostgresInventoryTests(unittest.TestCase):
                 with self.assertRaises(ValueError): PARTITIONS.verify_reports(self.groups, other, directory)
 
     def test_duplicate_and_empty_reports_are_not_completion(self):
-        for partition in ('gold', 'content_recovery', 'native_fetch_recovery'):
+        for partition in PARTITIONS.GROUPS:
             with self.subTest(partition=partition):
                 for name in self.groups[partition]:
                     directory = self.report(name, partition)
@@ -323,8 +332,31 @@ class PostgresInventoryTests(unittest.TestCase):
                 original.write_text('<testsuite name="' + self.groups[partition][0] + '" tests="1"/>')
                 with self.assertRaises(ValueError): PARTITIONS.verify_reports(self.groups, partition, directory)
 
+    def test_malformed_or_contradictory_xml_cannot_claim_success(self):
+        for partition in PARTITIONS.GROUPS:
+            for name in self.groups[partition]:
+                directory = self.report(name, partition)
+            name = self.groups[partition][0]
+            path = directory / ('TEST-' + name + '.xml')
+            for tag in ('failure', 'error', 'skipped'):
+                self.report(name, partition)
+                suite = ET.parse(path).getroot()
+                ET.SubElement(suite.find('testcase'), tag)
+                ET.ElementTree(suite).write(path)
+                with self.assertRaises(ValueError): PARTITIONS.verify_reports(self.groups, partition, directory)
+            for attributes in ({}, {'classname': 'platform.contentapi.UnknownIT'}):
+                self.report(name, partition)
+                suite = ET.parse(path).getroot()
+                suite.find('testcase').attrib = attributes
+                ET.ElementTree(suite).write(path)
+                with self.assertRaises(ValueError): PARTITIONS.verify_reports(self.groups, partition, directory)
+            for root in ('<testsuites/>', '<testsuite'):
+                path.write_text(root)
+                with self.assertRaises((ValueError, ET.ParseError)):
+                    PARTITIONS.verify_reports(self.groups, partition, directory)
+
     def test_missing_failed_cancelled_skipped_and_unexpected_reports_reject(self):
-        for partition in ('gold', 'content_recovery', 'native_fetch_recovery'):
+        for partition in PARTITIONS.GROUPS:
             with self.subTest(partition=partition):
                 directory = self.root / 'reports' / partition; directory.mkdir(parents=True)
                 with self.assertRaises(ValueError): PARTITIONS.verify_reports(self.groups, partition, directory)
@@ -336,7 +368,7 @@ class PostgresInventoryTests(unittest.TestCase):
                     self.report(self.groups[partition][0], partition, **{key: '1'})
                     with self.assertRaises(ValueError): PARTITIONS.verify_reports(self.groups, partition, directory)
                 self.report(self.groups[partition][0], partition)
-                self.report(self.groups['core'][0], partition)
+                self.report(self.groups['reliability' if partition == 'core' else 'core'][0], partition)
                 with self.assertRaises(ValueError): PARTITIONS.verify_reports(self.groups, partition, directory)
 
 

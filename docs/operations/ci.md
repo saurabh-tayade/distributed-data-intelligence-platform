@@ -9,8 +9,9 @@ contracts, required suite coverage, action/dependency pins and native execution 
 job timeout from 60 to 90 minutes. D1/D2's added
 PostgreSQL tests, prebuilt adapters and isolated storage are described below.
 [PR #72](pr72-postgres-partitions.md) originally replaced sequential PostgreSQL execution with four
-independent partitions and an unchanged logical PostgreSQL check. The current workflow uses five
-partitions after the Gold timeout follow-up below. Each execution partition retains the 90-minute ceiling.
+independent partitions and an unchanged logical PostgreSQL check. The current workflow uses eight
+partitions after the Gold timeout and native-capacity follow-ups below. Each execution partition
+retains the 90-minute ceiling.
 
 The [November 4 hosted evidence](ci-hosted-evidence-2026-11-04.md) records successful selective PRs,
 full main runs and measured Gold/Content recovery headroom. It supersedes earlier pending hosted
@@ -42,7 +43,10 @@ flowchart LR
   event --> docs[documentation: always]
   event --> frontend[frontend: always]
   changes --> ingestion[ingestion: selected or fallback]
-  changes --> python[processing_python: selected or fallback]
+  changes --> pycore[Python core processing]
+  changes --> pyreliability[Python Reliability]
+  pycore --> python[processing_python: fan-in]
+  pyreliability --> python
   changes --> jdbc[analytics_jdbc: selected or fallback]
   changes --> pgcore[PostgreSQL core/imports]
   changes --> pgrel[PostgreSQL Reliability/recovery]
@@ -50,12 +54,16 @@ flowchart LR
   changes --> pggold[PostgreSQL Gold/Content publication]
   changes --> pgrecovery[PostgreSQL Content recovery/RESUME]
   changes --> pgnative[PostgreSQL native FETCH recovery]
+  changes --> pgbronze[PostgreSQL native Bronze]
+  changes --> pgpublication[PostgreSQL native publication]
   pgcore --> postgres[content_postgres: fan-in]
   pgrel --> postgres
   pgingest --> postgres
   pggold --> postgres
   pgrecovery --> postgres
   pgnative --> postgres
+  pgbronze --> postgres
+  pgpublication --> postgres
   changes --> http[analytics_http: selected or fallback]
   changes --> gate[processing: always evaluates results]
   ingestion --> gate
@@ -69,7 +77,9 @@ flowchart LR
 | --- | --- | ---: |
 | changes | Complete Git diff and trusted classification policy | 5 minutes |
 | ingestion | Existing Java ingestion and batch-launch script checks | 10 minutes |
-| processing_python | All Python processing, Spark and DuckDB tests | 30 minutes |
+| processing_python_core | All non-Reliability Python processing, Spark and DuckDB modules | 30 minutes |
+| processing_python_reliability | All test_reliability_* Python modules | 30 minutes |
+| processing_python | Original Python check; requires both selected execution partitions to succeed | 5 minutes |
 | analytics_jdbc | Fresh synthetic Gold fixtures, Python references and Java JDBC compatibility | 15 minutes |
 | content_postgres_core | All Content API units; persistence/import/source/admission integration | 90 minutes |
 | content_postgres_reliability | Reliability processing and recovery integration | 90 minutes |
@@ -77,17 +87,20 @@ flowchart LR
 | content_postgres_gold | Native Gold/Content publication and finalization integration | 90 minutes |
 | content_postgres_content_recovery | Content recovery, explicit RESUME and inherited recovery integration | 90 minutes |
 | content_postgres_native_fetch_recovery | Native FETCH launch, completion, verification and recovery integration; operator adapter smoke first | 90 minutes |
+| content_postgres_native_bronze | Native Bronze reservation, launch, completion and checkpoint integration | 90 minutes |
+| content_postgres_native_publication | Native Silver reservation and subsequent managed publication integration | 90 minutes |
 | content_postgres | Original PostgreSQL check; requires every selected partition to succeed | 5 minutes |
 | analytics_http | Fresh Gold, Reliability and Content fixtures; Content API units; GoldApiIT, ReliabilityApiIT and ContentApiIT HTTP/native compatibility; generated Content and Reliability envelopes through actual frontend parsers | 15 minutes |
 | processing | Existing required backend context; classification and five-suite aggregate | 5 minutes |
 | documentation | Existing Markdown/link/hygiene checks plus focused CI policy tests | 5 minutes |
 | frontend | Existing typecheck, lint, component tests and production build | 10 minutes |
 
-The six PostgreSQL callers use the same logical `content_postgres` classification output.
+The eight PostgreSQL callers use the same logical `content_postgres` classification output.
 They depend only on classification and invoke the [reusable partition workflow](../../.github/workflows/postgres-partition.yml)
 on independently provisioned Ubuntu 24.04 runners, each with its own pinned PostgreSQL service,
-workspace, fixture roots and full pinned Python/Spark/DuckDB/JDK environment. The four managed
-Content partitions (`ingestion`, `gold`, `content_recovery`, `native_fetch_recovery`) build the ingestion adapter and
+workspace, fixture roots and full pinned Python/Spark/DuckDB/JDK environment. The six managed
+Content partitions (`ingestion`, `gold`, `content_recovery`, `native_fetch_recovery`,
+`native_bronze`, `native_publication`) build the ingestion adapter and
 start pinned SeaweedFS, with cleanup guarded by `always()`. Core/import
 fixtures supply their own synthetic Bronze HTTP server and need no SeaweedFS service. Unit tests
 run once in core; other PostgreSQL partitions skip only Surefire units, never Failsafe integration.
@@ -99,7 +112,7 @@ does not skip in that job. Its source dependencies are listed below.
 
 The original `content_postgres` name is now a small fail-closed fan-in job. A selected missing,
 failed, cancelled, skipped or timed-out partition cannot produce PostgreSQL success. If PostgreSQL
-is intentionally unselected, all six callers and that fan-in are skipped, preserving the existing
+is intentionally unselected, all eight callers and that fan-in are skipped, preserving the existing
 five-suite aggregate's exact safe-skip rule. Classification and the top-level aggregate retain
 all five logical outputs, trust/fallback behavior and original required-check names. Only fan-ins
 wait for partition completion; no execution partition waits for another execution partition.
@@ -114,7 +127,8 @@ well as test success. [PR #72 evidence](pr72-postgres-partitions.md) records all
 hosted timing inputs, local measurements, commands and remaining hosted acceptance requirements.
 
 The current inventory is **core=14, reliability=7, ingestion=3, gold=3,
-content_recovery=3, native_fetch_recovery=11 (41 total)**. Gold contains `RssGoldIT`, `RssContentIT` and
+content_recovery=3, native_fetch_recovery=11, native_bronze=5, native_publication=5 (51 total)**.
+Gold contains `RssGoldIT`, `RssContentIT` and
 `ContentFinalizationIT`. Content recovery contains `ContentRecoveryIT`, `ContentResumeIT` and
 `ContentInheritedRecoveryIT`; their native cases retain separate original/resumed worker processes,
 real storage and PostgreSQL restart coverage. No integration class or case is removed or weakened.
@@ -128,11 +142,15 @@ stops the job immediately; a missing smoke report fails the final check. Unit te
 in core. The former partial checkpoint/assessment warm-up is replaced by this full-class smoke;
 all checkpoint and assessment cases remain in the required remaining selection.
 
-This CI-only split separates native FETCH work from the long-running legacy Content recovery
-suites. It changes neither production lifecycle behavior nor the 90-minute ceiling. Both recovery
-partitions remain mandatory whenever the logical PostgreSQL job is selected. Hosted timing and
-full-suite success must be measured on the submitted head; parallelism alone is not evidence of
-completed coverage or a runtime guarantee.
+The native Bronze partition contains five `NarrowContentBronze*IT` classes, including SQL
+checkpoint coverage. Native publication contains `NarrowContentSilverReservationIT`,
+`NarrowContentSilverReservationSqlIT`, `NarrowContentPipelineIT`, `NarrowContentPipelineSqlIT`
+and `NarrowContentSubmissionDiscoveryIT`.
+Subsequent feature classes must be assigned explicitly;
+there is no wildcard assignment or exclusion. The five core/legacy groups keep every original class.
+Each native group has its own runner, PostgreSQL service and isolated Bronze storage, with the
+unchanged 90-minute execution limit. All eight partitions remain mandatory whenever PostgreSQL
+is selected. No class or test case is removed, and neither classification nor required checks change.
 
 **Gold timeout follow-up:** [run 41317309717](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/41317309717)
 cancelled `content_postgres_gold` at its configured 90-minute ceiling; the unchanged base commit
@@ -145,6 +163,50 @@ historical. The timeout ceiling, logical classification output, `content_postgre
 final required processing gate are unchanged. The [November 4 review](ci-hosted-evidence-2026-11-04.md#gold-and-content-recovery-headroom)
 now records independently completed, report-verified three-class partitions within 90 minutes.
 Observed headroom is not a guarantee for future workloads; the timeout remains unchanged.
+
+## Capacity baseline and acceptance
+
+[Run 209](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/42439455266)
+provides one observed pre-split baseline. Its
+[native job](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/42439455266/job/128605379931)
+completed 18 classes and 813 cases: **63m03s summed class time**, **64m41s job time**, against the
+90-minute ceiling. Its
+[Python job](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/42439455266/job/128605379840)
+completed 625 tests: **26m14s test time**, **26m38s job time**, against the 30-minute ceiling.
+These are measured historical workloads, not post-split counts or a prediction of future runtime.
+The submitted feature head still requires successful hosted execution of every selected partition,
+complete report/discovery coverage and both unchanged logical fan-ins. Improvement is unmeasured
+until those jobs complete; no runtime reduction or full-regression cost saving is claimed.
+
+## Python capacity partitions
+
+The [Python module inventory](../../.github/ci/python-partitions.json) assigns **47 modules** exactly
+once: **core=33** and **reliability=14**. Reliability owns every `test_reliability_*` module; core owns
+all other discovered test modules. The two execution jobs independently provision the same pinned
+Python/Spark/DuckDB/JDK environment, retain the 30-minute limit, and depend only on classification.
+They do not share Spark processes, fixtures, output directories or cached test results.
+
+The [runner](../../.github/ci/python_partitions.py) first validates the explicit inventory against
+all `test*.py` source files. The always-running documentation job also checks that inventory without
+needing processing dependencies. New, deleted, duplicate, misassigned or unexpected modules fail
+until deliberately reconciled. Nested test packages require an intentional discovery update and
+cannot silently fall outside the selected modules.
+
+Each selected execution job then performs the unchanged full `unittest` discovery against
+`processing/tests` before selecting complete modules. Discovery errors anywhere, duplicate or
+unexpected test identities, or inventory modules with zero discovered tests fail the job. Each
+selected test must actually run and succeed exactly once. Failure, error, skip, expected failure,
+unexpected success and incomplete execution cannot produce success. The regular local full-suite
+command remains `python -m unittest discover -s processing/tests -v`.
+
+The original `processing_python` job name is retained as a fail-closed fan-in. Selected missing,
+failed, cancelled, skipped, timed-out or unexpected execution results fail. When intentionally
+unselected, both execution jobs and their fan-in skip, preserving the top-level five-suite gate's
+exact success/skip rules. Trusted-base classification and full regression on main are unchanged.
+
+These splits only add execution capacity. Hosted timing and full-suite success must be measured
+on the submitted head; parallelism alone is not evidence of completed coverage, faster regression,
+lower cost or a runtime guarantee. Neither execution timeout is increased.
 
 ## Change categories and dependency rules
 
@@ -273,7 +335,7 @@ create services/api/target/fixtures from synthetic inputs in their own workspace
 No job consumes another job's workspace or generated outputs. A local rerun must remove that
 generated fixture directory first because the generator intentionally refuses to overwrite it.
 
-Each of the five PostgreSQL execution partitions provisions its own service. The image is unchanged:
+Each of the eight PostgreSQL execution partitions provisions its own service. The image is unchanged:
 
 ```text
 postgres:17.11-bookworm@sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826
@@ -318,6 +380,10 @@ Python processing:
 python --version
 java -version
 python -m unittest discover -s processing/tests -v
+# Optional CI-equivalent inventory/discovery and partition execution:
+python .github/ci/python_partitions.py --discover
+python .github/ci/python_partitions.py --partition core --run
+python .github/ci/python_partitions.py --partition reliability --run
 ```
 
 JDBC compatibility, in a clean checkout without services/api/target/fixtures:
@@ -474,7 +540,7 @@ Use Python standard-library tests, actionlint 1.7.12 and the existing Node.js 24
 
 ```sh
 python3 -I -B -m unittest discover -s .github/ci/tests -v
-actionlint .github/workflows/ci.yml
+actionlint .github/workflows/ci.yml .github/workflows/postgres-partition.yml
 npm ci --ignore-scripts --no-audit --no-fund
 npm run check
 git diff --check
@@ -491,7 +557,13 @@ cancelled, timed-out, missing and unexpectedly skipped jobs.
 The gate truth table evaluates all **32,768** combinations of five boolean selections and five
 success/failure/cancelled/skipped results. Exactly **32** pass: one matching result vector per selection.
 Full validation permits only five successes. Configuration tests check triggers, dependency wiring,
-required context names, read-only permissions, the sole PostgreSQL service and retained suite commands.
+required context names, read-only permissions, the reusable PostgreSQL service definition and retained
+suite commands. PostgreSQL fan-in tests cover all **65,536** eight-partition terminal-result
+combinations; only all-success passes. Python fan-in tests cover every pair of terminal results
+in both full and selective modes, plus missing, malformed and unexpected results. Module inventory,
+full discovery and actual execution tests reject omissions, duplicates, failures and skips. XML
+coverage checks run against every PostgreSQL partition, including the separate Bronze and publication
+groups. Actual application tests and hosted timings remain separate acceptance evidence.
 Application regression commands are unchanged; focused orchestration tests do not establish new
 hosted application counts or fixture readiness.
 

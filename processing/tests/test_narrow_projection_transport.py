@@ -141,6 +141,28 @@ class TransportTest(unittest.TestCase):
             expected = deepcopy(self.expected); expected['reference'] = deepcopy(changed['reference'])
             self.bad(self.read, changed, expectations=expected)
 
+    def test_reference_catalog_identity_is_exact_canonical_json_not_fingerprint(self):
+        original = self.content.value()
+        reference = original['reference']
+        identity = reference['qualification']['selection']['identity']
+        self.assertEqual(reference['nativeIdentity'], canonical_bytes(identity).decode('utf-8'))
+        for replacement in (reference['qualification']['selection']['fingerprint'],
+                'arbitrary', json.dumps(identity), canonical_bytes(identity | {'revision': 'wrong'}).decode('utf-8'),
+                canonical_bytes(identity | {'extra': 'field'}).decode('utf-8'),
+                canonical_bytes({'referenceId': 'other', 'revision': identity['revision']}).decode('utf-8')):
+            changed = deepcopy(original)
+            changed['reference']['nativeIdentity'] = replacement
+            expected = deepcopy(self.expected)
+            expected['reference'] = deepcopy(changed['reference'])
+            self.bad(self.read, changed, expectations=expected)
+        changed = deepcopy(original)
+        changed['reference']['qualification']['verification']['native']['fingerprint'] = 'f' * 64
+        changed['reference']['evidenceSha256'] = f.digest(changed['reference']['qualification'])
+        changed['inputSha256'] = f.digest(t._dependencies(changed))
+        expected = deepcopy(self.expected)
+        expected['reference'] = deepcopy(changed['reference'])
+        self.bad(self.read, changed, expectations=expected)
+
     def test_full_envelopes_include_nested_context_receipt_and_historical_identity(self):
         for bound, verification in ((self.gold, self.gv), (self.content, self.cv)):
             envelopes = [parse_envelope(raw, t.STAGE_LIMIT) for raw in t.qualify_publication_v2(bound, verification)]

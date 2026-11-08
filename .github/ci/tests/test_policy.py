@@ -382,7 +382,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("--env S3_BUCKET=ddip-d2", body)
         self.assertIn("-s3.autoCreateBucket=false", body)
         self.assertIn('docker rm --force --volumes "ddip-ci-bronze-${POSTGRES_PARTITION}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"', body)
-        self.assertIn("always() && (inputs.partition == 'ingestion' || inputs.partition == 'gold' || inputs.partition == 'content_recovery' || inputs.partition == 'native_fetch_recovery')", body)
+        self.assertIn("always() && (inputs.partition == 'ingestion' || inputs.partition == 'gold' || inputs.partition == 'content_recovery' || inputs.partition == 'native_fetch_recovery' || inputs.partition == 'native_bronze' || inputs.partition == 'native_publication')", body)
         pom = (ROOT / "services/content-api/pom.xml").read_text(encoding="utf-8")
         self.assertIn("**/*IT.java", pom)
         self.assertIn("**/GoldApiIT.java", pom)
@@ -390,7 +390,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("**/ContentApiIT.java", pom)
 
     def test_all_managed_content_partitions_build_provision_and_always_cleanup(self):
-        managed = "inputs.partition == 'ingestion' || inputs.partition == 'gold' || inputs.partition == 'content_recovery' || inputs.partition == 'native_fetch_recovery'"
+        managed = "inputs.partition == 'ingestion' || inputs.partition == 'gold' || inputs.partition == 'content_recovery' || inputs.partition == 'native_fetch_recovery' || inputs.partition == 'native_bronze' || inputs.partition == 'native_publication'"
         for name, condition, command in (
             ("Build prebuilt Java RSS and Bronze adapters for managed acceptance", managed,
              "mvn -B -ntp -f ingestion/pom.xml package -DskipTests"),
@@ -403,9 +403,9 @@ class WorkflowTests(unittest.TestCase):
                 self.assertIn(command, step)
 
     def test_graph_filters_and_required_contexts(self):
-        for job in (*[j for j in JOBS if j != "content_postgres"], "content_postgres_core", "content_postgres_reliability", "content_postgres_ingestion", "content_postgres_gold", "content_postgres_content_recovery", "content_postgres_native_fetch_recovery"):
+        for job in ("ingestion", "processing_python_core", "processing_python_reliability", "analytics_jdbc", "analytics_http", "content_postgres_core", "content_postgres_reliability", "content_postgres_ingestion", "content_postgres_gold", "content_postgres_content_recovery", "content_postgres_native_fetch_recovery", "content_postgres_native_bronze", "content_postgres_native_publication"):
             body = block(job)
-            key = "content_postgres" if job.startswith("content_postgres_") else job
+            key = "content_postgres" if job.startswith("content_postgres_") else "processing_python" if job.startswith("processing_python_") else job
             self.assertIn("    needs: changes", body)
             self.assertIn("if: ${{ always() && (needs.changes.result != 'success' || "
                           f"needs.changes.outputs.{key} != 'false') }}}}", body)
@@ -442,9 +442,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('mvn -B -ntp -f services/content-api/pom.xml verify -Pintegration -Danalytics.python="$(command -v python)"', block("analytics_http"))
         self.assertIn("npm ci --prefix frontend", block("analytics_http"))
         self.assertIn("DDIP_CONTENT_HTTP_FIXTURES=../services/content-api/target/content-fixtures/http-reports.json npm --prefix frontend test -- contentNativeParity.test.ts", block("analytics_http"))
-        self.assertIn("python -m unittest discover -s processing/tests -v", block("processing_python"))
+        for group in ("core", "reliability"):
+            self.assertIn(f"python .github/ci/python_partitions.py --partition {group} --run", block("processing_python_" + group))
         self.assertIn("mvn -B -ntp -f services/api/pom.xml verify", block("analytics_jdbc"))
-        for job in JOBS[1:]:
+        for job in ("processing_python_core", "processing_python_reliability", "analytics_jdbc", "content_postgres", "analytics_http"):
             self.assertIn("python-version: '3.12.15'", POSTGRES_WORKFLOW if job == "content_postgres" else block(job))
 
 

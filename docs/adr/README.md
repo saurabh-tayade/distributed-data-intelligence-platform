@@ -142,3 +142,5 @@ semantics and does not activate a launcher, receipt commit or ordinary Content d
 - [0041: Inactive native Bronze verification checkpoint](0041-inactive-native-bronze-checkpoint.md)
 
 - [0042: Inactive native Silver reservation](0042-inactive-native-silver-reservation.md)
+
+- [0043: Integrated original-run Content pipeline](0043-integrated-original-content-pipeline.md)

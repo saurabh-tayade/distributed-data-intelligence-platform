@@ -1,18 +1,20 @@
 # Reliability submission discovery — E5-F3.2a
 
 Two API-role GET endpoints project existing immutable registrations for a future Reliability
-submission form. They support only `application-reliability` / `RELIABILITY_V2`. They do not
+submission form. The default profile collection and existing artifact roles support `application-reliability` /
+`RELIABILITY_V2`. The separately opt-in [gated Content metadata candidates](narrow-content-submission-discovery.md)
+do not change this default. These routes do not
 register, import, verify native data, submit runs, claim ownership or establish worker readiness.
 The source-management `/capabilities` contract is unchanged.
 
 Implementation: [controller][controller], [repository][repository], [cursor][cursor].
-Existing [run admission][admission] remains authoritative and unchanged.
+Existing Reliability [run admission][admission] remains authoritative and unchanged.
 
 ## HTTP and paging
 
 | Method/path | Fixed query parameters |
 | --- | --- |
-| `GET /api/management/v1/execution-profiles` | Optional `limit`, `cursor`. |
+| `GET /api/management/v1/execution-profiles` | Optional `limit`, `cursor`, `pipeline=RELIABILITY_V2` (also the default). |
 | `GET /api/management/v1/artifacts` | Required `executionProfileId` (canonical UUID), `role` (`RELIABILITY_BATCH` or `SERVICE_REFERENCE`); optional exact `sourceId` for batches only, `limit`, `cursor`. |
 
 Success is HTTP 200, JSON, `Cache-Control: no-store`:
@@ -61,7 +63,8 @@ Each row has exactly:
 | `createdAt` | UTC registration timestamp. |
 
 The shared `execution_profiles` table also contains import/runtime descriptors. Those, Content
-profiles, non-UUID IDs, unsupported versions and incompatible storage associations are omitted.
+profiles, non-UUID IDs, unsupported versions and incompatible storage associations are omitted from
+the Reliability collection.
 A selectable profile must have 1–128 associations in this installation, permitted product scope
 (CONTROL may belong to another product), and all existing Reliability admission roles: BATCH,
 REFERENCE, RELIABILITY, CONTROL, STAGING and TEMP.

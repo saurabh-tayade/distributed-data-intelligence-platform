@@ -21,6 +21,7 @@ class NarrowContentBronzeCheckpointSqlIT extends NarrowContentBronzeLaunchFixtur
         if(!versionEighteen){super.migrateFixtureSchema();return;}
         org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").target("18").load().migrate();
         new JdbcCoordinatorRepository(jdbc,tx,INSTALL).initialize();
+        historicalSubmissionForSchema(18);
     }
     @AfterEach void resetSchemaTarget(){versionEighteen=false;}
     @Test void populatedVersionEighteenUpgradePreservesExactCandidateWithoutCheckpointBackfill()throws Exception{
@@ -30,10 +31,10 @@ class NarrowContentBronzeCheckpointSqlIT extends NarrowContentBronzeLaunchFixtur
         var before=new TreeMap<String,List<String>>();for(String table:tables)before.put(table,jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management."+table+" t ORDER BY to_jsonb(t)::text",String.class));
         var files=filesystem();var migrations=jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IS NOT NULL ORDER BY installed_rank");
         var migration=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();
-        assertThat(migration.migrate().migrationsExecuted).isEqualTo(2);new SchemaLifecycle(migration,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(false);
+        assertThat(migration.migrate().migrationsExecuted).isEqualTo(3);new SchemaLifecycle(migration,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(false);
         for(String table:tables)assertThat(jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management."+table+" t ORDER BY to_jsonb(t)::text",String.class)).as(table).isEqualTo(before.get(table));
         assertThat(filesystem()).isEqualTo(files);assertThat(bronzeFacts()).isEqualTo(launch);
-        assertThat(jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IS NOT NULL AND version NOT IN ('19','20') ORDER BY installed_rank")).isEqualTo(migrations);
+        assertThat(jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IS NOT NULL AND version NOT IN ('19','20','21') ORDER BY installed_rank")).isEqualTo(migrations);
         for(String table:List.of("content_bronze_verification_profiles","content_bronze_verification_phases","content_bronze_checkpoints"))assertThat(count(table)).isZero();bronzeRetained();
     }
     @BeforeEach void verificationProfile(){

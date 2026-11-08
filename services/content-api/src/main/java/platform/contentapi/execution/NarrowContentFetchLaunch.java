@@ -97,6 +97,14 @@ final class NarrowContentFetchLaunch {
                     bronzeProfile,verificationProfile,silverOperation,completionFault,fault);
         });
     }
+    /** Test-gated full original invocation. This does not expose an owner through historical inspection. */
+    <T>T originalPipeline(InstallationHostGuard guard,WorkerRepository.Owner owner,UUID fetch,String profile,
+            java.util.function.Function<WorkerRepository.Owner,T> successor){
+        return launchThen(guard,owner,fetch,profile,b->{},current->{
+            new NarrowContentFetchCompletion(jdbc,tx,workers).complete(guard,current,fetch);
+            return successor.apply(current);
+        });
+    }
     private <T>T launchThen(InstallationHostGuard guard,WorkerRepository.Owner owner,UUID operation,String launchProfile,Consumer<Boundary> fault,
                            java.util.function.Function<WorkerRepository.Owner,T> finish){
         require(operation!=null && fault!=null,WORKER_CONFIGURATION_INVALID);

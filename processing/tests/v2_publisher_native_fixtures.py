@@ -141,7 +141,7 @@ def source(spark, base, *, empty=False):
     refq = reference(roots['REFERENCE'], 'reference')
     selected_reference = refq['selection']
     ref = {k: selected_reference[k] for k in ('kind', 'productId', 'storageBindingId', 'relativeAddress', 'contractVersion', 'processorRevision')}
-    ref.update(artifactId=REFERENCE, nativeIdentity=selected_reference['fingerprint'], evidenceSha256=digest(refq),
+    ref.update(artifactId=REFERENCE, nativeIdentity=canonical_bytes(selected_reference['identity']).decode('utf-8'), evidenceSha256=digest(refq),
         verifiedAt='2026-11-04T13:00:00Z', qualification=refq, role='PUBLISHER_REFERENCE', ordinal=0)
     credentials = base / 'credentials.json'
     credentials.write_bytes(canonical_bytes(dict(accessKey='synthetic-access', secretKey='synthetic-secret')))

@@ -15,15 +15,17 @@ public final class RunHistoryRepository {
     private static final DateTimeFormatter UTC=new DateTimeFormatterBuilder().appendInstant(6).toFormatter();
     private static final String BASE_COLUMNS="r.run_id,r.submission_seq,r.product_id,r.pipeline,r.state,r.current_stage,r.row_version,r.requested_at,r.finished_at,r.outcome_code,r.retry_eligible,r.current_attempt_id,r.result_artifact_id,"+
             "a.kind AS result_kind,a.product_id AS result_product,a.native_identity AS result_fingerprint,a.contract_version AS result_contract,a.processor_revision AS result_processor,a.verified_at AS result_verified_at,"+
-            "EXISTS(SELECT 1 FROM ddip_management.stage_artifacts sa JOIN ddip_management.stage_invocations si USING(attempt_id,stage,item_ordinal) JOIN ddip_management.attempts t ON t.attempt_id=sa.attempt_id " +
-            "WHERE t.run_id=r.run_id AND si.stage='VERIFY_RESULT' AND si.state='VERIFIED' AND sa.artifact_id=r.result_artifact_id) AS verified_result";
+            "(EXISTS(SELECT 1 FROM ddip_management.stage_artifacts sa JOIN ddip_management.stage_invocations si USING(attempt_id,stage,item_ordinal) JOIN ddip_management.attempts t ON t.attempt_id=sa.attempt_id " +
+            "WHERE t.run_id=r.run_id AND si.stage='VERIFY_RESULT' AND si.state='VERIFIED' AND sa.artifact_id=r.result_artifact_id) OR EXISTS(SELECT 1 FROM ddip_management.content_pipeline_completions nc JOIN ddip_management.attempts nt ON nt.attempt_id=nc.attempt_id JOIN ddip_management.content_pipeline_operations no ON no.operation_id=nc.final_operation_id JOIN ddip_management.content_pipeline_checkpoints np ON np.operation_id=no.operation_id "+
+            "WHERE nt.run_id=r.run_id AND nt.attempt_id=r.current_attempt_id AND nt.state='SUCCEEDED' AND nc.artifact_id=r.result_artifact_id AND no.attempt_id=nt.attempt_id AND no.step_index=16 AND no.stage='CHECK_INPUTS' AND no.item_ordinal=2)) AS verified_result";
     private static final String FROM=" FROM ddip_management.runs r LEFT JOIN ddip_management.artifacts a ON a.artifact_id=r.result_artifact_id ";
     private final JdbcTemplate jdbc;
     private final ManagementTransactions tx;
     private final RunPageCursor cursors;
     private final StagePageCursor stageCursors;
+    private final NativeContentHistory nativeHistory;
     public RunHistoryRepository(JdbcTemplate jdbc,ManagementTransactions tx,SourceCursor signer){this(jdbc,tx,signer,Clock.systemUTC());}
-    RunHistoryRepository(JdbcTemplate jdbc,ManagementTransactions tx,SourceCursor signer,Clock clock){this.jdbc=jdbc;this.tx=tx;this.cursors=new RunPageCursor(signer,clock);this.stageCursors=new StagePageCursor(signer,clock);}
+    RunHistoryRepository(JdbcTemplate jdbc,ManagementTransactions tx,SourceCursor signer,Clock clock){this.jdbc=jdbc;this.tx=tx;this.cursors=new RunPageCursor(signer,clock);this.stageCursors=new StagePageCursor(signer,clock);this.nativeHistory=new NativeContentHistory(jdbc,tx,signer,clock);}
     private static String time(ResultSet r,String key)throws SQLException{var t=r.getObject(key,OffsetDateTime.class);return t==null?null:UTC.format(t.toInstant());}
     private ObjectNode summary(ResultSet r,int ignored)throws SQLException {
         var n=SourceJson.object().put("runId",r.getObject("run_id",UUID.class).toString()).put("productId",r.getString("product_id")).put("pipeline",r.getString("pipeline")).put("state",r.getString("state"))
@@ -74,11 +76,13 @@ public final class RunHistoryRepository {
         UUID run=id(id);limit(limit);String scope=scope("attempts",run,"attempt_no_asc");
         return tx.required(()->{
             exists(run);var p=cursor==null?cursors.first(jdbc.queryForObject("SELECT coalesce(max(attempt_no),0) FROM ddip_management.attempts WHERE run_id=?",Long.class,run),false):cursors.decode(cursor,"attempts",scope,false);
-            var rows=jdbc.query("SELECT t.attempt_id,t.attempt_no,t.kind,t.state,t.started_at,t.finished_at,t.outcome_code,(SELECT count(*) FROM ddip_management.stage_invocations s WHERE s.attempt_id=t.attempt_id) AS stage_count FROM ddip_management.attempts t WHERE t.run_id=? AND t.attempt_no>? AND t.attempt_no<=? ORDER BY t.attempt_no LIMIT ?",(r,i)->{
-                return SourceJson.object().put("attemptId",r.getObject("attempt_id",UUID.class).toString()).put("attemptNo",r.getInt("attempt_no")).put("kind",r.getString("kind")).put("state",r.getString("state")).put("startedAt",time(r,"started_at")).put("finishedAt",time(r,"finished_at")).put("outcomeCode",RunInspectionValues.code(r.getString("outcome_code"))).put("stageCount",Long.toString(r.getLong("stage_count"))).put("_sequence",Long.toString(r.getInt("attempt_no")));
+            var rows=jdbc.query("SELECT t.attempt_id,t.attempt_no,t.kind,t.state,t.started_at,t.finished_at,t.outcome_code,(SELECT count(*) FROM ddip_management.stage_invocations s WHERE s.attempt_id=t.attempt_id) AS stage_count,((SELECT count(*) FROM ddip_management.content_native_operations no WHERE no.attempt_id=t.attempt_id)+(SELECT count(*) FROM ddip_management.content_bronze_reservations nb WHERE nb.attempt_id=t.attempt_id)+(SELECT count(*) FROM ddip_management.content_pipeline_operations np WHERE np.attempt_id=t.attempt_id)) AS native_operation_count FROM ddip_management.attempts t WHERE t.run_id=? AND t.attempt_no>? AND t.attempt_no<=? ORDER BY t.attempt_no LIMIT ?",(r,i)->{
+                var n=SourceJson.object().put("attemptId",r.getObject("attempt_id",UUID.class).toString()).put("attemptNo",r.getInt("attempt_no")).put("kind",r.getString("kind")).put("state",r.getString("state")).put("startedAt",time(r,"started_at")).put("finishedAt",time(r,"finished_at")).put("outcomeCode",RunInspectionValues.code(r.getString("outcome_code"))).put("stageCount",Long.toString(r.getLong("stage_count"))).put("_sequence",Long.toString(r.getInt("attempt_no")));
+                long nativeCount=r.getLong("native_operation_count");check(nativeCount>=0 && nativeCount<=17);if(nativeCount>0)n.put("nativeOperationCount",Long.toString(nativeCount));return n;
             },run,p.after(),p.high(),limit+1);return page(rows,limit,"attempts",scope,p,"_sequence");
         });
     }
+    public SourceRepository.Page nativeOperations(String run,String attempt,int limit,String cursor){return nativeHistory.operations(run,attempt,limit,cursor);}
     public SourceRepository.Page stages(String id,String attemptId,int limit,String cursor) {
         UUID run=id(id),attempt=id(attemptId);limit(limit);
         String scope=SourceJson.sha(SourceJson.canonical(SourceJson.object().put("endpoint","stages").put("runId",run.toString()).put("attemptId",attempt.toString()).put("order","stage_c_item_ordinal_asc")));

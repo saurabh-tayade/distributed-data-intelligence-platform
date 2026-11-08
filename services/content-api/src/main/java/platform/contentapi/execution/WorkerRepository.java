@@ -697,6 +697,20 @@ public final class WorkerRepository {
             return metadata.get();
         });
     }
+    /** JDBC-only native final proof transaction. No legacy stage or delivery rows are invented. */
+    void finishNarrowContent(InstallationHostGuard guard,Owner owner,UUID artifact,Runnable nativeCompletion){
+        narrowOperationTransaction(guard,owner,()->{
+            nativeCompletion.run();
+            require(jdbc.queryForObject("SELECT count(*) FROM ddip_management.content_pipeline_completions WHERE attempt_id=? AND artifact_id=?",Long.class,owner.attemptId(),artifact)==1,RUNTIME_MISMATCH);
+            var evidence=SourceJson.parse(jdbc.queryForObject("SELECT evidence_bytes FROM ddip_management.artifacts WHERE artifact_id=?",byte[].class,artifact),1024*1024);
+            var output=evidence.get("verification").get("completion").get("output_counts");
+            require(output.get("content_catalog_v1").isIntegralNumber() && output.get("content_source_discovery_daily_v1").isIntegralNumber(),RUNTIME_MISMATCH);
+            byte[] counts=SourceJson.canonical(SourceJson.object().put("articles",output.get("content_catalog_v1").toString()).put("rows",output.get("content_source_discovery_daily_v1").toString()));
+            finishAttempt(owner,"SUCCEEDED","SUCCEEDED");
+            exactly(jdbc.update("UPDATE ddip_management.runs SET state='SUCCEEDED',finished_at=clock_timestamp(),result_artifact_id=?,counts_bytes=?,outcome_code='SUCCEEDED',retry_eligible=false,row_version=row_version+1 WHERE run_id=? AND current_attempt_id=? AND state='RUNNING' AND row_version=?",artifact,counts,owner.runId(),owner.attemptId(),owner.runVersion()));
+            releaseOwned(owner);audit(owner.runId(),owner.attemptId(),"RUN_SUCCEEDED","RUNNING","SUCCEEDED",owner.runVersion(),owner.runVersion()+1,"SUCCEEDED");return null;
+        });
+    }
     private void legacyExecution(Owner owner){
         require(!NarrowContentAdmission.hasHistory(jdbc,owner.runId()),WORKER_NOT_READY);
     }

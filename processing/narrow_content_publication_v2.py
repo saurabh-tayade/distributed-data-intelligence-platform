@@ -96,14 +96,17 @@ def verify_publication_v2(spark, bound, *, expectations):
     return actual
 
 
-def publish_v2(spark, bound, *, expectations):
+def publish_v2(spark, bound, *, expectations, require_fresh=False):
     """Produce native output or read-only verify replay; return real VERIFIED body.
 
     The caller owns Spark lifecycle and single-writer exclusion. Incomplete files
     and uncertain/post-rename results are retained, without cleanup or adoption.
     Independent expectations establish correspondence only, not operation authority.
+    require_fresh rejects existing output inside reservation for strict original-run
+    callers. The default retains this library's historical read-only replay behavior.
     """
     context = _context(bound, expectations)
+    m.need(type(require_fresh) is bool, 'ARGUMENT_INVALID')
     command = context.bound.value()
     root, identity = life.roots(command)
     args, prepared, dependency = _dependencies(spark, command, expectations)
@@ -112,6 +115,7 @@ def publish_v2(spark, bound, *, expectations):
     try:
         existing, guards = life.reserve(root, directory, identity)
         if existing:
+            m.need(not require_fresh, 'PUBLICATION_CHANGED')
             _verify_rows(command, args)
             actual = _actual(command, args)
             life.qualify(context.bound, actual)

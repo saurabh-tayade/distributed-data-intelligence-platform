@@ -49,7 +49,7 @@ final class NarrowContentBronzeCompletion {
         // A confirmed historical checkpoint after lost acknowledgment never populated the live bridge.
         require(reserved.get()!=null,OWNERSHIP_LOST);return reserved.get();
     }
-    private Observation completeThen(InstallationHostGuard guard,NarrowContentBronzeLaunch.LiveCandidate live,String profile,
+    Observation completeThen(InstallationHostGuard guard,NarrowContentBronzeLaunch.LiveCandidate live,String profile,
             Consumer<Boundary> fault,Consumer<LiveCheckpoint> finish){
         require(guard!=null && live!=null && fault!=null && !org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive(),WORKER_CONFIGURATION_INVALID);
         UUID operation=live.operation();var current=new WorkerRepository.Owner[]{live.consume(operation)};

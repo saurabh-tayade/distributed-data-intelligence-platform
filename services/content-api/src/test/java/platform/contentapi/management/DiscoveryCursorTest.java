@@ -23,6 +23,15 @@ class DiscoveryCursorTest {
         var later=new DiscoveryCursor(signer,Clock.offset(clock,Duration.ofHours(1)));
         assertThat(later.position(token,"artifacts",scope).expires()).isEqualTo(first.expires());
     }
+    @Test void sourceKeysAreBoundedAndCannotCrossUuidEndpoints() {
+        var first=cursors.position(null,"execution-profile-sources",scope);
+        String token=cursors.next("execution-profile-sources",scope,first,"a".repeat(128));
+        assertThat(cursors.position(token,"execution-profile-sources",scope).after()).isEqualTo("a".repeat(128));
+        assertThat(token.length()).isLessThanOrEqualTo(512);
+        assertThatThrownBy(()->cursors.position(token,"artifacts",scope)).hasMessage("INVALID_ARGUMENT");
+        assertThatThrownBy(()->cursors.next("execution-profile-sources",scope,first,"../private")).hasMessage("INVALID_ARGUMENT");
+        assertThatThrownBy(()->cursors.next("execution-profile-sources",scope,first,"a".repeat(129))).hasMessage("INVALID_ARGUMENT");
+    }
     @Test void expiredAndExtendedLifetimeCursorsFailClosed() {
         var p=cursors.position(null,"execution-profiles",scope);String token=cursors.next("execution-profiles",scope,p,id);
         var expired=new DiscoveryCursor(signer,Clock.offset(clock,Duration.ofDays(1)));

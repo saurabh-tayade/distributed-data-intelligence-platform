@@ -35,6 +35,9 @@ public final class RunController {
     @GetMapping("/{id}/attempts/{attemptId}/stages") ResponseEntity<byte[]> stages(@PathVariable String id,@PathVariable String attemptId,HttpServletRequest r) {
         var page=history.stages(id,attemptId,listQuery(r),r.getParameter("cursor"));return SourceResponses.response(page.data(),200,null,page,r);
     }
+    @GetMapping("/{id}/attempts/{attemptId}/native-operations") ResponseEntity<byte[]> nativeOperations(@PathVariable String id,@PathVariable String attemptId,HttpServletRequest r) {
+        var page=history.nativeOperations(id,attemptId,listQuery(r),r.getParameter("cursor"));return SourceResponses.response(page.data(),200,null,page,r);
+    }
     @GetMapping("/{id}/events") ResponseEntity<byte[]> events(@PathVariable String id,HttpServletRequest r) {
         var page=history.events(id,listQuery(r),r.getParameter("cursor"));return SourceResponses.response(page.data(),200,null,page,r);
     }
