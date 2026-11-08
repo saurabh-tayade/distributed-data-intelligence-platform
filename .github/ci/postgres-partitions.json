@@ -43,6 +43,8 @@
     "platform.contentapi.management.NarrowContentBronzeReservationIT",
     "platform.contentapi.management.NarrowContentBronzeLaunchIT",
     "platform.contentapi.management.NarrowContentBronzeLaunchSqlIT",
+    "platform.contentapi.management.NarrowContentBronzeCompletionIT",
+    "platform.contentapi.management.NarrowContentBronzeCheckpointSqlIT",
     "platform.contentapi.management.NarrowContentFetchOperatorIT",
     "platform.contentapi.management.NarrowContentFetchRecoveryCompositionIT",
     "platform.contentapi.management.NarrowContentFetchRecoveryFinalizationIT",

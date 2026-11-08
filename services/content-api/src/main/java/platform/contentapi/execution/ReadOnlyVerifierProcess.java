@@ -22,12 +22,18 @@ class ReadOnlyVerifierProcess {
         byte[] release(InstallationHostGuard.ProcessIdentity child);
         default void beforeDelivery(){}
     }
-    record Result(int exitCode,InstallationHostGuard.ProcessIdentity child,long stdoutBytes,long stderrBytes,Set<String> descendants,String stderrSha256) {
+    record Result(int exitCode,InstallationHostGuard.ProcessIdentity child,long stdoutBytes,long stderrBytes,Set<String> descendants,String stderrSha256,byte[] stdout) {
+        Result {stdout=stdout==null?null:stdout.clone();}
+        @Override public byte[] stdout(){return stdout==null?null:stdout.clone();}
+        Result(int exitCode,InstallationHostGuard.ProcessIdentity child,long stdoutBytes,long stderrBytes,Set<String> descendants,String stderrSha256){this(exitCode,child,stdoutBytes,stderrBytes,descendants,stderrSha256,null);}
         // Historical synthetic observations retain no invented diagnostic digest.
         Result(int exitCode,InstallationHostGuard.ProcessIdentity child,long stdoutBytes,long stderrBytes,Set<String> descendants){this(exitCode,child,stdoutBytes,stderrBytes,descendants,null);}
     }
     private record Observed(ProcessHandle handle,Instant start) { }
     private java.util.function.BooleanSupplier stopping=()->false;
+    private boolean captureStdout;
+    /** Opt-in bounded protocol output. Ordinary launchers continue discarding all raw output. */
+    static ReadOnlyVerifierProcess receiptReader(){var process=new ReadOnlyVerifierProcess(65536,Duration.ofSeconds(5),Duration.ofSeconds(5),Duration.ofSeconds(5));process.captureStdout=true;return process;}
     private final boolean spark;private final int outputLimit;private final Duration graceful,forced,drain;
     ReadOnlyVerifierProcess(){this(false);}
     ReadOnlyVerifierProcess(boolean spark){this(spark,16*1024*1024,Duration.ofSeconds(5),Duration.ofSeconds(5),Duration.ofSeconds(5));}
@@ -53,7 +59,7 @@ class ReadOnlyVerifierProcess {
             if(stopping.getAsBoolean() || Thread.currentThread().isInterrupted())throw new InterruptedException();
             if(System.nanoTime()>=deadline)throw new PreflightFailure(STAGE_TIMEOUT);
             p=builder.start();if(!(observer instanceof BootstrapObserver))p.getOutputStream().close();
-            out=new Drain(p.getInputStream(),outputLimit);err=new Drain(p.getErrorStream(),outputLimit);out.start();err.start();
+            out=new Drain(p.getInputStream(),outputLimit,captureStdout);err=new Drain(p.getErrorStream(),outputLimit);out.start();err.start();
             Instant start=p.info().startInstant().orElseThrow(()->new PreflightFailure(TERMINATION_UNCONFIRMED,false));
             identity=new InstallationHostGuard.ProcessIdentity(UUID.randomUUID(),p.pid(),start.truncatedTo(java.time.temporal.ChronoUnit.MICROS));
             observer.started(identity);
@@ -71,7 +77,7 @@ class ReadOnlyVerifierProcess {
                 for(var child:children)if(observed.size()<32)observed.putIfAbsent(child.pid(),new Observed(child,child.info().startInstant().orElse(null)));
                 if(out.overflow || err.overflow)throw new PreflightFailure(STAGE_OUTPUT_LIMIT);
                 if(out.failed || err.failed)throw new PreflightFailure(RESULT_INVALID);
-                if(!p.isAlive() && out.done && err.done){result=new Result(p.exitValue(),identity,out.total,err.total,Set.copyOf(observed.keySet().stream().map(Object::toString).toList()),err.sha256);break;}
+                if(!p.isAlive() && out.done && err.done){result=new Result(p.exitValue(),identity,out.total,err.total,Set.copyOf(observed.keySet().stream().map(Object::toString).toList()),err.sha256,out.captured());break;}
                 if(System.nanoTime()>=deadline)throw new PreflightFailure(STAGE_TIMEOUT);
                 if(System.nanoTime()>=nextHeartbeat){observer.heartbeat();nextHeartbeat=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);}
                 TimeUnit.MILLISECONDS.sleep(5);
@@ -158,12 +164,15 @@ class ReadOnlyVerifierProcess {
     private static final class Drain implements Runnable {
         static final Drain EMPTY=new Drain(InputStream.nullInputStream(),1);
         final InputStream input;final int limit;volatile boolean done,overflow,failed;volatile long total;volatile String sha256;Thread thread;
-        Drain(InputStream input,int limit){this.input=input;this.limit=limit;}
+        final ByteArrayOutputStream capture;
+        Drain(InputStream input,int limit){this(input,limit,false);}
+        Drain(InputStream input,int limit,boolean capture){this.input=input;this.limit=limit;this.capture=capture?new ByteArrayOutputStream():null;}
+        byte[] captured(){return capture==null?null:capture.toByteArray();}
         void start(){thread=Thread.ofVirtual().name("reliability-preflight-drain").start(this);}
         public void run(){
             try(input){
                 var digest=java.security.MessageDigest.getInstance("SHA-256");byte[] buffer=new byte[8192];int n;
-                while((n=input.read(buffer))!=-1){total=Math.min((long)limit+1,total+n);if(total>limit)overflow=true;digest.update(buffer,0,n);}
+                while((n=input.read(buffer))!=-1){total=Math.min((long)limit+1,total+n);if(total>limit)overflow=true;else if(capture!=null)capture.write(buffer,0,n);digest.update(buffer,0,n);}
                 sha256=HexFormat.of().formatHex(digest.digest());
             }catch(IOException|java.security.NoSuchAlgorithmException ex){failed=true;}finally{done=true;}
         }

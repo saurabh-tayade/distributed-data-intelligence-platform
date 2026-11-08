@@ -101,6 +101,8 @@ final class NarrowContentBronzeReservation {
         return m;
     }
     static void reopenForLaunch(InstallationHostGuard guard,Material material,boolean released){reopen(guard,material,b->{},true,released);}
+    static void reopenForCheckpoint(InstallationHostGuard guard,Material material){reopen(guard,material,b->{},true,true,true,false);}
+    static void reopenDuringCheckpointWrite(InstallationHostGuard guard,Material material){reopen(guard,material,b->{},true,true,true,true);}
     private static Material material(JdbcTemplate jdbc,ManagementTransactions tx,NarrowContentEvidenceContext.Expected ready,
             UUID fetch,UUID operation,long epoch,JsonNode credential){
         require(ready.kind()==NarrowContentEvidenceContext.PlanKind.ORIGINAL,RUNTIME_MISMATCH);validateCredential(credential);
@@ -134,23 +136,28 @@ final class NarrowContentBronzeReservation {
     }
     private static void reopen(InstallationHostGuard guard,Material m,Consumer<Boundary> fault){reopen(guard,m,fault,false,false);}
     private static void reopen(InstallationHostGuard guard,Material m,Consumer<Boundary> fault,boolean launch,boolean released){
+        reopen(guard,m,fault,launch,released,false,false);
+    }
+    private static void reopen(InstallationHostGuard guard,Material m,Consumer<Boundary> fault,boolean launch,boolean released,boolean checkpoint,boolean snapshot){
         var ready=m.ready();var context=new NarrowContentEvidenceContext(ready);context.check(guard,ready.frozen());if(!launch)absent(ready);
         Path directory=ContentOperationPlan.original(context.root(),ready.run(),ready.attempt(),ready.source()).directory("FETCH_SOURCE",0);
-        scope(context,guard,directory,launch,released);var before=stamps(context.root(),directory);
+        scope(context,guard,directory,launch,released,checkpoint,snapshot);var before=stamps(context.root(),directory);
         var journal=new RssJournalFiles(guard,ready.run(),ready.attempt(),m.fetchCheckpoint(),ready.source(),guard.binding().root().relativize(directory).toString(),false);
         require(Arrays.equals(m.marker(),journal.read("complete.json")),RUNTIME_MISMATCH);
         NarrowContentFetchCandidateVerification.metadataSchema(journal.read("metadata.json"));PreflightFiles.canonical(journal.read("descriptor.json"),65536);
         var evidence=journal.reopen(m.fetchCommand(),SourceJson.sha(m.marker()));fault.accept(Boundary.JOURNAL_REOPENED);
         require(Arrays.equals(m.descriptor(),evidence.descriptorBytes()) && Arrays.equals(m.reference(),evidence.checkpointReference()),RUNTIME_MISMATCH);
-        scope(context,guard,directory,launch,released);
+        scope(context,guard,directory,launch,released,checkpoint,snapshot);
         var finalEvidence=journal.reopen(m.fetchCommand(),SourceJson.sha(m.marker()));
         require(Arrays.equals(m.descriptor(),finalEvidence.descriptorBytes()) && Arrays.equals(m.reference(),finalEvidence.checkpointReference())
                 && before.equals(stamps(context.root(),directory)),RUNTIME_MISMATCH);
         var credential=credential(m.credentials());require(m.credentialsSha().equals(credential.get("sha256").stringValue()) && m.credentialsStamp().equals(credential.get("stamp")),RUNTIME_MISMATCH);
         if(!launch)absent(ready);context.check(guard,ready.frozen());
     }
-    private static void scope(NarrowContentEvidenceContext context,InstallationHostGuard guard,Path fetch,boolean launch,boolean released){
-        if(launch)ContentEvidenceBudget.inspectBronzeLaunch(context,guard,context.originalDirectory("STORE_BRONZE",0),released);
+    private static void scope(NarrowContentEvidenceContext context,InstallationHostGuard guard,Path fetch,boolean launch,boolean released,boolean checkpoint,boolean snapshot){
+        if(snapshot)ContentEvidenceBudget.inspectBronzeCompletionSnapshot(context,guard,context.originalDirectory("STORE_BRONZE",0));
+        else if(checkpoint)ContentEvidenceBudget.inspectBronzeCompletion(context,guard,context.originalDirectory("STORE_BRONZE",0));
+        else if(launch)ContentEvidenceBudget.inspectBronzeLaunch(context,guard,context.originalDirectory("STORE_BRONZE",0),released);
         else ContentEvidenceBudget.inspectFetchCompletion(context,guard,fetch);
     }
     private static JsonNode credential(Path path){

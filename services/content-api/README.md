@@ -1907,3 +1907,8 @@ The bounded original-run Bronze launch seam is described in
 [verification record](../../docs/operations/narrow-guarded-bronze-launch.md).
 It separately qualifies installed runtime bytes and records candidate inventory only; it does not
 verify remote storage, commit a Bronze receipt, enable ordinary dispatch or expand recovery authority.
+
+[ADR 0041](../../docs/adr/0041-inactive-native-bronze-checkpoint.md) and the
+[Bronze checkpoint verification record](../../docs/operations/narrow-bronze-verification-checkpoint.md)
+describe independent GET-only verification and the bounded original-owner native checkpoint.
+That historical observation grants no successor, dispatch, restart, recovery or release authority.

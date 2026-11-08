@@ -25,7 +25,7 @@ public final class StrictManagedBronze {
     }
     private static final ObjectMapper CREDENTIALS=new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
-    private record Dependency(RawFeed feed,RssSource source,byte[] metadata,JsonNode descriptor,byte[] credentials){
+    record Dependency(RawFeed feed,RssSource source,byte[] metadata,JsonNode descriptor,byte[] credentials){
         @Override public String toString(){return "BronzeDependency[redacted]";}
     }
     public static void main(String[] args){
@@ -49,28 +49,32 @@ public final class StrictManagedBronze {
             need(n.get("bootstrapVersion").isInt() && n.get("bootstrapVersion").intValue()==1
                     && text(n,"mode").equals("STORE_BRONZE_CANDIDATE") && decimal(n,"childPid",true)==ProcessHandle.current().pid()
                     && Runtime.version().feature()==21 && text(n,"strictRuntimeSha256").equals(sha(canonical(runtimeIdentity()))));
-            var e=n.get("expected");var c=n.get("current");
-            fields(e,"installationId","policy","planKind","runId","originalAttemptId","sourceId","controlRoot",
-                    "controlIdentity","rootIdentity","lockIdentity","ledgerSha256","frozen","writer");
-            fields(c,"policy","frozen","writer");String root=text(e,"controlRoot");Path path=Path.of(root);
-            need(path.isAbsolute() && path.normalize().equals(path) && path.toString().equals(root));
-            var expected=new StrictBronzeEvidence.Expected(text(e,"installationId"),text(e,"policy"),text(e,"planKind"),text(e,"runId"),
-                    text(e,"originalAttemptId"),text(e,"sourceId"),path,identity(e.get("controlIdentity")),identity(e.get("rootIdentity")),
-                    identity(e.get("lockIdentity")),text(e,"ledgerSha256"),frozen(e.get("frozen")),writer(e.get("writer")));
-            var current=new StrictBronzeEvidence.Current(text(c,"policy"),frozen(c.get("frozen")),writer(c.get("writer")));
-            StrictBronzeEvidence.validateExpectations(expected,current);need(expected.writer().epoch()>0);
-            var bronze=n.get("bronze");fields(bronze,"runtimeSha256","storage","fetch");hash(text(bronze,"runtimeSha256"));
-            var fetch=bronze.get("fetch");fields(fetch,"checkpointId","commandSha256","descriptorSha256","reference","revision",
-                    "capturedConfigSha256","endpointSha256","runtimeSha256","feedUri");
-            need(text(fetch,"checkpointId").equals(StrictBronzeEvidence.checkpoint(expected.runId(),expected.originalAttemptId(),"FETCH_SOURCE",0))
-                    && !text(fetch,"checkpointId").equals(expected.writer().checkpointId())
-                    && fetch.get("revision").isInt() && fetch.get("revision").intValue()>0);
-            for(String key:List.of("commandSha256","descriptorSha256","capturedConfigSha256","endpointSha256","runtimeSha256"))hash(text(fetch,key));
-            URI source=URI.create(text(fetch,"feedUri"));need(Set.of("http","https").contains(source.getScheme()) && source.getHost()!=null
-                    && source.getRawUserInfo()==null && source.getRawFragment()==null && source.getRawQuery()==null);
-            reference(fetch.get("reference"));storage(bronze.get("storage"));
-            return new Bootstrap(expected,current,bronze);
+            return parseFacts(n);
         }catch(RuntimeException ex){throw invalid();}
+    }
+    /** Shared correspondence validation; no paths opened and no publication effects. */
+    static Bootstrap parseFacts(JsonNode n)throws IOException{
+        var e=n.get("expected");var c=n.get("current");
+        fields(e,"installationId","policy","planKind","runId","originalAttemptId","sourceId","controlRoot",
+                "controlIdentity","rootIdentity","lockIdentity","ledgerSha256","frozen","writer");
+        fields(c,"policy","frozen","writer");String root=text(e,"controlRoot");Path path=Path.of(root);
+        need(path.isAbsolute() && path.normalize().equals(path) && path.toString().equals(root));
+        var expected=new StrictBronzeEvidence.Expected(text(e,"installationId"),text(e,"policy"),text(e,"planKind"),text(e,"runId"),
+                text(e,"originalAttemptId"),text(e,"sourceId"),path,identity(e.get("controlIdentity")),identity(e.get("rootIdentity")),
+                identity(e.get("lockIdentity")),text(e,"ledgerSha256"),frozen(e.get("frozen")),writer(e.get("writer")));
+        var current=new StrictBronzeEvidence.Current(text(c,"policy"),frozen(c.get("frozen")),writer(c.get("writer")));
+        StrictBronzeEvidence.validateExpectations(expected,current);need(expected.writer().epoch()>0);
+        var bronze=n.get("bronze");fields(bronze,"runtimeSha256","storage","fetch");hash(text(bronze,"runtimeSha256"));
+        var fetch=bronze.get("fetch");fields(fetch,"checkpointId","commandSha256","descriptorSha256","reference","revision",
+                "capturedConfigSha256","endpointSha256","runtimeSha256","feedUri");
+        need(text(fetch,"checkpointId").equals(StrictBronzeEvidence.checkpoint(expected.runId(),expected.originalAttemptId(),"FETCH_SOURCE",0))
+                && !text(fetch,"checkpointId").equals(expected.writer().checkpointId())
+                && fetch.get("revision").isInt() && fetch.get("revision").intValue()>0);
+        for(String key:List.of("commandSha256","descriptorSha256","capturedConfigSha256","endpointSha256","runtimeSha256"))hash(text(fetch,key));
+        URI source=URI.create(text(fetch,"feedUri"));need(Set.of("http","https").contains(source.getScheme()) && source.getHost()!=null
+                && source.getRawUserInfo()==null && source.getRawFragment()==null && source.getRawQuery()==null);
+        reference(fetch.get("reference"));storage(bronze.get("storage"));
+        return new Bootstrap(expected,current,bronze);
     }
     private static StrictBronzeEvidence.Identity identity(JsonNode n)throws IOException{fields(n,"device","inode");return new StrictBronzeEvidence.Identity(decimal(n,"device",false),decimal(n,"inode",true));}
     private static StrictBronzeEvidence.Frozen frozen(JsonNode n)throws IOException{fields(n,"selectionSha256","profileSha256","runtimeSha256");return new StrictBronzeEvidence.Frozen(text(n,"selectionSha256"),text(n,"profileSha256"),text(n,"runtimeSha256"));}
@@ -161,7 +165,7 @@ public final class StrictManagedBronze {
         need(Arrays.equals(original.credentials(),current.credentials()) && Arrays.equals(original.metadata(),current.metadata())
                 && original.descriptor().equals(current.descriptor()) && Arrays.equals(original.feed().body(),current.feed().body()));sink.inspect();
     }
-    private static Dependency dependency(Bootstrap b)throws Exception{
+    static Dependency dependency(Bootstrap b)throws Exception{
         Path directory=fetchDirectory(b);var f=b.bronze().get("fetch");var ref=f.get("reference");
         var before=treeStamps(directory);byte[] raw=stableRead(directory.resolve("command.json"),65536);need(sha(raw).equals(text(f,"commandSha256")));
         var c=StrictFetchJson.parse(raw,65536);fields(c,"protocolVersion","runId","attemptId","ownerEpoch","stage","itemOrdinal","checkpointId","sourceId",
@@ -200,9 +204,9 @@ public final class StrictManagedBronze {
         var all=new HashSet<>(FETCH_FILES);all.add("complete.json");need(names.equals(all));var result=new HashMap<Path,JsonNode>();result.put(directory,stamp(directory));
         for(String name:all){Path path=directory.resolve(name);ManagedRssFetch.privateEntry(path,false);result.put(path,stamp(path));}return Map.copyOf(result);
     }
-    private static byte[] stableRead(Path path,int limit)throws IOException{var before=stamp(path);byte[] bytes=ManagedRssFetch.read(path,limit);need(before.equals(stamp(path)));return bytes;}
+    static byte[] stableRead(Path path,int limit)throws IOException{var before=stamp(path);byte[] bytes=ManagedRssFetch.read(path,limit);need(before.equals(stamp(path)));return bytes;}
     private static String identityText(Path path)throws IOException{return Files.getAttribute(path,"unix:dev",LinkOption.NOFOLLOW_LINKS)+":"+Files.getAttribute(path,"unix:ino",LinkOption.NOFOLLOW_LINKS);}
-    private static JsonNode stamp(Path path)throws IOException{
+    static JsonNode stamp(Path path)throws IOException{
         // Match parsed bootstrap/marker number types as well as values. Jackson's
         // LongNode.equals(IntNode) is false even for the same small file length.
         return StrictFetchJson.parse(canonical(object().put("identity",identityText(path))
