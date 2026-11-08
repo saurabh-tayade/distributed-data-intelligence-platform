@@ -285,31 +285,13 @@ class NarrowContentFetchRecoveryFinalizationIT extends NarrowContentFetchLaunchF
         assertThat(readOnly.lookup(finalization)).isEqualTo("UNRESOLVED");assertThat(history()).isEqualTo(before);released();
     }
     @Test void populatedVersionFifteenUpgradePreservesPendingOwnerWithoutTerminalBackfill()throws Exception{
-        versionFifteen=true;closeServer();setup();
-        // Seed the historical V15 handoff semantics without weakening production's V17
-        // fail-closed reader. Only these two new absence queries are emulated, and only
-        // after proving that this fixture is still V15 and the successor table is absent.
-        var originalJdbc=jdbc;
-        jdbc=new JdbcTemplate(originalJdbc.getDataSource()){
-            @Override public <T>T queryForObject(String sql,Class<T> type,Object... args){
-                boolean count=sql.equals("SELECT count(*) FROM ddip_management.content_bronze_reservations WHERE attempt_id=?");
-                boolean exists=sql.equals("SELECT EXISTS(SELECT 1 FROM ddip_management.content_bronze_reservations b JOIN ddip_management.attempts a USING(attempt_id) WHERE a.run_id=?)");
-                if((count || exists) && versionFifteen
-                        && Boolean.TRUE.equals(originalJdbc.queryForObject("SELECT to_regclass('ddip_management.content_bronze_reservations') IS NULL",Boolean.class))){
-                    assertThat(originalJdbc.queryForObject("SELECT max(version::integer) FROM ddip_management.flyway_schema_history WHERE success AND version IS NOT NULL",Integer.class)).isEqualTo(15);
-                    assertThat(args).hasSize(1);
-                    return type.cast(count?Long.valueOf(0):Boolean.FALSE);
-                }
-                return super.queryForObject(sql,type,args);
-            }
-        };
-        terminalSetup();pending();
+        pendingHistoricalHandoff();
         var before=metadata();var files=filesystem();var row=jdbc.queryForObject("SELECT to_jsonb(h)::text FROM ddip_management.content_fetch_recovery_handoffs h",String.class);
         var migrations=jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IS NOT NULL ORDER BY installed_rank");
-        var migration=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();assertThat(migration.migrate().migrationsExecuted).isEqualTo(6);
+        var migration=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();assertThat(migration.migrate().migrationsExecuted).isEqualTo(7);
         new SchemaLifecycle(migration,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(false);
-        assertThat(metadata()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);assertThat(jdbc.queryForObject("SELECT to_jsonb(h)::text FROM ddip_management.content_fetch_recovery_handoffs h",String.class)).isEqualTo(row);
-        assertThat(jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IS NOT NULL AND version NOT IN ('16','17','18','19','20','21') ORDER BY installed_rank")).isEqualTo(migrations);
+        assertThat(metadataBeforeTerminalPolicyUpgrade()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);assertThat(jdbc.queryForObject("SELECT to_jsonb(h)::text FROM ddip_management.content_fetch_recovery_handoffs h",String.class)).isEqualTo(row);
+        assertThat(jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IS NOT NULL AND version NOT IN ('16','17','18','19','20','21','22') ORDER BY installed_rank")).isEqualTo(migrations);
         assertThat(count("content_fetch_recovery_finalizations")).isZero();occupied();assertThat(handoffs.lookup(handoff)).isEqualTo("CONFIRMED_HANDOFF");
         assertThat(repo.finish(guard,qualify())).isEqualTo("COMMITTED");released();
     }
@@ -330,4 +312,52 @@ class NarrowContentFetchRecoveryFinalizationIT extends NarrowContentFetchLaunchF
         assertThat(history()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);assertThat(count("content_bronze_reservations")).isZero();assertThat(count("content_fetch_recovery_finalizations")).isZero();occupied();
     }
     static final class MutableClock extends Clock {volatile Instant now;MutableClock(Instant now){this.now=now;}public ZoneId getZone(){return ZoneOffset.UTC;}public Clock withZone(ZoneId zone){return this;}public Instant instant(){return now;}}
+    private void pendingHistoricalHandoff()throws Exception{
+        versionFifteen=true;closeServer();setup();
+        // Seed the historical V15 handoff semantics without weakening production's V17
+        // fail-closed reader. Only these two new absence queries are emulated, and only
+        // after proving that this fixture is V15/V16 and the successor table is absent.
+        var originalJdbc=jdbc;
+        jdbc=new JdbcTemplate(originalJdbc.getDataSource()){
+            @Override public <T>T queryForObject(String sql,Class<T> type,Object... args){
+                boolean count=sql.equals("SELECT count(*) FROM ddip_management.content_bronze_reservations WHERE attempt_id=?");
+                boolean exists=sql.equals("SELECT EXISTS(SELECT 1 FROM ddip_management.content_bronze_reservations b JOIN ddip_management.attempts a USING(attempt_id) WHERE a.run_id=?)");
+                if((count || exists) && versionFifteen
+                        && Boolean.TRUE.equals(originalJdbc.queryForObject("SELECT to_regclass('ddip_management.content_bronze_reservations') IS NULL",Boolean.class))){
+                    assertThat(originalJdbc.queryForObject("SELECT max(version::integer) FROM ddip_management.flyway_schema_history WHERE success AND version IS NOT NULL",Integer.class)).isIn(15,16);
+                    assertThat(args).hasSize(1);
+                    return type.cast(count?Long.valueOf(0):Boolean.FALSE);
+                }
+                return super.queryForObject(sql,type,args);
+            }
+        };
+        terminalSetup();pending();
+    }
+    @Test void populatedVersionSixteenUpgradePreservesFinalizedReceiptLookup()throws Exception{
+        pendingHistoricalHandoff();
+        var versionSixteen=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").target("16").load();
+        assertThat(versionSixteen.migrate().migrationsExecuted).isEqualTo(1);
+        assertThat(repo.finish(guard,qualify())).isEqualTo("COMMITTED");released();
+        var before=metadata();var files=filesystem();
+        var receipts=jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_fetch_recovery_finalizations t",String.class);
+        var handoffRows=jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_fetch_recovery_handoffs t",String.class);
+        var migration=org.flywaydb.core.Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management").schemas("ddip_management").load();
+        assertThat(migration.migrate().migrationsExecuted).isEqualTo(6);
+        new SchemaLifecycle(migration,jdbc,new JdbcCoordinatorRepository(jdbc,tx,INSTALL)).verify(false);
+        assertThat(metadataBeforeTerminalPolicyUpgrade()).isEqualTo(before);assertThat(filesystem()).isEqualTo(files);
+        assertThat(repo.lookup(finalization)).isEqualTo("CONFIRMED_TERMINAL");assertThat(handoffs.lookup(handoff)).isEqualTo("CONFIRMED_HANDOFF");released();
+        assertThat(jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_fetch_recovery_finalizations t",String.class)).isEqualTo(receipts);
+        assertThat(jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_fetch_recovery_handoffs t",String.class)).isEqualTo(handoffRows);
+        assertThat(count("content_original_terminal_receipts")).isZero();
+        var changed=new JdbcTemplate(jdbc.getDataSource()){
+            @Override public java.util.List<java.util.Map<String,Object>> queryForList(String sql,Object... args){
+                var rows=super.queryForList(sql,args);
+                if(sql.startsWith("SELECT * FROM ddip_management.attempts"))for(var row:rows)row.put("content_terminal_policy","ddip-content-original-safe-end-v1");
+                return rows;
+            }
+        };
+        var rejected=new NarrowContentFetchRecoveryFinalizationTestSupport(changed,transactions(changed),INSTALL,clock,observed::get,b->{});
+        assertThat(rejected.lookup(finalization)).isEqualTo("UNRESOLVED");
+    }
+
 }

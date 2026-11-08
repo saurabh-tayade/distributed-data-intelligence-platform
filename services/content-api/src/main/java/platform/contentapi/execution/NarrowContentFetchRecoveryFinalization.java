@@ -180,7 +180,7 @@ final class NarrowContentFetchRecoveryFinalization {
                 && (c.get("active_attempt_id").isNull() || (!successor.equals(text(c,"active_attempt_id")) && !h.get("original_attempt_id").toString().equals(text(c,"active_attempt_id"))))
                 && (c.get("owner_instance_id").isNull() || (!h.get("original_instance_id").toString().equals(text(c,"owner_instance_id")) && !h.get("recovery_instance_id").toString().equals(text(c,"owner_instance_id")))),EVIDENCE_CHANGED);
         if(decimal(c,"row_version")==min){var released=(ObjectNode)old.deepCopy();released.put("mode","READY").put("row_version",Long.toString(min)).putNull("active_attempt_id").putNull("owner_instance_id").putNull("heartbeat_at");need(released.equals(c),EVIDENCE_CHANGED);}
-        expected.set("coordinator",c);return expected.equals(actual);
+        expected.set("coordinator",c);return NarrowContentFetchRecoveryHandoff.sameHistoricalAttemptSchema(expected,actual);
     }
     private static void terminal(ObjectNode expected,JsonNode actual,String state,String value,String code,String outcome,String time){
         need(actual.get(time).isString(),EVIDENCE_CHANGED);Instant.parse(text(actual,time));expected.put(state,value).put(code,outcome).put("row_version",Long.toString(decimal(expected,"row_version")+1));expected.set(time,actual.get(time));

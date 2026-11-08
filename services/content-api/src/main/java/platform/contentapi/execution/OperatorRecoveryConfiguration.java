@@ -37,6 +37,9 @@ public class OperatorRecoveryConfiguration {
                 if(Set.of("native-fetch-end","native-fetch-inspect").contains(nativeAction)){
                     exitCode=new NarrowContentFetchOperator(jdbc,tx,installation,env).run(nativeAction);return;
                 }
+                if(Set.of("native-content-end","native-content-inspect").contains(nativeAction)){
+                    exitCode=new NarrowContentTerminalOperator(jdbc,tx,installation,env).run(nativeAction);return;
+                }
                 UUID control=uuid(env.getProperty("ddip.recovery.control-id",""));
                 String action=env.getProperty("ddip.recovery.action","");need(Set.of("inspect","recover","resume","execute-resume").contains(action),INVALID_REQUEST);
                 if(action.equals("resume") || action.equals("execute-resume")){

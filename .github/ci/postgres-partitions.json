@@ -64,6 +64,12 @@
     "platform.contentapi.management.NarrowContentSilverReservationSqlIT",
     "platform.contentapi.management.NarrowContentPipelineIT",
     "platform.contentapi.management.NarrowContentPipelineSqlIT",
-    "platform.contentapi.management.NarrowContentSubmissionDiscoveryIT"
+    "platform.contentapi.management.NarrowContentPipelineCrashIT",
+    "platform.contentapi.management.NarrowContentPipelineRestartIT",
+    "platform.contentapi.management.NarrowContentPipelineRecoveryAssessmentIT",
+    "platform.contentapi.management.NarrowContentSubmissionDiscoveryIT",
+    "platform.contentapi.management.ContentTerminalSqlIT",
+    "platform.contentapi.management.NarrowContentTerminalIT",
+    "platform.contentapi.management.NarrowContentTerminalOperatorIT"
   ]
 }
