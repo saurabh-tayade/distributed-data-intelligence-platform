@@ -58,6 +58,20 @@ final class NarrowContentBronzeLaunch {
         return launchThen(guard,owner,fetchOperation,operation,launchProfile,b->{},current->
                 new NarrowContentBronzeCompletion(jdbc,tx,workers).complete(guard,current,verificationProfile,fault));
     }
+    /** Reservation-only successor of an acknowledged checkpoint in this same live invocation. */
+    NarrowContentSilverReservation.Facts reserveLaunchCheckpointAndReserveSilver(InstallationHostGuard guard,WorkerRepository.Owner owner,
+            UUID fetchOperation,UUID operation,String launchProfile,String verificationProfile,UUID silverOperation,
+            Consumer<NarrowContentBronzeCompletion.Boundary> completionFault,Consumer<NarrowContentSilverReservation.Boundary> fault){
+        require(guard!=null && owner!=null && fetchOperation!=null && operation!=null && silverOperation!=null
+                && !operation.equals(fetchOperation) && !silverOperation.equals(operation) && !silverOperation.equals(fetchOperation)
+                && launchProfile!=null && launchProfile.matches("[A-Za-z0-9_-]{1,128}")
+                && verificationProfile!=null && verificationProfile.matches("[A-Za-z0-9_-]{1,128}") && fault!=null && completionFault!=null
+                && !org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive(),WORKER_CONFIGURATION_INVALID);
+        var ready=NarrowContentAdmission.inspectReady(jdbc,tx,guard,owner.runId(),owner.attemptId());
+        StrictBronzeVerificationRuntime.load(jdbc,tx,guard,NarrowContentRuntimeQualification.inspect(jdbc,tx,ready),verificationProfile);
+        return launchThen(guard,owner,fetchOperation,operation,launchProfile,b->{},current->
+                new NarrowContentBronzeCompletion(jdbc,tx,workers).completeAndReserveSilver(guard,current,verificationProfile,silverOperation,completionFault,fault));
+    }
     private <T>T launchThen(InstallationHostGuard guard,WorkerRepository.Owner owner,UUID fetchOperation,UUID operation,
             String launchProfile,Consumer<Boundary> fault,java.util.function.Function<LiveCandidate,T> finish){
         require(guard!=null && owner!=null && operation!=null && fetchOperation!=null && !operation.equals(fetchOperation) && fault!=null,WORKER_CONFIGURATION_INVALID);

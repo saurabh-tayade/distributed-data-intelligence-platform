@@ -233,7 +233,7 @@ class PersistenceIT {
         assertThatThrownBy(() -> context("api")).hasMessage("MANAGEMENT_INCOMPATIBLE");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM pg_namespace WHERE nspname='ddip_management'",Integer.class)).isZero();
     }
-    @ParameterizedTest @ValueSource(strings={"stage_artifacts","content_operations","content_operation_phases"})
+    @ParameterizedTest @ValueSource(strings={"stage_artifacts","content_operations","content_operation_phases","content_silver_reservations"})
     void missingOperationalTableIsRejectedWithoutRecreation(String table) {
         migrate(); jdbc.execute("DROP TABLE ddip_management."+table+" CASCADE");
         assertThatThrownBy(() -> context("api")).hasMessage("MANAGEMENT_INCOMPATIBLE");

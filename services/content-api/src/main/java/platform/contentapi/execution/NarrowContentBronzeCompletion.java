@@ -11,7 +11,7 @@ import tools.jackson.databind.node.ObjectNode;
 import static platform.contentapi.execution.WorkerFailure.require;
 import static platform.contentapi.execution.WorkerFailure.Code.*;
 
-/** Inactive original-live-owner GET verification and native checkpoint. Never a successor capability. */
+/** Inactive original-live-owner GET verification and native checkpoint. Historical facts never grant authority. */
 final class NarrowContentBronzeCompletion {
     enum Boundary { INVENTORY_READ, VERIFY_BOUND, START_AUTHORIZED, CHILD_RECORDED, RELEASE_AUTHORIZED,
         BEFORE_DELIVERY, HEARTBEAT, REMOTE_VERIFIED, BEFORE_OBSERVED, OBSERVED_INSERTED, OBSERVED_COMMITTED,
@@ -23,6 +23,15 @@ final class NarrowContentBronzeCompletion {
         boolean checkpointed(){return true;}boolean nativeLaunchCompatible(){return false;}
         @Override public String toString(){return "NativeBronzeCheckpoint[historical GET observation; no continuation]";}
     }
+    /** Private-constructor, one-use callback channel, never returned from inspection or acknowledgment recovery. */
+    static final class LiveCheckpoint {
+        private final WorkerRepository.Owner owner;private final UUID operation;private final Runnable recheck;private boolean consumed;
+        private LiveCheckpoint(WorkerRepository.Owner owner,UUID operation,Runnable recheck){this.owner=owner;this.operation=operation;this.recheck=recheck;}
+        synchronized WorkerRepository.Owner consume(UUID expected){require(!consumed && operation.equals(expected),WORKER_NOT_READY);consumed=true;return owner;}
+        UUID operation(){return operation;}
+        void check(){require(consumed,WORKER_NOT_READY);recheck.run();}
+        @Override public String toString(){return "LiveBronzeCheckpoint[private; one use]";}
+    }
     private record Stamp(InstallationHostGuard.Identity identity,String modified,long size,String sha256) { }
     private final JdbcTemplate jdbc;private final ManagementTransactions tx;private final WorkerRepository workers;
     NarrowContentBronzeCompletion(JdbcTemplate jdbc,ManagementTransactions tx,WorkerRepository workers){
@@ -30,6 +39,18 @@ final class NarrowContentBronzeCompletion {
     }
     /** Only the private-constructor channel from a just-completed launch can enter. */
     Observation complete(InstallationHostGuard guard,NarrowContentBronzeLaunch.LiveCandidate live,String profile,Consumer<Boundary> fault){
+        return completeThen(guard,live,profile,fault,null);
+    }
+    NarrowContentSilverReservation.Facts completeAndReserveSilver(InstallationHostGuard guard,NarrowContentBronzeLaunch.LiveCandidate live,
+            String profile,UUID silverOperation,Consumer<Boundary> completionFault,Consumer<NarrowContentSilverReservation.Boundary> fault){
+        require(silverOperation!=null && completionFault!=null && fault!=null,WORKER_CONFIGURATION_INVALID);
+        var reserved=new java.util.concurrent.atomic.AtomicReference<NarrowContentSilverReservation.Facts>();
+        completeThen(guard,live,profile,completionFault,checkpoint->reserved.set(new NarrowContentSilverReservation(jdbc,tx,workers).reserve(guard,checkpoint,silverOperation,fault)));
+        // A confirmed historical checkpoint after lost acknowledgment never populated the live bridge.
+        require(reserved.get()!=null,OWNERSHIP_LOST);return reserved.get();
+    }
+    private Observation completeThen(InstallationHostGuard guard,NarrowContentBronzeLaunch.LiveCandidate live,String profile,
+            Consumer<Boundary> fault,Consumer<LiveCheckpoint> finish){
         require(guard!=null && live!=null && fault!=null && !org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive(),WORKER_CONFIGURATION_INVALID);
         UUID operation=live.operation();var current=new WorkerRepository.Owner[]{live.consume(operation)};
         require(live.candidate().state().equals("EXACT") && live.candidate().exitCode()==0,WORKER_NOT_READY);
@@ -82,12 +103,15 @@ final class NarrowContentBronzeCompletion {
         check(guard,current[0],material,runtime,launch,pins,false,false);
         var published=new java.util.concurrent.atomic.AtomicReference<JsonNode>();
         var preparation=new java.util.concurrent.atomic.AtomicReference<InstallationHostGuard.Identity>();
+        var successorDirectory=new java.util.concurrent.atomic.AtomicReference<Stamp>();
         PreparedCommand.writeOnce(directory,"verified.json",anchor,65536,b->{
             Path active=directory.resolve(b==PreparedCommand.WriteBoundary.MARKER_RENAMED || b==PreparedCommand.WriteBoundary.DIRECTORY_FORCED?"verified.json":"verified.json.preparing");
             if(b==PreparedCommand.WriteBoundary.PREFIX_CREATED)preparation.set(InstallationHostGuard.identity(active));
             require(preparation.get().equals(InstallationHostGuard.identity(active)),RUNTIME_MISMATCH);
             if(b==PreparedCommand.WriteBoundary.MARKER_RENAMED)published.set(stamp(active));
+            if(finish!=null && b==PreparedCommand.WriteBoundary.MARKER_RENAMED)successorDirectory.set(directoryStamp(directory));
             fault.accept(Boundary.valueOf(b.name()));
+            if(successorDirectory.get()!=null)require(successorDirectory.get().equals(directoryStamp(directory)),RUNTIME_MISMATCH);
             require(preparation.get().equals(InstallationHostGuard.identity(active)),RUNTIME_MISMATCH);
             if(b!=PreparedCommand.WriteBoundary.PREFIX_CREATED)require(Arrays.equals(anchor,PreflightFiles.read(active,65536,true)),RUNTIME_MISMATCH);
             check(guard,current[0],material,runtime,launch,pins,true,true);
@@ -98,6 +122,8 @@ final class NarrowContentBronzeCompletion {
         fault.accept(Boundary.BEFORE_CHECKPOINT);
         check(guard,current[0],material,runtime,launch,pins,true,false);anchor(directory,anchor,published.get());
         byte[] stamp=SourceJson.canonical(published.get());UUID checkpoint=UUID.fromString(directory.getFileName().toString());
+        var directoryStamp=successorDirectory.get();
+        if(finish!=null)require(directoryStamp!=null && directoryStamp.equals(directoryStamp(directory)),RUNTIME_MISMATCH);
         try{
             workers.narrowOperationTransaction(guard,current[0],()->{
                 jdbc.update("INSERT INTO ddip_management.content_bronze_checkpoints(operation_id,checkpoint_id,fetch_operation_id,candidate_sha256,receipt_bytes,receipt_sha256,verified_sha256,verified_stamp_bytes,verified_stamp_sha256,owner_coordinator_version,owner_worker_version,owner_run_version,owner_attempt_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -112,7 +138,19 @@ final class NarrowContentBronzeCompletion {
         }
         fault.accept(Boundary.CHECKPOINT_COMMITTED);
         require(confirm(operation,checkpoint,material.fetchOperation(),launch.candidateSha256(),receipt,anchor,stamp,current[0]),RUNTIME_MISMATCH);
-        return inspect(jdbc,tx,operation).orElseThrow(()->new WorkerFailure(RUNTIME_MISMATCH));
+        var observation=inspect(jdbc,tx,operation).orElseThrow(()->new WorkerFailure(RUNTIME_MISMATCH));
+        // The existing completion path returns detached facts even if live control changes after commit.
+        if(finish==null)return observation;
+        Runnable recheck=()->{
+            require(directoryStamp.equals(directoryStamp(directory)),RUNTIME_MISMATCH);
+            check(guard,current[0],material,runtime,launch,pins,true,false);anchor(directory,anchor,published.get());
+            require(directoryStamp.equals(directoryStamp(directory)),RUNTIME_MISMATCH);
+        };
+        recheck.run();finish.accept(new LiveCheckpoint(current[0],operation,recheck));return observation;
+    }
+    private static Stamp directoryStamp(Path directory){
+        try{PreflightFiles.privateEntry(directory,true);return new Stamp(InstallationHostGuard.identity(directory),Files.getLastModifiedTime(directory,LinkOption.NOFOLLOW_LINKS).toString(),Files.size(directory),null);}
+        catch(java.io.IOException ex){throw new PreflightFailure(PreflightFailure.Code.INPUT_UNAVAILABLE);}
     }
     private void check(InstallationHostGuard guard,WorkerRepository.Owner owner,NarrowContentBronzeReservation.Material material,
                        StrictBronzeVerificationRuntime runtime,NarrowContentBronzeLaunch.Facts launch,Map<Path,Stamp> pins,boolean anchor,boolean locked){

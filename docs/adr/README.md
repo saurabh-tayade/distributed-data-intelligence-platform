@@ -140,3 +140,5 @@ semantics and does not activate a launcher, receipt commit or ordinary Content d
 - [0040: Inactive guarded native Bronze launch](0040-inactive-guarded-bronze-launch.md)
 
 - [0041: Inactive native Bronze verification checkpoint](0041-inactive-native-bronze-checkpoint.md)
+
+- [0042: Inactive native Silver reservation](0042-inactive-native-silver-reservation.md)

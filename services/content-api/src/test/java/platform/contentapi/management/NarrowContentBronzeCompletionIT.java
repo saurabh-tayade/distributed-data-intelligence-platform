@@ -42,6 +42,18 @@ class NarrowContentBronzeCompletionIT extends NarrowContentBronzeLaunchFixtures 
         assertThat(boundaries).containsSubsequence("INVENTORY_READ","VERIFY_BOUND","START_AUTHORIZED","CHILD_RECORDED","RELEASE_AUTHORIZED","BEFORE_DELIVERY","REMOTE_VERIFIED","OBSERVED_COMMITTED","ANCHOR_WRITTEN","CHECKPOINT_COMMITTED");
         var after=metadata();after.remove("coordinator");after.remove("worker_instances");assertThat(after).isEqualTo(before);assertThat(observed()).contains(result);assertThat(count("content_bronze_checkpoints")).isEqualTo(1);retained();noReplay();
     }
+    @ParameterizedTest @ValueSource(strings={"cancel","candidate","directory"})
+    void ordinaryCheckpointObservationRemainsHistoricalAfterPostCommitChange(String change)throws Exception{
+        checkpoint();objectError=null;var changed=new AtomicBoolean();
+        var result=complete(b->{if(b.equals("CHECKPOINT_COMMITTED"))try{
+            if(change.equals("cancel"))cancel();
+            else if(change.equals("candidate"))Files.writeString(bronzeDirectory().resolve("result.json"),"changed");
+            else Files.setLastModifiedTime(bronzeDirectory(),java.nio.file.attribute.FileTime.fromMillis(1));
+            changed.set(true);
+        }catch(Exception ex){throw new IllegalStateException(ex);}});
+        assertThat(changed).isTrue();assertThat(result.checkpointed()).isTrue();assertThat(observed()).contains(result);
+        assertThat(count("content_silver_reservations")).isZero();retained();
+    }
     @Test void wholeChainPreservesSingleFetchAndCheckpointsBothStages(){
         prepared();objectError=null;
         var result=NarrowContentBronzeCompletionTestSupport.chain(jdbc,tx,workers,guard,owner,operation,LAUNCH_PROFILE,bronzeOperation,BRONZE_PROFILE,VERIFY_PROFILE,b->{});
