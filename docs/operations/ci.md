@@ -104,7 +104,8 @@ on independently provisioned Ubuntu 24.04 runners, each with its own pinned Post
 workspace, fixture roots and full pinned Python/Spark/DuckDB/JDK environment. The seven managed
 Content partitions (`ingestion`, `gold`, `content_recovery`, `native_fetch_recovery`,
 `native_bronze`, `native_publication`, `native_pipeline_recovery`) build the ingestion adapter and
-start pinned SeaweedFS, with cleanup guarded by `always()`. Core/import
+start pinned SeaweedFS, with cleanup guarded by `always()`. Core also builds the ingestion JAR
+and separate public-provider JAR before its ordinary-worker lifecycle tests. Core/import
 fixtures supply their own synthetic Bronze HTTP server and need no SeaweedFS service. Unit tests
 run once in core; other PostgreSQL partitions skip only Surefire units, never Failsafe integration.
 The analytics HTTP job retains its existing unit/integration command. It also installs the pinned

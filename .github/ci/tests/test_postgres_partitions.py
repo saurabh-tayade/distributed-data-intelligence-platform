@@ -129,6 +129,30 @@ class PostgresGateTests(unittest.TestCase):
                                               env={**os.environ, 'NEEDS_JSON': json.dumps(value)}, capture_output=True)
                     self.assertEqual(executed.returncode, 0 if result == 'success' else 1, executed.stderr)
 
+    def test_ordinary_lifecycle_partitions_build_adapters_without_extra_storage(self):
+        steps = dict(part.split("\n", 1) for part in POSTGRES_WORKFLOW.split('      - name: ')[1:])
+        build_name = 'Build prebuilt Java RSS and Bronze adapters for managed acceptance'
+        verify_name = 'Verify the complete partition and its actual integration reports'
+        build = steps[build_name]
+        artifact_groups = tuple(g for g in PARTITIONS.GROUPS if g != 'reliability')
+        storage_groups = tuple(g for g in artifact_groups if g != 'core')
+        expression = lambda groups: ' || '.join("inputs.partition == '" + g + "'" for g in groups)
+        self.assertIn('        if: ${{ ' + expression(artifact_groups) + ' }}', build)
+        self.assertIn('mvn -B -ntp -f ingestion/pom.xml package -DskipTests', build)
+        self.assertIn('export JAVA_HOME="$JAVA_HOME_21_X64"', build)
+        self.assertLess(POSTGRES_WORKFLOW.index(build_name), POSTGRES_WORKFLOW.index(verify_name))
+        inventory = PARTITIONS.inventory()
+        for name in ('platform.contentapi.management.OrdinaryContentWorkerLifecycleIT',
+                     'platform.contentapi.management.OrdinaryContentLegacyLifecycleIT'):
+            assigned = [g for g, classes in inventory.items() if name in classes]
+            self.assertEqual(len(assigned), 1)
+            self.assertIn(assigned[0], artifact_groups, name + ' requires both packaged ingestion artifacts')
+        # Core needs the JAR/provider, but its fixtures never need a SeaweedFS service.
+        self.assertIn('        if: ${{ ' + expression(storage_groups) + ' }}',
+                      steps['Start isolated Bronze acceptance storage'])
+        self.assertIn('        if: ${{ always() && (' + expression(storage_groups) + ') }}',
+                      steps['Remove isolated Bronze acceptance storage'])
+
     def test_independent_jobs_preserve_logical_check_and_safe_skip(self):
         for group, job in zip(PARTITIONS.GROUPS, JOBS):
             body = block(job)

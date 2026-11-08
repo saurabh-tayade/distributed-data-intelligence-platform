@@ -389,10 +389,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("**/ReliabilityApiIT.java", pom)
         self.assertIn("**/ContentApiIT.java", pom)
 
-    def test_all_managed_content_partitions_build_provision_and_always_cleanup(self):
+    def test_artifact_build_and_managed_storage_prerequisites_are_distinct(self):
         managed = "inputs.partition == 'ingestion' || inputs.partition == 'gold' || inputs.partition == 'content_recovery' || inputs.partition == 'native_fetch_recovery' || inputs.partition == 'native_bronze' || inputs.partition == 'native_publication' || inputs.partition == 'native_pipeline_recovery'"
         for name, condition, command in (
-            ("Build prebuilt Java RSS and Bronze adapters for managed acceptance", managed,
+            ("Build prebuilt Java RSS and Bronze adapters for managed acceptance", "inputs.partition == 'core' || " + managed,
              "mvn -B -ntp -f ingestion/pom.xml package -DskipTests"),
             ("Start isolated Bronze acceptance storage", managed, "docker run --detach"),
             ("Remove isolated Bronze acceptance storage", "always() && (" + managed + ")", "docker rm --force --volumes"),
