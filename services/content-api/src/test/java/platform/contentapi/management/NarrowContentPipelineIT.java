@@ -15,6 +15,57 @@ class NarrowContentPipelineIT extends NarrowContentPipelineFixtures {
     NarrowContentPipelineTestSupport.Completed execute(java.util.function.Consumer<NarrowContentPipelineTestSupport.Event> fault){
         return NarrowContentPipelineTestSupport.execute(jdbc,tx,workers,guard,owner,PIPELINE_PROFILE,fault);
     }
+    byte[] boundaryPayload;
+    @org.junit.jupiter.api.BeforeEach void resetBoundaryPayload(){boundaryPayload=null;}
+    @Override byte[] responsePayload(){return boundaryPayload==null?super.responsePayload():boundaryPayload;}
+    private byte[] payloadAt(int bytes){
+        var xml=new StringBuilder("<feed xmlns=\"http://www.w3.org/2005/Atom\"><title>Boundary corpus</title>");
+        for(int i=0;i<64;i++)xml.append("<entry><id>urn:envelope:").append(i)
+                .append("</id><title>Escaped &amp; &quot; ").append("é 🚀 ".repeat(32))
+                .append("</title><link href=\"https://example.test/article/").append(i)
+                .append("\"/><updated>2026-10-30T00:00:00Z</updated><summary>Local fixture</summary></entry>");
+        xml.append("<!--");String suffix="--></feed>";
+        int pad=bytes-xml.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length-suffix.length();
+        assertThat(pad).isPositive();xml.append("x".repeat(pad)).append(suffix);
+        var raw=xml.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);assertThat(raw).hasSize(bytes);return raw;
+    }
+    @Test void exactFetchPayloadLimitTraversesCurrentChainWithMeasuredCompleteEnvelopes()throws Exception{
+        boundaryPayload=payloadAt(5*1024*1024);original();long start=System.nanoTime();
+        var complete=execute(e->{});
+        assertThat(count("content_pipeline_checkpoints")).isEqualTo(15);
+        assertThat(requests).hasValue(1);assertThat(objectWrites).hasValue(2);
+        assertThat(jdbc.queryForObject("SELECT state FROM ddip_management.runs WHERE run_id=?",String.class,owner.runId())).isEqualTo("SUCCEEDED");
+        var before=filesystem();
+        var report=NarrowContentEnvelopeTestSupport.measure(jdbc,attemptRoot(),owner.runId(),owner.attemptId(),"demo-feed");
+        report.put("corpus","exact-fetch-limit-64-escaped-articles").put("elapsedMillis",(System.nanoTime()-start)/1000000);
+        var history=new RunHistoryRepository(jdbc,tx,new SourceCursor(SourceFixtures.KEY));
+        assertThat(history.get(owner.runId().toString()).get("counts").get("articles").stringValue()).isEqualTo("64");
+        assertThat(history.get(owner.runId().toString()).get("result").get("artifactId").stringValue()).isEqualTo(complete.artifact().toString());
+        assertThat(filesystem()).isEqualTo(before);
+        assertThat(NarrowContentPipelineTestSupport.ordinaryContentDispatchAvailable()).isFalse();
+        System.out.println("CONTENT_ENVELOPE_MEASUREMENT "+new String(SourceJson.canonical(report),java.nio.charset.StandardCharsets.UTF_8));
+    }
+    @Test void firstByteBeyondFetchLimitCannotReachBronzeOrSuccess()throws Exception{
+        boundaryPayload=payloadAt(5*1024*1024+1);original();
+        assertThatThrownBy(()->execute(e->{})).isInstanceOf(RuntimeException.class);
+        assertThat(requests).hasValue(1);assertThat(objectRequests).hasValue(0);assertThat(objectWrites).hasValue(0);
+        UUID fetchSlot=jdbc.queryForObject("SELECT checkpoint_id FROM ddip_management.content_native_operations WHERE attempt_id=?",UUID.class,owner.attemptId());
+        var fetch=attemptRoot().resolve("fetch-source/demo-feed/"+fetchSlot);
+        var result=SourceJson.parse(Files.readAllBytes(fetch.resolve("result.json")));
+        assertThat(result.get("status").stringValue()).isEqualTo("FAILED");
+        assertThat(result.get("code").stringValue()).isEqualTo("FETCH_PAYLOAD_TOO_LARGE");
+        assertThat(fetch.resolve("complete.json")).doesNotExist();assertThat(fetch.resolve("payload.xml")).doesNotExist();
+        for(String table:List.of("content_fetch_checkpoints","content_bronze_reservations","content_pipeline_operations","content_pipeline_completions"))assertThat(count(table)).as(table).isZero();
+        assertThat(jdbc.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isEqualTo(owner.attemptId());
+        assertThat(jdbc.queryForObject("SELECT result_artifact_id FROM ddip_management.runs WHERE run_id=?",UUID.class,owner.runId())).isNull();
+        var before=filesystem();int calls=requests.get();
+        assertThatThrownBy(()->execute(e->{})).isInstanceOf(RuntimeException.class);
+        assertThat(requests).hasValue(calls);assertThat(filesystem()).isEqualTo(before);
+        assertThat(NarrowContentPipelineTestSupport.ordinaryContentDispatchAvailable()).isFalse();
+        var report=NarrowContentEnvelopeTestSupport.measure(jdbc,attemptRoot(),owner.runId(),owner.attemptId(),"demo-feed");
+        report.put("corpus","first-rejected-fetch-byte");
+        System.out.println("CONTENT_ENVELOPE_MEASUREMENT "+new String(SourceJson.canonical(report),java.nio.charset.StandardCharsets.UTF_8));
+    }
     @Test void originalFetchThroughContentUsesAllSeventeenOperationsAndRealFinalProof()throws Exception{
         original();assertThat(NarrowContentPipelineTestSupport.ordinaryContentDispatchAvailable()).isFalse();var spare=NarrowContentPipelineTestSupport.spareDirectories(jdbc,tx,guard,owner);var events=new ArrayList<NarrowContentPipelineTestSupport.Event>();
         var completed=execute(e->{events.add(e);if(!e.boundary().equals("HEARTBEAT"))System.out.println("STRICT_PIPELINE_EVENT "+e);});
