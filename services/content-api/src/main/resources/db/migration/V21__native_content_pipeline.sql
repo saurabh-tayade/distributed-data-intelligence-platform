@@ -734,7 +734,19 @@ BEGIN
   IF NOT FOUND THEN
    RAISE EXCEPTION USING MESSAGE='CONTENT_ADMISSION_ATTEMPT_REQUIRED',ERRCODE='23503'; END IF;
  ELSE target:=NEW.run_id; END IF;
- -- Visible attempts still serialize exclusion with pipeline reservation/ownership.
+ -- Match V16's run-enrollment fast path: legacy-only runs must not take the
+ -- global coordinator lock. Snapshot writers first fence the run so a concurrent
+ -- native claim cannot remain invisible after changing that run's ownership.
+ IF current_setting('transaction_isolation') IS DISTINCT FROM 'read committed' THEN
+  PERFORM 1 FROM runs WHERE run_id=target FOR SHARE;
+  IF NOT FOUND THEN
+   RAISE EXCEPTION USING MESSAGE='CONTENT_PIPELINE_RUN_REQUIRED',ERRCODE='23503'; END IF;
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM attempts WHERE run_id=target AND
+   (content_admission_policy IS NOT NULL OR content_recovery_policy IS NOT NULL)) THEN
+  RETURN NEW;
+ END IF;
+ -- Enrolled runs still serialize exclusion with pipeline reservation/ownership.
  PERFORM 1 FROM coordinator WHERE singleton_id=1 FOR UPDATE;
  IF EXISTS(SELECT 1 FROM content_pipeline_operations o JOIN attempts a USING(attempt_id) WHERE a.run_id=target) THEN
   RAISE EXCEPTION USING MESSAGE='CONTENT_PIPELINE_LEGACY_HISTORY_FORBIDDEN',ERRCODE='23514'; END IF;

@@ -233,10 +233,11 @@ class NarrowContentFetchRecoveryHandoffIT extends NarrowContentFetchLaunchFixtur
         assertThat(jdbc.queryForObject("SELECT attempt_no FROM ddip_management.attempts WHERE attempt_id=?",Integer.class,successor)).isEqualTo(3);
         assertThat(repo.lookup(handoff)).isEqualTo("CONFIRMED_HANDOFF");occupied(successor);
     }
-    @Test void staleRepeatableReadCannotAddLegacyStageAfterRunEnrollmentAndHandoff()throws Exception{
+    @ParameterizedTest @ValueSource(ints={java.sql.Connection.TRANSACTION_REPEATABLE_READ,java.sql.Connection.TRANSACTION_SERIALIZABLE})
+    void staleSnapshotCannotAddLegacyStageAfterRunEnrollmentAndHandoff(int isolation)throws Exception{
         var prior=queuedWithUnmarkedTerminalAttempt();
         try(var stale=jdbc.getDataSource().getConnection()){
-            stale.setTransactionIsolation(java.sql.Connection.TRANSACTION_REPEATABLE_READ);stale.setAutoCommit(false);
+            stale.setTransactionIsolation(isolation);stale.setAutoCommit(false);
             try(var read=stale.prepareStatement("SELECT state FROM ddip_management.runs WHERE run_id=?")){
                 read.setObject(1,prior.run());try(var rows=read.executeQuery()){assertThat(rows.next()).isTrue();assertThat(rows.getString(1)).isEqualTo("QUEUED");}
             }
@@ -252,7 +253,8 @@ class NarrowContentFetchRecoveryHandoffIT extends NarrowContentFetchLaunchFixtur
             assertThat(history()).isEqualTo(before);occupied(successor);assertThat(repo.lookup(handoff)).isEqualTo("CONFIRMED_HANDOFF");
         }
     }
-    @Test void unmarkedLegacyStageDoesNotAcquireGlobalCoordinatorLock()throws Exception{
+    @ParameterizedTest @ValueSource(ints={java.sql.Connection.TRANSACTION_READ_COMMITTED,java.sql.Connection.TRANSACTION_REPEATABLE_READ,java.sql.Connection.TRANSACTION_SERIALIZABLE})
+    void unmarkedLegacyStageDoesNotAcquireGlobalCoordinatorLock(int isolation)throws Exception{
         var prior=queuedWithUnmarkedTerminalAttempt();
         try(var pool=Executors.newVirtualThreadPerTaskExecutor()){
             try(var holder=jdbc.getDataSource().getConnection()){
@@ -261,7 +263,7 @@ class NarrowContentFetchRecoveryHandoffIT extends NarrowContentFetchLaunchFixtur
                     lock.setQueryTimeout(5);try(var rows=lock.executeQuery("SELECT singleton_id FROM ddip_management.coordinator FOR UPDATE")){assertThat(rows.next()).isTrue();}
                     var insert=pool.submit(()->{
                         try(var writer=jdbc.getDataSource().getConnection();var statement=writer.prepareStatement("INSERT INTO ddip_management.stage_invocations(attempt_id,stage,item_ordinal,checkpoint_id,state,input_evidence_sha256) VALUES (?,'CHECK_INPUTS',0,?,'INTENT',?)")){
-                            writer.setTransactionIsolation(java.sql.Connection.TRANSACTION_READ_COMMITTED);writer.setAutoCommit(true);statement.setQueryTimeout(5);
+                            writer.setTransactionIsolation(isolation);writer.setAutoCommit(true);statement.setQueryTimeout(5);
                             statement.setObject(1,prior.attempt());statement.setObject(2,UUID.randomUUID());statement.setString(3,"a".repeat(64));return statement.executeUpdate();
                         }
                     });

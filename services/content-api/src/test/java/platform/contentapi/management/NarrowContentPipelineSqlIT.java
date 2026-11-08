@@ -34,11 +34,11 @@ class NarrowContentPipelineSqlIT extends NarrowContentPipelineFixtures {
         assertThat(objectRequests).hasValue(calls);assertThat(count("content_pipeline_phases")).isZero();
     }
     @Test void visibleAttemptStageExclusionStillWaitsForCoordinatorFence()throws Exception{
-        capture();insert();var locked=new java.util.concurrent.CountDownLatch(1);
+        capture();var locked=new java.util.concurrent.CountDownLatch(1);
         var release=new java.util.concurrent.CountDownLatch(1);var started=new java.util.concurrent.CountDownLatch(1);
         try(var pool=java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()){
             var holder=pool.submit(()->tx.required(()->{
-                jdbc.queryForObject("SELECT singleton_id FROM ddip_management.coordinator WHERE singleton_id=1 FOR UPDATE",Integer.class);
+                insert(); // Keep the first pipeline operation uncommitted while the legacy writer starts.
                 locked.countDown();try{assertThat(release.await(10,java.util.concurrent.TimeUnit.SECONDS)).isTrue();}
                 catch(InterruptedException ex){throw new RuntimeException(ex);}return null;
             }));
