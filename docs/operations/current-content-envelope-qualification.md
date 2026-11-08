@@ -87,13 +87,25 @@ in 53m05s Maven (about 54 minutes including setup), within the unchanged 90-minu
 trusted classifier skipped untouched Python processing, ingestion and JDBC jobs; main CI #216
 passed those broader regressions. PR #134 merged as `91ca818`.
 
-## Remaining activation gates
+## Subsequent qualification and remaining gates
 
-This finite corpus does not establish every admitted workload fits. The
-[producer-pressure qualification](content-pressure-qualification.md) adds the concrete pending
-row/reference/layout and interrupted safe-end observations using the unchanged producer. Its focused
-results do not replace final-head CI with measured partition headroom or a bounded envelope/authority
-closure verdict. Historical legacy measurements and synthetic shape mirrors cannot substitute for
-current-chain observations. Any necessary change to admission limits or supported workload requires
-its own reviewed decision. Ordinary dispatch activation and later end-to-end Operations/UI acceptance
-remain separate work; no successful test or detached assessment authorizes them.
+The [producer-pressure qualification](content-pressure-qualification.md) completed the identified
+row/reference/layout and interrupted safe-end corpus using the unchanged producer. Final-head
+[CI #219](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/42495925021)
+passed all 19 jobs and 240 native-publication cases, including all three pressure cases;
+[PR #135](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/pull/135)
+merged as `d54fa397`. The native-publication job took about 75 minutes in Maven and 77 minutes
+including setup. These are hosted results, distinct from the local observations above.
+
+The [bounded B0 closure matrix](content-b0-closure.md) maps current producers, caps, actual readers,
+refusal behavior and tests. It found no concrete uncovered internal original-chain authority
+transition. Its remaining evidence-closure conditions are independent review and exact-head
+verification of the exhaustive CI partition split's capacity. Historical legacy measurements or
+synthetic shape mirrors do not substitute for current-chain observations, but no unspecified new
+maximum-workload corpus is required by this verdict.
+
+This finite evidence does not promise every admitted workload succeeds: bounded refusal and
+retained occupancy remain supported safety outcomes. A change to limits or supported scope needs
+its own reviewed decision. Ordinary-worker wiring and activation acceptance, followed by the
+separate Operations/UI acceptance, remain outstanding; neither this document nor successful tests
+close Gate B0 or authorize dispatch. Issues #123 and #124 remain deferred.

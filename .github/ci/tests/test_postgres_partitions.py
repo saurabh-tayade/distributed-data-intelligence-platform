@@ -1,4 +1,4 @@
-"""Complete source inventory, actual Maven reports and eight-way fail-closed fan-in."""
+"""Complete source inventory, actual Maven reports and nine-way fail-closed fan-in."""
 import importlib.util
 import itertools
 import json
@@ -50,16 +50,18 @@ NATIVE_BRONZE = (
 NATIVE_PUBLICATION = (
     'platform.contentapi.management.NarrowContentSilverReservationIT',
     'platform.contentapi.management.NarrowContentSilverReservationSqlIT',
-    "platform.contentapi.management.NarrowContentPipelineIT",
-    "platform.contentapi.management.NarrowContentPressureIT",
-    "platform.contentapi.management.NarrowContentPipelineSqlIT",
-    "platform.contentapi.management.NarrowContentPipelineCrashIT",
-    "platform.contentapi.management.NarrowContentPipelineRestartIT",
-    "platform.contentapi.management.NarrowContentPipelineRecoveryAssessmentIT",
-    "platform.contentapi.management.NarrowContentSubmissionDiscoveryIT",
-    "platform.contentapi.management.ContentTerminalSqlIT",
-    "platform.contentapi.management.NarrowContentTerminalIT",
-    "platform.contentapi.management.NarrowContentTerminalOperatorIT",
+    'platform.contentapi.management.NarrowContentPipelineIT',
+    'platform.contentapi.management.NarrowContentPipelineSqlIT',
+    'platform.contentapi.management.NarrowContentSubmissionDiscoveryIT',
+)
+NATIVE_PIPELINE_RECOVERY = (
+    'platform.contentapi.management.NarrowContentPressureIT',
+    'platform.contentapi.management.NarrowContentPipelineCrashIT',
+    'platform.contentapi.management.NarrowContentPipelineRestartIT',
+    'platform.contentapi.management.NarrowContentPipelineRecoveryAssessmentIT',
+    'platform.contentapi.management.ContentTerminalSqlIT',
+    'platform.contentapi.management.NarrowContentTerminalIT',
+    'platform.contentapi.management.NarrowContentTerminalOperatorIT',
 )
 CONTENT_RECOVERY = (
     'platform.contentapi.execution.ContentRecoveryIT',
@@ -107,6 +109,22 @@ class PostgresGateTests(unittest.TestCase):
                                     env={**os.environ, 'NEEDS_JSON': value}, capture_output=True)
             self.assertEqual(result.returncode, expected)
 
+    def test_selected_native_pipeline_recovery_requires_success(self):
+        job = 'content_postgres_native_pipeline_recovery'
+        for mode in ('full', 'selective'):
+            for result in (None, 'failure', 'cancelled', 'skipped', 'timed_out', 'success'):
+                with self.subTest(mode=mode, result=result):
+                    value = needs()
+                    value['changes']['outputs']['mode'] = mode
+                    if result is None:
+                        del value[job]
+                    else:
+                        value[job]['result'] = result
+                    self.assertEqual(GATE(value), result == 'success')
+                    executed = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', run_script('content_postgres')],
+                                              env={**os.environ, 'NEEDS_JSON': json.dumps(value)}, capture_output=True)
+                    self.assertEqual(executed.returncode, 0 if result == 'success' else 1, executed.stderr)
+
     def test_independent_jobs_preserve_logical_check_and_safe_skip(self):
         for group, job in zip(PARTITIONS.GROUPS, JOBS):
             body = block(job)
@@ -151,13 +169,14 @@ class PostgresInventoryTests(unittest.TestCase):
         self.assertEqual(PARTITIONS.inventory(self.root), self.groups)
         self.assertEqual(len(sum(self.groups.values(), [])), len(set(sum(self.groups.values(), []))))
         self.assertEqual({k: len(v) for k, v in self.groups.items()},
-                         dict(core=14, reliability=7, ingestion=3, gold=3, content_recovery=3, native_fetch_recovery=11, native_bronze=5, native_publication=12))
+                         dict(core=14, reliability=7, ingestion=3, gold=3, content_recovery=3, native_fetch_recovery=11, native_bronze=5, native_publication=5, native_pipeline_recovery=7))
         self.assertEqual(len(sum(self.groups.values(), [])), 58)
         self.assertEqual(tuple(self.groups['gold']), GOLD)
         self.assertEqual(tuple(self.groups['content_recovery']), CONTENT_RECOVERY)
         self.assertEqual(tuple(self.groups['native_fetch_recovery']), NATIVE_FETCH_RECOVERY)
         self.assertEqual(tuple(self.groups['native_bronze']), NATIVE_BRONZE)
         self.assertEqual(tuple(self.groups['native_publication']), NATIVE_PUBLICATION)
+        self.assertEqual(tuple(self.groups['native_pipeline_recovery']), NATIVE_PIPELINE_RECOVERY)
 
     def test_exact_analytics_http_inventory_is_separate(self):
         self.assertEqual(PARTITIONS.HTTP_CLASSES, HTTP_CLASSES)
@@ -203,8 +222,8 @@ class PostgresInventoryTests(unittest.TestCase):
                 with self.assertRaises(ValueError): PARTITIONS.inventory(self.root)
                 path.write_text(original)
 
-    def test_gold_and_content_recovery_selectors_are_exact(self):
-        for partition, classes in (('gold', GOLD), ('content_recovery', CONTENT_RECOVERY), ('native_fetch_recovery', NATIVE_FETCH_RECOVERY), ('native_bronze', NATIVE_BRONZE), ('native_publication', NATIVE_PUBLICATION)):
+    def test_native_and_content_recovery_selectors_are_exact(self):
+        for partition, classes in (('gold', GOLD), ('content_recovery', CONTENT_RECOVERY), ('native_fetch_recovery', NATIVE_FETCH_RECOVERY), ('native_bronze', NATIVE_BRONZE), ('native_publication', NATIVE_PUBLICATION), ('native_pipeline_recovery', NATIVE_PIPELINE_RECOVERY)):
             with self.subTest(partition=partition):
                 result = subprocess.run([sys.executable, '-I', '-B', str(ROOT / '.github/ci/postgres_partitions.py'),
                                          '--partition', partition], check=True, capture_output=True, text=True)
@@ -276,10 +295,14 @@ class PostgresInventoryTests(unittest.TestCase):
 
     def test_missing_or_extra_partition_fails(self):
         path = self.root / '.github/ci/postgres-partitions.json'
-        for change in (lambda n: n.pop('content_recovery'), lambda n: n.update(unknown=['platform.contentapi.NewIT'])):
-            path.write_text(json.dumps(self.groups))
-            self.manifest(change)
-            with self.assertRaises(ValueError): PARTITIONS.inventory(self.root)
+        for group in PARTITIONS.GROUPS:
+            with self.subTest(group=group):
+                path.write_text(json.dumps(self.groups))
+                self.manifest(lambda n: n.pop(group))
+                with self.assertRaises(ValueError): PARTITIONS.inventory(self.root)
+        path.write_text(json.dumps(self.groups))
+        self.manifest(lambda n: n.update(unknown=['platform.contentapi.NewIT']))
+        with self.assertRaises(ValueError): PARTITIONS.inventory(self.root)
 
     def test_new_integration_class_cannot_escape(self):
         for name in ('NewIT', 'ITNew', 'NewITCase'):

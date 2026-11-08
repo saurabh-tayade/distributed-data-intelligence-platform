@@ -299,11 +299,19 @@ jobs:
     with:
       partition: native_publication
 
+  content_postgres_native_pipeline_recovery:
+    name: PostgreSQL native pipeline recovery integration
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.content_postgres != 'false') }}
+    uses: ./.github/workflows/postgres-partition.yml
+    with:
+      partition: native_pipeline_recovery
+
   content_postgres:
     name: Java 21 PostgreSQL execution and recovery
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    needs: [changes, content_postgres_core, content_postgres_reliability, content_postgres_ingestion, content_postgres_gold, content_postgres_content_recovery, content_postgres_native_fetch_recovery, content_postgres_native_bronze, content_postgres_native_publication]
+    needs: [changes, content_postgres_core, content_postgres_reliability, content_postgres_ingestion, content_postgres_gold, content_postgres_content_recovery, content_postgres_native_fetch_recovery, content_postgres_native_bronze, content_postgres_native_publication, content_postgres_native_pipeline_recovery]
     if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.content_postgres != 'false') }}
     steps:
       - name: Require every selected PostgreSQL partition
@@ -315,7 +323,7 @@ jobs:
           import os
 
           def check_postgres(needs):
-              partitions = ('content_postgres_core', 'content_postgres_reliability', 'content_postgres_ingestion', 'content_postgres_gold', 'content_postgres_content_recovery', 'content_postgres_native_fetch_recovery', 'content_postgres_native_bronze', 'content_postgres_native_publication')
+              partitions = ('content_postgres_core', 'content_postgres_reliability', 'content_postgres_ingestion', 'content_postgres_gold', 'content_postgres_content_recovery', 'content_postgres_native_fetch_recovery', 'content_postgres_native_bronze', 'content_postgres_native_publication', 'content_postgres_native_pipeline_recovery')
               if not isinstance(needs, dict) or set(needs) != {'changes', *partitions}:
                   return False
               changes = needs['changes']
