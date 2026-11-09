@@ -15,7 +15,7 @@ public final class ControlCommands {
     public static Command parse(String run,byte[] bytes,String key,String ifMatch) {
         UUID id=UUID.fromString(SourceCommands.uuid(run));require(key!=null && key.matches("[A-Za-z0-9_-]{1,128}"));
         var body=SourceJson.parse(bytes);SourceJson.fields(body,"action","attemptId","quiescenceConfirmed");
-        String action=SourceJson.text(body.get("action"));require(action.equals("RECONCILE") || action.equals("RESUME"));UUID attempt=null;
+        String action=SourceJson.text(body.get("action"));require(action.equals("RECONCILE") || action.equals("RESUME") || action.equals("CANCEL"));UUID attempt=null;
         if(action.equals("RECONCILE")){require(SourceJson.bool(body.get("quiescenceConfirmed")));attempt=UUID.fromString(SourceCommands.uuid(SourceJson.text(body.get("attemptId"))));}
         else require(body.get("attemptId").isNull() && body.get("quiescenceConfirmed").isNull());
         if(ifMatch==null)throw new SourceFailure(SourceFailure.Code.PRECONDITION_REQUIRED);

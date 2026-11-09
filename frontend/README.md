@@ -834,3 +834,26 @@ changes. `src/contentNativeParity.test.ts` validates all generated native-backed
 when `DDIP_CONTENT_HTTP_FIXTURES` is supplied; the analytics HTTP CI job supplies it. The
 [report contract](../docs/architecture/content-discovery-api.md) documents reproduction and
 scope. Report selection is mounted-session state, not an added browser-history route.
+
+### Offline queued-run cancellation
+
+Run inspection now offers explicit review and confirmation of CANCEL for a freshly read
+QUEUED run with zero attempts and no current attempt. Running and terminal cancellation,
+RETRY, RECONCILE and ordinary Content dispatch remain disabled. The backend is authoritative:
+review captures the run ETag, and sending uses that ETag in `If-Match`, a generated
+`Idempotency-Key`, and exactly `{"action":"CANCEL","attemptId":null,"quiescenceConfirmed":null}`.
+
+The versioned `ddip.cancel-run-intent.v1` tab-session record retains the exact command across
+navigation and reload. Review does not transmit. Duplicate clicks cannot send twice; unknown
+outcomes can only be resolved by explicit same-key/body/ETag replay. No mutation is retried
+automatically. Storage failures disable new intents rather than silently forgetting them.
+Confirmed receipts retain the control ETag and identity separately from the run ETag; the
+receipt panel reads the current run independently and reports read failures without losing
+the receipt. The existing run inspection snapshot remains an independent observation.
+
+## Queued cancellation
+
+Operations supports reviewed cancellation of original, never-claimed queued runs.
+See the [queued cancellation contract](../docs/operations/queued-run-cancellation.md)
+for API conditions, retained request resolution, race semantics and remaining gates.
+Running cancellation and retry are not enabled by this increment.

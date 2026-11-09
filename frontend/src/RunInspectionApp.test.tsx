@@ -59,7 +59,8 @@ describe('read-only run inspection and panel domains', () => {
     expect(record().getByText('REQUESTED', { selector: 'dd' })).toBeVisible(); // Independent observations do not rewrite the parent snapshot.
     expect(fetch.mock.calls.every((call) => (call[1] as RequestInit).method === 'GET')).toBe(true);
     expect(fetch.mock.calls.some((call) => String(call[0]).includes('/sources'))).toBe(false);
-    expect(screen.queryByRole('button', { name: /reconcile|resume|cancel|submit|retry run/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /reconcile|resume|submit|retry run/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Review queued-run cancellation' })).toBeDisabled();
   });
 
   it.each(['content-intelligence', 'application-reliability'] as const)('shows historical %s publication verification without activation or artifact links', async (product) => {
