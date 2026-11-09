@@ -96,7 +96,8 @@ class QueuedCancelIT extends RunApiFixtures {
             assertThat(controls.request(command("other-queued",0)).get("state").stringValue()).isEqualTo("APPLIED");
             assertThat(jdbc.queryForList("SELECT * FROM ddip_management.coordinator")).isEqualTo(slot);
             assertThat(jdbc.queryForList("SELECT * FROM ddip_management.attempts")).isEqualTo(attempts);
-            assertThat(jdbc.queryForMap("SELECT * FROM ddip_management.runs WHERE run_id=?",occupied)).isEqualTo(activeRun);
+            // JDBC materializes fresh byte arrays for frozen request and selection columns.
+            assertThat(jdbc.queryForMap("SELECT * FROM ddip_management.runs WHERE run_id=?",occupied)).usingRecursiveComparison().isEqualTo(activeRun);
         }
     }
     @Test void queuedHistoricalAttemptCannotBeCancelled()throws Exception{
