@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en">
+  <id>https://example.com/ddip/qualification</id>
+  <title>DDIP synthetic qualification feed</title>
+  <updated>2026-11-01T12:00:00Z</updated>
+  <author><name>Invented Test Publisher</name></author>
+  <entry>
+    <id>https://example.com/ddip/qualification/paper-star</id>
+    <title>A paper star in an imaginary observatory</title>
+    <updated>2026-11-01T12:00:00Z</updated>
+    <published>2026-11-01T12:00:00Z</published>
+    <link rel="alternate" href="https://example.com/ddip/qualification/paper-star"/>
+    <summary>This invented test article describes a paper star in an imaginary observatory.</summary>
+  </entry>
+</feed>
