@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { canRetryRun, reviewRetryRun, useRetryIntent } from './retryIntent';
 import { canCancelRun, reviewCancelRun, useCancelIntent } from './cancelIntent';
 import type { ControlReceipt, LatestControl } from '../managementApi';
 import type { ExecutionFilters } from '../navigation';
@@ -33,6 +34,7 @@ function ControlPanel({ runId, controlId }: { runId: string; controlId: string }
 }
 export function RunDetail({ runId, returnQuery }: { runId: string; returnQuery: ExecutionFilters }) {
   const model = useRunDetail(runId), record = model.data?.data ?? null;
+  const retry = useRetryIntent(), [retryStorageError, setRetryStorageError] = useState(false);
   const cancellation = useCancelIntent(), [storageError, setStorageError] = useState(false);
   return <section aria-label="Run inspection">
     <a className="source-back" href={executionsHref(returnQuery)}>Back to Executions</a>
@@ -75,11 +77,18 @@ export function RunDetail({ runId, returnQuery }: { runId: string; returnQuery: 
       </>}
     </section>
     <section className="panel" aria-label="Run cancellation"><h2>Run cancellation</h2>
-      <p>Cancel never-started QUEUED runs, or request a bounded stop of a first-attempt RUNNING Reliability run. Running cancellation may require recovery and verified publication can still succeed. Content running cancellation and RETRY remain disabled.</p>
+      <p>Cancel never-started QUEUED runs, or request a bounded stop of a first-attempt RUNNING Reliability run. Running cancellation may require recovery and verified publication can still succeed. Content running cancellation and cancellation of later attempts remain disabled.</p>
       <button type="button" disabled={!model.data || !canCancelRun(model.data) || model.refreshing || model.hidden || !!model.error || cancellation.unavailable || !!cancellation.intent} onClick={() => {
         try { if (model.data) reviewCancelRun(model.data); } catch { setStorageError(true); }
       }}>Review {record?.state === 'RUNNING' ? 'running' : 'queued'}-run cancellation</button>
       {storageError && <p role="alert">Unable to retain cancellation review. No request was sent.</p>}
+    </section>
+    <section className="panel" aria-label="Guarded retry"><h2>Guarded Reliability retry</h2>
+      <p>A historical eligibility flag allows review, not execution. The server admits intent; a separate local operator command freshly qualifies immutable dependencies and the absent publication namespace before requeueing. Content retry remains disabled.</p>
+      <button type="button" disabled={!model.data || !canRetryRun(model.data) || model.refreshing || model.hidden || !!model.error || retry.unavailable || !!retry.intent} onClick={() => {
+        try { if (model.data) reviewRetryRun(model.data); } catch { setRetryStorageError(true); }
+      }}>Review guarded retry</button>
+      {retryStorageError && <p role="alert">Unable to retain retry review. No request was sent.</p>}
     </section>
     <AttemptHistory runId={runId} /><AuditTimeline runId={runId} />
     <section className="panel source-detail-panel" aria-label="Latest control receipt"><h2>Latest control receipt</h2>

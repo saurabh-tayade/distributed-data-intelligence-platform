@@ -47,7 +47,7 @@ final class RecoveryFinalization {
             var after=RecoveryNativeSeal.capture(runtime,pack,old.fingerprint());need(before.same(after),EVIDENCE_CHANGED);
             handoffs.verificationReview(guard,bootstrap,review,fresh.stage().owner());handoffs.verificationChild(fresh.stage().child());
             var decision=decision(facts,after,old.fingerprint());
-            if(cancellation!=null){need(Set.of("VERIFIED_PUBLICATION","OUTPUT_ABSENT").contains(facts.classification()),EVIDENCE_UNAVAILABLE);if(facts.classification().equals("OUTPUT_ABSENT"))decision=new Decision("CANCELLED","CANCELLED",false);}var anchors=handoffs.fenced(guard,fresh.stage().owner(),()->{verification.stage(old);verification.stage(fresh.stage());return List.of(anchor(old),anchor(fresh.stage()));});
+            if(cancellation!=null){need(Set.of("VERIFIED_PUBLICATION","OUTPUT_ABSENT").contains(facts.classification()),EVIDENCE_UNAVAILABLE);if(facts.classification().equals("OUTPUT_ABSENT"))decision=new Decision("CANCELLED","CANCELLED",true);}var anchors=handoffs.fenced(guard,fresh.stage().owner(),()->{verification.stage(old);verification.stage(fresh.stage());return List.of(anchor(old),anchor(fresh.stage()));});
             return new Qualified(bootstrap,old,fresh.stage(),after,pack,facts.evidence(),capturePrivate(guard,fresh.stage(),pack),handoffs.verificationNow(),decision,cancellation,anchors.get(1),anchors.get(0));
         }catch(RecoveryFailure | ManagementFailure | ImportOwnershipFailure | PreflightFailure ex){throw ex;}catch(RuntimeException ex){throw new RecoveryFailure(EVIDENCE_CHANGED);}
     }
@@ -89,7 +89,7 @@ final class RecoveryFinalization {
         need(Objects.equals(q.cancellation,cancellation(o,q.pack)),EVIDENCE_CHANGED);
         need(jdbc.queryForObject("SELECT count(*) FROM ddip_management.stage_invocations WHERE attempt_id=?",Long.class,o.controlId())==2,EVIDENCE_CHANGED);
         need(AuditCapacity.available(jdbc,q.cancellation==null?5:6,jdbc.queryForObject("SELECT count(*) FROM ddip_management.runs WHERE state IN ('QUEUED','RUNNING','CANCEL_REQUESTED','RECOVERY_REQUIRED')",Long.class)),CAPACITY_EXCEEDED);
-        boolean retry=q.decision.retry() && jdbc.queryForObject("SELECT max(attempt_no)<20 FROM ddip_management.attempts WHERE run_id=?",Boolean.class,o.runId());
+        boolean retry=q.decision.retry() && jdbc.queryForObject("SELECT max(attempt_no)<=18 FROM ddip_management.attempts WHERE run_id=?",Boolean.class,o.runId());
         UUID artifact=null;String artifactSha=null;
         if(q.decision.state().equals("SUCCEEDED")) {
             var publication=q.evidence.get("publication");byte[] bytes=SourceJson.canonical(publication);artifactSha=SourceJson.sha(bytes);artifact=register(q,publication,bytes,artifactSha);
@@ -117,19 +117,51 @@ final class RecoveryFinalization {
     private static String cancelReason(Qualified q){return q.decision.state().equals("SUCCEEDED")?"SUCCEEDED":"CANCELLED";}
     /** Capture the one admitted original-execution intent, not arbitrary CANCEL rows or later requests. */
     private JsonNode cancellation(RecoveryHandoff.Owner owner,JsonNode pack){
-        var rows=jdbc.queryForList("SELECT control_id,state,row_version,expected_version,normalized_request,request_sha256,target_attempt_id FROM ddip_management.controls WHERE run_id=? AND type='CANCEL' AND state IN ('REQUESTED','APPLIED') ORDER BY control_id FOR UPDATE",owner.runId());
+        UUID original=UUID.fromString(pack.get("command").get("attemptId").stringValue());
+        var rows=currentCancellations(owner.runId(),original);
         if(rows.isEmpty())return null;need(rows.size()==1,EVIDENCE_UNAVAILABLE);var c=rows.getFirst();
         need("REQUESTED".equals(c.get("state")) && number(c,"row_version")==0 && c.get("target_attempt_id")==null,EVIDENCE_UNAVAILABLE);
         byte[] raw=(byte[])c.get("normalized_request");need(SourceJson.sha(raw).equals(c.get("request_sha256")),EVIDENCE_CHANGED);
         var request=SourceJson.parse(raw);SourceJson.fields(request,"action","expectedVersion","runId","attemptId","quiescenceConfirmed");need(request.get("attemptId").isNull() && request.get("quiescenceConfirmed").isNull() && request.get("action").stringValue().equals("CANCEL") && request.get("runId").stringValue().equals(owner.runId().toString()) && decimal(request,"expectedVersion")==number(c,"expected_version"),EVIDENCE_CHANGED);
         var events=jdbc.queryForList("SELECT attempt_id,before_state,after_state,before_version,after_version FROM ddip_management.audit_events WHERE run_id=? AND control_id=? AND action='RUN_CANCEL_REQUESTED'",owner.runId(),c.get("control_id"));
-        var event=one(events);UUID original=UUID.fromString(pack.get("command").get("attemptId").stringValue());
+        var event=one(events);
         need(original.equals(event.get("attempt_id")) && "RUNNING".equals(event.get("before_state")) && "CANCEL_REQUESTED".equals(event.get("after_state")) && number(event,"before_version")==number(c,"expected_version") && number(event,"after_version")==number(c,"expected_version")+1,EVIDENCE_CHANGED);
         need(jdbc.queryForObject("SELECT count(*) FROM ddip_management.attempts WHERE attempt_id=? AND run_id=? AND kind='EXECUTE'",Long.class,original,owner.runId())==1,EVIDENCE_CHANGED);
         return SourceJson.object().put("controlId",c.get("control_id").toString()).put("originalAttemptId",original.toString()).put("rowVersion",Long.toString(number(c,"row_version"))).put("expectedVersion",Long.toString(number(c,"expected_version"))).put("requestSha256",(String)c.get("request_sha256"));
     }
+    /** A previous applied cancellation belongs to its admitted EXECUTE, never a later retry.
+     * Requested or malformed controls are never ignored, including controls without audit linkage. */
+    List<Map<String,Object>> currentCancellations(UUID run,UUID original){return currentCancellations(jdbc,run,original);}
+    static List<Map<String,Object>> currentCancellations(JdbcTemplate jdbc,UUID run,UUID original){
+        var rows=jdbc.queryForList("SELECT control_id,state,row_version,expected_version,normalized_request,request_sha256,target_attempt_id,reason,applied_at FROM ddip_management.controls WHERE run_id=? AND type='CANCEL' AND state IN ('REQUESTED','APPLIED') ORDER BY control_id FOR UPDATE",run);
+        var selected=new ArrayList<Map<String,Object>>();
+        long current=jdbc.queryForObject("SELECT attempt_no FROM ddip_management.attempts WHERE attempt_id=? AND run_id=? AND kind='EXECUTE'",Long.class,original,run);
+        for(var c:rows){
+            if("REQUESTED".equals(c.get("state"))){selected.add(c);continue;}
+            var events=jdbc.queryForList("SELECT e.attempt_id,e.before_state,e.after_state,e.before_version,e.after_version,a.attempt_no,a.kind FROM ddip_management.audit_events e JOIN ddip_management.attempts a ON a.attempt_id=e.attempt_id AND a.run_id=e.run_id WHERE e.run_id=? AND e.control_id=? AND e.action='RUN_CANCEL_REQUESTED'",run,c.get("control_id"));
+            var event=one(events);
+            if(original.equals(event.get("attempt_id"))){selected.add(c);continue;}
+            need("EXECUTE".equals(event.get("kind")) && number(event,"attempt_no")<current && "RUNNING".equals(event.get("before_state")) && "CANCEL_REQUESTED".equals(event.get("after_state")) && number(event,"before_version")==number(c,"expected_version") && number(event,"after_version")==number(c,"expected_version")+1,EVIDENCE_CHANGED);
+            need("CANCELLED".equals(c.get("reason")) && c.get("applied_at")!=null && number(c,"row_version")==1 && c.get("target_attempt_id")==null,EVIDENCE_CHANGED);
+            byte[] raw=(byte[])c.get("normalized_request");need(SourceJson.sha(raw).equals(c.get("request_sha256")),EVIDENCE_CHANGED);
+            var request=SourceJson.parse(raw);SourceJson.fields(request,"action","expectedVersion","runId","attemptId","quiescenceConfirmed");
+            need("CANCEL".equals(request.get("action").stringValue()) && run.toString().equals(request.get("runId").stringValue()) && request.get("attemptId").isNull() && request.get("quiescenceConfirmed").isNull() && decimal(request,"expectedVersion")==number(c,"expected_version"),EVIDENCE_CHANGED);
+        }
+        return selected;
+    }
+    private UUID originalExecution(UUID run,UUID recovery){
+        UUID at=recovery;var seen=new HashSet<UUID>();
+        for(int i=0;i<20;i++){
+            need(seen.add(at),EVIDENCE_CHANGED);
+            var a=one(jdbc.queryForList("SELECT kind FROM ddip_management.attempts WHERE run_id=? AND attempt_id=?",run,at));
+            if("EXECUTE".equals(a.get("kind")))return at;
+            need("RECONCILE".equals(a.get("kind")),EVIDENCE_CHANGED);
+            at=(UUID)one(jdbc.queryForList("SELECT target_attempt_id FROM ddip_management.controls WHERE run_id=? AND control_id=? AND type='RECONCILE'",run,at)).get("target_attempt_id");need(at!=null,EVIDENCE_CHANGED);
+        }
+        throw new RecoveryFailure(EVIDENCE_CHANGED);
+    }
     private void verifyCancellationReceipt(UUID run,UUID recovery,JsonNode details,byte[] raw){
-        var c=details.get("cancellation");if(c==null || c.isNull()){need(!"CANCELLED".equals(details.get("runState").stringValue()) && !jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.audit_events WHERE run_id=? AND attempt_id=? AND action IN ('CONTROL_APPLIED','CONTROL_TOO_LATE')) OR EXISTS(SELECT 1 FROM ddip_management.controls WHERE run_id=? AND type='CANCEL' AND state IN ('REQUESTED','APPLIED'))",Boolean.class,run,recovery,run),EVIDENCE_CHANGED);return;}
+        var c=details.get("cancellation");if(c==null || c.isNull()){need(!"CANCELLED".equals(details.get("runState").stringValue()) && !jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.audit_events WHERE run_id=? AND attempt_id=? AND action IN ('CONTROL_APPLIED','CONTROL_TOO_LATE'))",Boolean.class,run,recovery) && currentCancellations(run,originalExecution(run,recovery)).isEmpty(),EVIDENCE_CHANGED);return;}
         String state=details.get("runState").stringValue(),outcome=state.equals("SUCCEEDED")?"TOO_LATE":"APPLIED",reason=state.equals("SUCCEEDED")?"SUCCEEDED":"CANCELLED";
         need(Set.of("SUCCEEDED","CANCELLED").contains(state) && outcome.equals(c.get("state").stringValue()) && reason.equals(c.get("reason").stringValue()),EVIDENCE_CHANGED);
         UUID id=UUID.fromString(c.get("controlId").stringValue());var row=one(jdbc.queryForList("SELECT state,reason,row_version,expected_version,request_sha256,normalized_request,applied_at FROM ddip_management.controls WHERE control_id=? AND run_id=? AND type='CANCEL'",id,run));

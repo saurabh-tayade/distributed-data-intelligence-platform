@@ -51,7 +51,7 @@ export function CancelRunPanel({ visible }: { visible: boolean }) {
   const running = intent.mode === 'running';
   return <section className="panel source-action-review" aria-labelledby="cancel-review-title" aria-busy={busy}>
     <h2 id="cancel-review-title" ref={heading} tabIndex={-1}>{phase === 'review' ? `Review ${running ? 'running' : 'queued'}-run cancellation` : 'Cancellation receipt'}</h2>
-    <p>Request cancellation of {running ? 'running Reliability' : 'queued'} run <code>{command.runId}</code>. The server checks the captured run ETag <code>{command.ifMatch}</code>. RETRY remains disabled.</p>
+    <p>Request cancellation of {running ? 'running Reliability' : 'queued'} run <code>{command.runId}</code>. The server checks the captured run ETag <code>{command.ifMatch}</code>.</p>
     {running ? <p>Acceptance records a stop request, not a completed cancellation. Stopping work does not roll back a publication. Independent verification may report success and TOO_LATE, or require explicit recovery before an outcome is known.</p>
       : <p>Queued cancellation applies only if no attempt has started.</p>}
     <p>Idempotency key: <code>{command.key}</code></p>

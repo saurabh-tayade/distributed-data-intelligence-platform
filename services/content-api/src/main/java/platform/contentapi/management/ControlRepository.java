@@ -27,6 +27,7 @@ public final class ControlRepository {
     private record Prepared(Snapshot snapshot,JsonNode replay) { }
     public JsonNode request(ControlCommands.Command command) {
         if(command.action().equals("CANCEL"))return new QueuedCancelRepository(jdbc,tx,installation).request(command);
+        if(command.action().equals("RETRY"))return new RetryControlRepository(jdbc,tx,installation).request(command);
         if(command.action().equals("RESUME"))return new ResumeControlRepository(jdbc,tx,installation).request(command);
         conflict(!TransactionSynchronizationManager.isActualTransactionActive());
         // Read exact replay first, before current ETag, owner eligibility or process observation.
