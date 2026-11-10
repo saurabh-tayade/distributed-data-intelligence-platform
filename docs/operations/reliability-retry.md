@@ -45,8 +45,17 @@ not silent deletion or unlimited replay.
 
 If execution is interrupted, retain the slot and use the existing explicit recovery
 procedure with fresh containment review. A lost response is not proof of cancellation,
-rollback, success or permission to launch again. Running/queued cancellation of later
-retry attempts is not enabled by this feature. UI polish and real public-feed testing
-remain separate work.
+rollback, success or permission to launch again. The current applied retry queue can be cancelled before its next claim; its active
+Reliability EXECUTE can receive a cooperative cancellation request. The exact retry
+lineage and current run version must still match. Cancellation does not erase prior
+attempts or change the historical requeue receipt; repeating `execute-retry` cannot
+revive a cancelled queue entry.
+
+Explicit execution reports CANCELLED only after proved pre-writer settlement, or
+RECOVERY_REQUIRED when independent recovery remains necessary. Neither is a
+successful artifact receipt. A completed verified publication can still win as
+success with cancellation TOO_LATE. See the
+[running cancellation procedure](running-run-cancellation.md). UI polish and real
+public-feed testing remain separate work.
 
 See [ADR 0047](../adr/0047-guarded-reliability-retry.md) for the contract.

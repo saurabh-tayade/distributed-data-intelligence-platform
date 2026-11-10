@@ -58,8 +58,21 @@ public final class ReliabilityRetry {
         var p=frozen.get("executionProfile");var workers=new WorkerRepository(j,tx,installation,new WorkerExecutionCapability(){public boolean available(){return true;}public boolean supports(String pipeline){return pipeline.equals("RELIABILITY_V2");}});
         var session=workers.register(guard,p.get("profileId").stringValue(),p.get("configurationSha256").stringValue(),p.get("configuration").get("runtime").get("deploymentSha256").stringValue());
         var claim=workers.claimRetry(guard,session,UUID.randomUUID(),run);require(claim.owner()!=null,STATE_CONFLICT);
-        var verified=new ReliabilityPreflight(j,tx,workers).verifyForExecution(guard,claim.owner(),runtimeId,UUID.randomUUID());
-        return new ReliabilityExecution(j,tx,workers,publisher,new ReadOnlyVerifierProcess()).run(guard,verified,runtimeId).artifactId();
+        try {
+            var verified=new ReliabilityPreflight(j,tx,workers).verifyForExecution(guard,claim.owner(),runtimeId,UUID.randomUUID());
+            return new ReliabilityExecution(j,tx,workers,publisher,new ReadOnlyVerifierProcess()).run(guard,verified,runtimeId).artifactId();
+        } catch(RuntimeException failure) {
+            // Native supervisors have returned and performed bounded cleanup before settlement.
+            var settled=workers.settleCancellation(guard,failure);
+            if(settled==null)throw failure;
+            throw new CancellationRecorded(run,settled.status().equals("READY")?"CANCELLED":"RECOVERY_REQUIRED");
+        }
+    }
+    public static final class CancellationRecorded extends RuntimeException {
+        private final String status;private final UUID runId;
+        CancellationRecorded(UUID runId,String status){super(status);this.runId=runId;this.status=status;}
+        public UUID runId(){return runId;}
+        public String status(){return status;}
     }
     private void noArtifact(String fingerprint){require(!j.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.artifacts WHERE kind='RELIABILITY_V2' AND native_identity=?)",Boolean.class,fingerprint),STATE_CONFLICT);}
     private void audit(UUID run,UUID control,String action,String before,String after,long version,long next,byte[] bytes){j.update("INSERT INTO ddip_management.audit_events(actor_scope,run_id,control_id,action,before_state,after_state,before_version,after_version,safe_code,details_bytes) VALUES ('local-operator',?,?,?,?,?,?,?,'RETRY_QUEUED',?)",run,control,action,before,after,version,next,bytes);}

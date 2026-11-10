@@ -44,9 +44,15 @@ export function saveCancelIntent(value: CancelIntent | null) {
 }
 export function canCancelRun(record: RunDetailResponse) {
   const run = record.data;
-  return run.state === 'QUEUED' && run.attempts.count === '0' && run.attempts.currentAttemptId === null
-    || run.state === 'RUNNING' && run.pipeline === 'RELIABILITY_V2' && run.attempts.count === '1' && run.attempts.currentAttemptId !== null
-      && run.latestControl?.state !== 'REQUESTED';
+  // Displayed facts are review hints, never ownership or launch authority. The server
+  // validates the exact current retry lifecycle under the captured run version.
+  const retry = run.pipeline === 'RELIABILITY_V2' && run.latestControl?.type === 'RETRY'
+    && run.latestControl.state === 'APPLIED' && run.latestControl.reason === 'RETRY_QUEUED';
+  if (run.result !== null || run.latestControl?.state === 'REQUESTED') return false;
+  return run.state === 'QUEUED' && run.attempts.currentAttemptId === null
+    && (run.attempts.count === '0' || retry && run.outcomeCode === 'RETRY_QUEUED' && BigInt(run.attempts.count) > 0n)
+    || run.state === 'RUNNING' && run.pipeline === 'RELIABILITY_V2' && run.attempts.currentAttemptId !== null
+      && (run.attempts.count === '1' || retry && BigInt(run.attempts.count) > 1n);
 }
 export function reviewCancelRun(record: RunDetailResponse) {
   if (snapshot() !== '' || !canCancelRun(record)) throw new Error('Cancellation unavailable');

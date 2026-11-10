@@ -3,7 +3,9 @@
 ## Scope
 
 The running cancellation implementation targets the active original Reliability
-EXECUTE attempt. It does not activate ordinary Content dispatch, cancel an inactive
+EXECUTE attempt and a validated explicit Reliability retry. A queued retry can also
+be cancelled before its next attempt is claimed. It does not activate ordinary
+Content dispatch, cancel an inactive
 Content journal, retry a run, delete outputs, or roll back a publication.
 [Never-claimed queued cancellation](queued-run-cancellation.md) remains separate.
 The real public-feed acceptance test remains deferred until after UI polish.
@@ -53,6 +55,8 @@ this command does not delete, repair or reuse that output. Unconfirmed terminati
 unknown descendants also remain blocked. Never assert quiescence based only on a
 stale heartbeat, missing HTTP response or a UI message.
 
-The implementation follows [ADR 0046](../adr/0046-reliability-running-cancellation.md).
+The original implementation follows
+[ADR 0046](../adr/0046-reliability-running-cancellation.md); the explicit retry
+extension follows [ADR 0048](../adr/0048-reliability-retry-cancellation.md).
 Its tests and exact-head CI results must be checked before deployment; a source change
 or request receipt alone is not proof that cancellation completed.

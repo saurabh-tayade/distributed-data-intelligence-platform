@@ -148,3 +148,5 @@ semantics and does not activate a launcher, receipt commit or ordinary Content d
 - [0046: Reliability running cancellation](0046-reliability-running-cancellation.md)
 
 - [ADR 0047: Guarded Reliability retry](0047-guarded-reliability-retry.md)
+
+- [0048: Cancellation of explicitly retried Reliability runs](0048-reliability-retry-cancellation.md)

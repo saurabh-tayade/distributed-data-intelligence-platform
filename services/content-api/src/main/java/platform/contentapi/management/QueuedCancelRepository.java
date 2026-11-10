@@ -3,10 +3,11 @@ package platform.contentapi.management;
 import java.util.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 import platform.contentapi.execution.ManagementTransactions;
+import platform.contentapi.execution.ReliabilityRetryPlan;
 import tools.jackson.databind.JsonNode;
 import static platform.contentapi.management.SourceFailure.Code.*;
 
-/** Atomic cancellation of an original, never-claimed queued run. No worker, artifact or process I/O. */
+/** Atomic cancellation of an unclaimed original or receipt-qualified Reliability retry. No worker, artifact or process I/O. */
 final class QueuedCancelRepository {
     private final JdbcTemplate jdbc; private final ManagementTransactions tx; private final UUID installation;
     QueuedCancelRepository(JdbcTemplate jdbc,ManagementTransactions tx,UUID installation){this.jdbc=jdbc;this.tx=tx;this.installation=installation;}
@@ -26,7 +27,10 @@ final class QueuedCancelRepository {
         if(((Number)run.get("row_version")).longValue()!=command.expectedVersion())throw new SourceFailure(PRECONDITION_FAILED);
         if("RUNNING".equals(run.get("state"))){var admitted=new RunningCancelRepository(jdbc,installation).admit(command,slots.getFirst(),run);return receipt(command,UUID.fromString(admitted.get("controlId").stringValue()));}
         require("QUEUED".equals(run.get("state")) && run.get("current_attempt_id")==null && run.get("current_stage")==null && run.get("result_artifact_id")==null);
-        require(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.attempts WHERE run_id=?)",Boolean.class,command.runId()));
+        if(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.attempts WHERE run_id=?)",Boolean.class,command.runId())){
+            require(Boolean.TRUE.equals(jdbc.queryForObject("SELECT pipeline='RELIABILITY_V2' AND outcome_code='RETRY_QUEUED' FROM ddip_management.runs WHERE run_id=?",Boolean.class,command.runId())));
+            ReliabilityRetryPlan.queued(jdbc,command.runId(),command.expectedVersion());
+        }
         require(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.controls WHERE run_id=? AND state='REQUESTED')",Boolean.class,command.runId()));
         if(jdbc.queryForObject("SELECT count(*) FROM ddip_management.controls WHERE run_id=?",Long.class,command.runId())>=128)throw new SourceFailure(MANAGEMENT_CAPACITY_EXCEEDED);
         long unfinished=jdbc.queryForObject("SELECT count(*) FROM ddip_management.runs WHERE state IN ('QUEUED','RUNNING','CANCEL_REQUESTED','RECOVERY_REQUIRED')",Long.class);
