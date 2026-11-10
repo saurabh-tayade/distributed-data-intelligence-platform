@@ -76,6 +76,7 @@ public final class ReliabilityExecution {
             if(name.equals("PUBLISH_RELIABILITY"))current.stage=workers.publishedReliability(guard,current.stage,hash);
             return new Finished(current.stage,evidence,hash);
         }catch(PreflightFailure ex) {
+            workers.noteSupervisorFailure(ex);
             if(name.equals("PUBLISH_RELIABILITY") && ex.code()==PROCESS_START_FAILED && ex.quiescent()) {
                 boolean interrupted=Thread.interrupted();
                 try {

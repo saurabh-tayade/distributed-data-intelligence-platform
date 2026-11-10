@@ -86,6 +86,12 @@ public final class WorkerIdleLifecycle implements SmartLifecycle {
                         session=new ReliabilityExecution(jdbc,tx,repository,new ReadOnlyVerifierProcess(true,()->stopping),new ReadOnlyVerifierProcess(false,()->stopping)).run(guard,prepared,runtimeId).worker();released=true;
                     }catch(ReliabilityPreflight.DefinitiveFailure ex){session=ex.worker();released=true;}
                     catch(ReliabilityExecution.DefinitiveFailure ex){session=ex.worker();released=true;}
+                    catch(RuntimeException ex){
+                        var cancelled=repository.settleCancellation(guard,ex);
+                        if(cancelled==null)throw ex;
+                        session=cancelled;released=cancelled.status().equals("READY");
+                        if(!released){condition="RECOVERY_REQUIRED";break;}
+                    }
                     heartbeatAt=System.nanoTime()+TimeUnit.SECONDS.toNanos(HEARTBEAT_SECONDS);
                 }
                 if(!stopping){wake.tryAcquire(pollMillis,TimeUnit.MILLISECONDS);wake.drainPermits();}

@@ -60,6 +60,7 @@ public final class ReliabilityPreflight {
             state.stage=workers.finishCheckInputs(guard,state.stage,true,"VERIFIED",SourceJson.sha(anchor),SourceJson.canonical(response.get("counts")));
             return new Verified(state.stage,SourceJson.sha(evidence),qualified.get("nativeDependencyFingerprint").stringValue());
         }catch(PreflightFailure ex) {
+            workers.noteSupervisorFailure(ex);
             if(ex.quiescent() && ex.code()!=RESULT_INVALID && ex.code()!=INTERRUPTED) {
                 // Supervisor restored interruption after proving no child launch. Permit bounded journal/SQL
                 // closure, then restore the signal; the persistent lifecycle stop gate still forbids launches.
@@ -74,6 +75,7 @@ public final class ReliabilityPreflight {
             throw ex;
         }
         }catch(PreflightFailure ex) {
+            workers.noteSupervisorFailure(ex);
             // Before INTENT no child could have been authorized. Never apply this to unknown exceptions.
             if(closeFailure && state.stage==null && ex.quiescent() && ex.code()!=INTERRUPTED && ex.code()!=RESULT_INVALID) {
                 boolean interrupted=Thread.interrupted();

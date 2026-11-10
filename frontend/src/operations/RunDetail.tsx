@@ -74,11 +74,11 @@ export function RunDetail({ runId, returnQuery }: { runId: string; returnQuery: 
         {record.latestControl && <><h4>Latest control reference in displayed run record</h4><ControlFields control={record.latestControl} /></>}
       </>}
     </section>
-    <section className="panel" aria-label="Queued-run cancellation"><h2>Queued-run cancellation</h2>
-      <p>Only QUEUED runs with no attempts can be cancelled here. RETRY and running-run cancellation remain disabled.</p>
+    <section className="panel" aria-label="Run cancellation"><h2>Run cancellation</h2>
+      <p>Cancel never-started QUEUED runs, or request a bounded stop of a first-attempt RUNNING Reliability run. Running cancellation may require recovery and verified publication can still succeed. Content running cancellation and RETRY remain disabled.</p>
       <button type="button" disabled={!model.data || !canCancelRun(model.data) || model.refreshing || model.hidden || !!model.error || cancellation.unavailable || !!cancellation.intent} onClick={() => {
         try { if (model.data) reviewCancelRun(model.data); } catch { setStorageError(true); }
-      }}>Review queued-run cancellation</button>
+      }}>Review {record?.state === 'RUNNING' ? 'running' : 'queued'}-run cancellation</button>
       {storageError && <p role="alert">Unable to retain cancellation review. No request was sent.</p>}
     </section>
     <AttemptHistory runId={runId} /><AuditTimeline runId={runId} />

@@ -717,6 +717,12 @@ export function validateCancelCommand(command: CancelCommand) {
   need(command.body === CANCEL_BODY && typeof command.ifMatch === 'string' && /^"(0|[1-9][0-9]{0,18})"$/.test(command.ifMatch));
   need(BigInt(command.ifMatch.slice(1, -1)) <= 9223372036854775807n);
 }
+export function isCancellationReceipt(receipt: ControlReceipt) {
+  return receipt.type === 'CANCEL' && (
+    receipt.state === 'REQUESTED' && receipt.reason === null
+    || receipt.state === 'APPLIED' && receipt.reason === 'CANCELLED'
+    || receipt.state === 'TOO_LATE' && receipt.reason === 'SUCCEEDED');
+}
 export async function sendCancelCommand(command: CancelCommand, signal: AbortSignal): Promise<CancelResponse> {
   validateCancelCommand(command);
   let response: Response;
@@ -733,7 +739,7 @@ export async function sendCancelCommand(command: CancelCommand, signal: AbortSig
     need(response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() === 'application/json');
     const body: unknown = await response.json(), { row } = recordEnvelope(body); need(isManagementId(row.controlId));
     const receipt = parseControl(body, command.runId, row.controlId, response.headers.get('ETag'));
-    need(receipt.data.type === 'CANCEL' && receipt.data.state === 'APPLIED' && receipt.data.reason === 'CANCELLED');
+    need(isCancellationReceipt(receipt.data));
     const expected = `${runPath(command.runId)}/controls/${row.controlId}`, location = response.headers.get('Location'); need(location !== null);
     const url = new URL(location, window.location.origin);
     need(url.origin === window.location.origin && url.pathname === expected && !url.search && !url.hash && !url.username && !url.password);

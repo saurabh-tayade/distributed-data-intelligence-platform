@@ -30,6 +30,11 @@ public class RunInspectionTest {
         }
         assertThatThrownBy(()->RunInspectionValues.state("PRIVATE_PROCESS_STATE")).hasMessage("INTERNAL_FAILURE");
     }
+    @Test void runningCancellationResolutionVocabularyIsPublicAndExact() {
+        for(String action:new String[]{"RUN_CANCEL_REQUESTED","RUN_RECOVERY_REQUIRED","CONTROL_APPLIED","CONTROL_TOO_LATE"})assertThat(RunInspectionValues.action(action)).isEqualTo(action);
+        for(String state:new String[]{"CANCEL_REQUESTED","RECOVERY_REQUIRED","CANCELLED","SUCCEEDED","REQUESTED","APPLIED","TOO_LATE"})assertThat(RunInspectionValues.state(state)).isEqualTo(state);
+        for(String code:new String[]{"CANCELLED","SUCCEEDED","RECOVERED_PUBLICATION","RECONCILED_CANCELLED"})assertThat(RunInspectionValues.code(code)).isEqualTo(code);
+    }
     @Test void stageCursorBindsIdentityOrderingAndFixedExpiry() {
         var signer=new SourceCursor(key);var clock=Clock.fixed(Instant.parse("2026-11-02T00:00:00Z"),ZoneOffset.UTC);var c=new StagePageCursor(signer,clock);
         var high=new StagePageCursor.Key("VERIFY_RESULT",511);var after=new StagePageCursor.Key("FETCH_SOURCE",0);var first=c.first(high);

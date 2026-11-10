@@ -12,7 +12,7 @@ import tools.jackson.databind.JsonNode;
 import static platform.contentapi.execution.RecoveryFailure.Code.*;
 import static platform.contentapi.execution.RecoveryFailure.need;
 
-/** Internal C3c.3 disposition used by the local operator. No dispatcher, retry, cancellation or native writer. */
+/** Internal C3c.3 disposition used by the local operator. No dispatcher, retry or native writer; cancellation is resolved only from independently verified evidence. */
 final class RecoveryFinalization {
     static final String POLICY="E5_RECOVERY_FINALIZATION_V1";
     enum Step { ARTIFACT, DEPENDENCY, LINK, ATTEMPT, RUN, CONTROL, WORKER, COORDINATOR, AUDIT }
@@ -23,8 +23,8 @@ final class RecoveryFinalization {
     static final class Qualified {
         private final RecoveryHandoff.Bootstrap bootstrap;private final RecoveryVerification.Stage original,stage;
         private final RecoveryNativeSeal nativeSeal;private final JsonNode pack,evidence,privateSeal;private final Instant qualifiedAt;
-        private final Decision decision;private final String anchorSha,originalAnchorSha;
-        private Qualified(RecoveryHandoff.Bootstrap b,RecoveryVerification.Stage original,RecoveryVerification.Stage stage,RecoveryNativeSeal seal,JsonNode pack,JsonNode evidence,JsonNode privateSeal,Instant now,Decision d,String sha,String originalSha){bootstrap=b;this.original=original;this.stage=stage;nativeSeal=seal;this.pack=pack.deepCopy();this.evidence=evidence.deepCopy();this.privateSeal=privateSeal.deepCopy();qualifiedAt=now;decision=d;anchorSha=sha;originalAnchorSha=originalSha;}
+        private final Decision decision;private final JsonNode cancellation;private final String anchorSha,originalAnchorSha;
+        private Qualified(RecoveryHandoff.Bootstrap b,RecoveryVerification.Stage original,RecoveryVerification.Stage stage,RecoveryNativeSeal seal,JsonNode pack,JsonNode evidence,JsonNode privateSeal,Instant now,Decision d,JsonNode cancellation,String sha,String originalSha){bootstrap=b;this.original=original;this.stage=stage;nativeSeal=seal;this.pack=pack.deepCopy();this.evidence=evidence.deepCopy();this.privateSeal=privateSeal.deepCopy();qualifiedAt=now;decision=d;this.cancellation=cancellation==null?null:cancellation.deepCopy();anchorSha=sha;originalAnchorSha=originalSha;}
         UUID checkpoint(){return stage.checkpoint();}
         @Override public String toString(){return "RecoveryFinalizationQualification[redacted]";}
     }
@@ -40,13 +40,15 @@ final class RecoveryFinalization {
             handoffs.fenced(guard,old.owner(),()->{verification.stage(old);need(jdbc.queryForObject("SELECT count(*) FROM ddip_management.stage_invocations WHERE attempt_id=?",Long.class,old.owner().controlId())==1,OWNERSHIP_LOST);return null;});
             handoffs.verificationReview(guard,bootstrap,review,old.owner());handoffs.verificationChild(old.child());
             var pack=handoffs.verificationPack(guard,bootstrap,old.owner());var runtime=handoffs.verificationRuntime(bootstrap);
+            var cancellation=handoffs.fenced(guard,old.owner(),()->cancellation(old.owner(),pack));
             var before=RecoveryNativeSeal.capture(runtime,pack,old.fingerprint());
             var fresh=verification.requalify(guard,bootstrap,old,review);var facts=verification.inspect(guard,old.owner().controlId(),1);eligible(facts);
             need(facts.classification().equals(observed.classification()) && facts.evidence().get("code").equals(observed.evidence().get("code")) && facts.evidence().get("publication").equals(observed.evidence().get("publication")),EVIDENCE_CHANGED);
             var after=RecoveryNativeSeal.capture(runtime,pack,old.fingerprint());need(before.same(after),EVIDENCE_CHANGED);
             handoffs.verificationReview(guard,bootstrap,review,fresh.stage().owner());handoffs.verificationChild(fresh.stage().child());
-            var decision=decision(facts,after,old.fingerprint());var anchors=handoffs.fenced(guard,fresh.stage().owner(),()->{verification.stage(old);verification.stage(fresh.stage());return List.of(anchor(old),anchor(fresh.stage()));});
-            return new Qualified(bootstrap,old,fresh.stage(),after,pack,facts.evidence(),capturePrivate(guard,fresh.stage(),pack),handoffs.verificationNow(),decision,anchors.get(1),anchors.get(0));
+            var decision=decision(facts,after,old.fingerprint());
+            if(cancellation!=null){need(Set.of("VERIFIED_PUBLICATION","OUTPUT_ABSENT").contains(facts.classification()),EVIDENCE_UNAVAILABLE);if(facts.classification().equals("OUTPUT_ABSENT"))decision=new Decision("CANCELLED","CANCELLED",false);}var anchors=handoffs.fenced(guard,fresh.stage().owner(),()->{verification.stage(old);verification.stage(fresh.stage());return List.of(anchor(old),anchor(fresh.stage()));});
+            return new Qualified(bootstrap,old,fresh.stage(),after,pack,facts.evidence(),capturePrivate(guard,fresh.stage(),pack),handoffs.verificationNow(),decision,cancellation,anchors.get(1),anchors.get(0));
         }catch(RecoveryFailure | ManagementFailure | ImportOwnershipFailure | PreflightFailure ex){throw ex;}catch(RuntimeException ex){throw new RecoveryFailure(EVIDENCE_CHANGED);}
     }
     private static void eligible(RecoveryVerification.Inspection facts) {
@@ -84,9 +86,9 @@ final class RecoveryFinalization {
     private Receipt apply(InstallationHostGuard guard,Qualified q,RecoveryQuiescence.Review review) {
         var s=q.stage;var o=s.owner();verification.stage(q.original);verification.stage(s);handoffs.verificationFresh(review);RecoveryQuiescence.fresh(q.qualifiedAt,handoffs.verificationNow());
         need(anchor(s).equals(q.anchorSha) && anchor(q.original).equals(q.originalAnchorSha),EVIDENCE_CHANGED);
-        need(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.controls WHERE run_id=? AND type='CANCEL' AND state IN ('REQUESTED','APPLIED'))",Boolean.class,o.runId()),EVIDENCE_UNAVAILABLE);
+        need(Objects.equals(q.cancellation,cancellation(o,q.pack)),EVIDENCE_CHANGED);
         need(jdbc.queryForObject("SELECT count(*) FROM ddip_management.stage_invocations WHERE attempt_id=?",Long.class,o.controlId())==2,EVIDENCE_CHANGED);
-        need(AuditCapacity.available(jdbc,5,jdbc.queryForObject("SELECT count(*) FROM ddip_management.runs WHERE state IN ('QUEUED','RUNNING','CANCEL_REQUESTED','RECOVERY_REQUIRED')",Long.class)),CAPACITY_EXCEEDED);
+        need(AuditCapacity.available(jdbc,q.cancellation==null?5:6,jdbc.queryForObject("SELECT count(*) FROM ddip_management.runs WHERE state IN ('QUEUED','RUNNING','CANCEL_REQUESTED','RECOVERY_REQUIRED')",Long.class)),CAPACITY_EXCEEDED);
         boolean retry=q.decision.retry() && jdbc.queryForObject("SELECT max(attempt_no)<20 FROM ddip_management.attempts WHERE run_id=?",Boolean.class,o.runId());
         UUID artifact=null;String artifactSha=null;
         if(q.decision.state().equals("SUCCEEDED")) {
@@ -98,6 +100,7 @@ final class RecoveryFinalization {
         byte[] counts=artifact==null?null:SourceJson.canonical(q.evidence.get("publication").get("counts"));
         exactly(jdbc.update("UPDATE ddip_management.runs SET state=?,finished_at=clock_timestamp(),result_artifact_id=?,counts_bytes=?,outcome_code=?,retry_eligible=?,row_version=row_version+1 WHERE run_id=? AND state='RECOVERY_REQUIRED' AND current_attempt_id=? AND row_version=?",q.decision.state(),artifact,counts,q.decision.code(),retry,o.runId(),o.controlId(),o.runVersion()));fault.accept(Step.RUN);
         exactly(jdbc.update("UPDATE ddip_management.controls SET state='APPLIED',reason=?,applied_at=clock_timestamp(),row_version=row_version+1 WHERE control_id=? AND run_id=? AND type='RECONCILE' AND state='REQUESTED' AND target_attempt_id=? AND row_version=?",q.decision.code(),o.controlId(),o.runId(),o.predecessor(),o.controlVersion()));fault.accept(Step.CONTROL);
+        if(q.cancellation!=null)exactly(jdbc.update("UPDATE ddip_management.controls SET state=?,reason=?,applied_at=clock_timestamp(),row_version=row_version+1 WHERE control_id=? AND run_id=? AND type='CANCEL' AND state='REQUESTED' AND row_version=?",cancelState(q),cancelReason(q),UUID.fromString(q.cancellation.get("controlId").stringValue()),o.runId(),decimal(q.cancellation,"rowVersion")));
         exactly(jdbc.update("UPDATE ddip_management.worker_instances SET status='STOPPED',row_version=row_version+1 WHERE instance_id=? AND installation_id=? AND status='RECOVERY_ONLY' AND row_version=?",o.worker().instanceId(),o.worker().installationId(),o.worker().workerVersion()));fault.accept(Step.WORKER);
         exactly(jdbc.update("UPDATE ddip_management.coordinator SET mode='READY',active_attempt_id=NULL,owner_instance_id=NULL,heartbeat_at=NULL,row_version=row_version+1 WHERE singleton_id=1 AND installation_id=? AND mode='RECOVERY_ONLY' AND active_attempt_id=? AND owner_instance_id=? AND epoch=? AND row_version=? AND active_import_id IS NULL",o.worker().installationId(),o.controlId(),o.worker().instanceId(),o.worker().epoch(),o.worker().coordinatorVersion()));fault.accept(Step.COORDINATOR);
         var details=details(q,artifact,artifactSha,retry,reviewSummary(review));byte[] raw=SourceJson.canonical(details);need(raw.length<=8192,CAPACITY_EXCEEDED);
@@ -105,9 +108,36 @@ final class RecoveryFinalization {
         audit(o,"RECOVERY_RUN_FINISHED","RECOVERY_REQUIRED",q.decision.state(),o.runVersion(),o.runVersion()+1,q.decision.code(),raw);
         audit(o,"RECOVERY_CONTROL_APPLIED","REQUESTED","APPLIED",o.controlVersion(),o.controlVersion()+1,q.decision.code(),raw);
         audit(o,"RECOVERY_SLOT_RELEASED","RECOVERY_ONLY","READY",o.worker().coordinatorVersion(),o.worker().coordinatorVersion()+1,q.decision.code(),raw);
+        if(q.cancellation!=null)jdbc.update("INSERT INTO ddip_management.audit_events(actor_scope,run_id,attempt_id,control_id,action,before_state,after_state,before_version,after_version,safe_code,details_bytes) VALUES ('local-operator',?,?,?,?,'REQUESTED',?,?,?,?,?)",o.runId(),o.controlId(),UUID.fromString(q.cancellation.get("controlId").stringValue()),cancelState(q).equals("APPLIED")?"CONTROL_APPLIED":"CONTROL_TOO_LATE",cancelState(q),decimal(q.cancellation,"rowVersion"),decimal(q.cancellation,"rowVersion")+1,cancelReason(q),raw);
         audit(o,"RECOVERY_FINALIZED","RECOVERY_REQUIRED",q.decision.state(),o.runVersion(),o.runVersion()+1,q.decision.code(),raw);fault.accept(Step.AUDIT);
         guard.checkHeld(o.worker().installationId());handoffs.verificationFresh(review);RecoveryQuiescence.fresh(q.qualifiedAt,handoffs.verificationNow());
         return new Receipt(Status.CONFIRMED,o.runId(),o.controlId(),q.decision.state(),q.decision.code(),artifact,retry);
+    }
+    private static String cancelState(Qualified q){return q.decision.state().equals("SUCCEEDED")?"TOO_LATE":"APPLIED";}
+    private static String cancelReason(Qualified q){return q.decision.state().equals("SUCCEEDED")?"SUCCEEDED":"CANCELLED";}
+    /** Capture the one admitted original-execution intent, not arbitrary CANCEL rows or later requests. */
+    private JsonNode cancellation(RecoveryHandoff.Owner owner,JsonNode pack){
+        var rows=jdbc.queryForList("SELECT control_id,state,row_version,expected_version,normalized_request,request_sha256,target_attempt_id FROM ddip_management.controls WHERE run_id=? AND type='CANCEL' AND state IN ('REQUESTED','APPLIED') ORDER BY control_id FOR UPDATE",owner.runId());
+        if(rows.isEmpty())return null;need(rows.size()==1,EVIDENCE_UNAVAILABLE);var c=rows.getFirst();
+        need("REQUESTED".equals(c.get("state")) && number(c,"row_version")==0 && c.get("target_attempt_id")==null,EVIDENCE_UNAVAILABLE);
+        byte[] raw=(byte[])c.get("normalized_request");need(SourceJson.sha(raw).equals(c.get("request_sha256")),EVIDENCE_CHANGED);
+        var request=SourceJson.parse(raw);SourceJson.fields(request,"action","expectedVersion","runId","attemptId","quiescenceConfirmed");need(request.get("attemptId").isNull() && request.get("quiescenceConfirmed").isNull() && request.get("action").stringValue().equals("CANCEL") && request.get("runId").stringValue().equals(owner.runId().toString()) && decimal(request,"expectedVersion")==number(c,"expected_version"),EVIDENCE_CHANGED);
+        var events=jdbc.queryForList("SELECT attempt_id,before_state,after_state,before_version,after_version FROM ddip_management.audit_events WHERE run_id=? AND control_id=? AND action='RUN_CANCEL_REQUESTED'",owner.runId(),c.get("control_id"));
+        var event=one(events);UUID original=UUID.fromString(pack.get("command").get("attemptId").stringValue());
+        need(original.equals(event.get("attempt_id")) && "RUNNING".equals(event.get("before_state")) && "CANCEL_REQUESTED".equals(event.get("after_state")) && number(event,"before_version")==number(c,"expected_version") && number(event,"after_version")==number(c,"expected_version")+1,EVIDENCE_CHANGED);
+        need(jdbc.queryForObject("SELECT count(*) FROM ddip_management.attempts WHERE attempt_id=? AND run_id=? AND kind='EXECUTE'",Long.class,original,owner.runId())==1,EVIDENCE_CHANGED);
+        return SourceJson.object().put("controlId",c.get("control_id").toString()).put("originalAttemptId",original.toString()).put("rowVersion",Long.toString(number(c,"row_version"))).put("expectedVersion",Long.toString(number(c,"expected_version"))).put("requestSha256",(String)c.get("request_sha256"));
+    }
+    private void verifyCancellationReceipt(UUID run,UUID recovery,JsonNode details,byte[] raw){
+        var c=details.get("cancellation");if(c==null || c.isNull()){need(!"CANCELLED".equals(details.get("runState").stringValue()) && !jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.audit_events WHERE run_id=? AND attempt_id=? AND action IN ('CONTROL_APPLIED','CONTROL_TOO_LATE')) OR EXISTS(SELECT 1 FROM ddip_management.controls WHERE run_id=? AND type='CANCEL' AND state IN ('REQUESTED','APPLIED'))",Boolean.class,run,recovery,run),EVIDENCE_CHANGED);return;}
+        String state=details.get("runState").stringValue(),outcome=state.equals("SUCCEEDED")?"TOO_LATE":"APPLIED",reason=state.equals("SUCCEEDED")?"SUCCEEDED":"CANCELLED";
+        need(Set.of("SUCCEEDED","CANCELLED").contains(state) && outcome.equals(c.get("state").stringValue()) && reason.equals(c.get("reason").stringValue()),EVIDENCE_CHANGED);
+        UUID id=UUID.fromString(c.get("controlId").stringValue());var row=one(jdbc.queryForList("SELECT state,reason,row_version,expected_version,request_sha256,normalized_request,applied_at FROM ddip_management.controls WHERE control_id=? AND run_id=? AND type='CANCEL'",id,run));
+        need(outcome.equals(row.get("state")) && reason.equals(row.get("reason")) && number(row,"row_version")==decimal(c,"rowVersion")+1 && number(row,"expected_version")==decimal(c,"expectedVersion") && c.get("requestSha256").stringValue().equals(row.get("request_sha256")) && row.get("applied_at")!=null && SourceJson.sha((byte[])row.get("normalized_request")).equals(row.get("request_sha256")),EVIDENCE_CHANGED);
+        var admitted=one(jdbc.queryForList("SELECT attempt_id,before_state,after_state,before_version,after_version FROM ddip_management.audit_events WHERE run_id=? AND control_id=? AND action='RUN_CANCEL_REQUESTED'",run,id));
+        need(c.get("originalAttemptId").stringValue().equals(admitted.get("attempt_id").toString()) && "RUNNING".equals(admitted.get("before_state")) && "CANCEL_REQUESTED".equals(admitted.get("after_state")) && number(admitted,"before_version")==decimal(c,"expectedVersion") && number(admitted,"after_version")==decimal(c,"expectedVersion")+1,EVIDENCE_CHANGED);
+        var event=one(jdbc.queryForList("SELECT before_state,after_state,before_version,after_version,safe_code,details_bytes FROM ddip_management.audit_events WHERE run_id=? AND attempt_id=? AND control_id=? AND action IN ('CONTROL_APPLIED','CONTROL_TOO_LATE')",run,recovery,id));
+        need("REQUESTED".equals(event.get("before_state")) && outcome.equals(event.get("after_state")) && number(event,"before_version")==decimal(c,"rowVersion") && number(event,"after_version")==decimal(c,"rowVersion")+1 && reason.equals(event.get("safe_code")) && Arrays.equals(raw,(byte[])event.get("details_bytes")),EVIDENCE_CHANGED);
     }
     private UUID register(Qualified q,JsonNode e,byte[] bytes,String sha) {
         var s=q.stage;need(e.get("nativeFingerprint").stringValue().equals(s.fingerprint()) && e.get("kind").stringValue().equals("RELIABILITY_V2"),EVIDENCE_CHANGED);
@@ -126,6 +156,7 @@ final class RecoveryFinalization {
     }
     private JsonNode details(Qualified q,UUID artifact,String artifactSha,boolean retry,JsonNode review) {
         var o=q.stage.owner();var w=o.worker();var n=SourceJson.object().put("policy",POLICY).put("installationId",w.installationId().toString()).put("runId",o.runId().toString()).put("controlId",o.controlId().toString()).put("predecessor",o.predecessor().toString()).put("instanceId",w.instanceId().toString()).put("epoch",Long.toString(w.epoch())).put("qualificationSha256",o.qualificationSha256()).put("checkpointId",q.checkpoint().toString()).put("originalCheckpointId",q.original.checkpoint().toString()).put("stageVersion",Long.toString(q.stage.version())).put("commandSha256",q.stage.commandSha()).put("stageResultSha256",q.anchorSha).put("originalResultSha256",q.originalAnchorSha).put("runVersion",Long.toString(o.runVersion())).put("attemptVersion",Long.toString(o.attemptVersion())).put("controlVersion",Long.toString(o.controlVersion())).put("coordinatorVersion",Long.toString(w.coordinatorVersion())).put("workerVersion",Long.toString(w.workerVersion())).put("nativeSealSha256",q.nativeSeal.digest()).put("privateSealSha256",SourceJson.sha(SourceJson.canonical(q.privateSeal))).put("nativeEvidenceSha256",SourceJson.sha(SourceJson.canonical(q.evidence))).put("classification",q.evidence.get("classification").stringValue()).put("runState",q.decision.state()).put("code",q.decision.code()).put("retryEligible",retry);
+        if(q.cancellation!=null){var cancel=q.cancellation.deepCopy();((tools.jackson.databind.node.ObjectNode)cancel).put("state",cancelState(q)).put("reason",cancelReason(q));n.set("cancellation",cancel);}
         n.set("finalReview",review);n.set("nativeCode",q.evidence.get("code"));if(artifact==null)n.putNull("artifactId").putNull("artifactEvidenceSha256");else n.put("artifactId",artifact.toString()).put("artifactEvidenceSha256",artifactSha);return n;
     }
     private JsonNode capturePrivate(InstallationHostGuard guard,RecoveryVerification.Stage stage,JsonNode pack) {
@@ -161,7 +192,7 @@ final class RecoveryFinalization {
                 byte[] raw=(byte[])completions.getFirst().get("details_bytes");var d=PreflightFiles.canonical(raw,8192);var s=stages.getFirst();
                 need(POLICY.equals(d.get("policy").stringValue()) && d.get("installationId").stringValue().equals(guard.binding().installationId().toString()) && d.get("runId").stringValue().equals(run.toString()) && d.get("controlId").stringValue().equals(control.toString()) && d.get("checkpointId").stringValue().equals(checkpoint.toString()) && d.get("qualificationSha256").stringValue().equals(qualificationSha),EVIDENCE_CHANGED);
                 need("SUCCEEDED".equals(a.get("state")) && "RECONCILE".equals(a.get("kind")) && run.equals(a.get("run_id")) && a.get("instance_id").toString().equals(d.get("instanceId").stringValue()) && number(a,"owner_epoch")==decimal(d,"epoch") && number(a,"row_version")==decimal(d,"attemptVersion")+1 && a.get("outcome_code").equals("RECONCILED_"+d.get("runState").stringValue()) && a.get("finished_at")!=null,EVIDENCE_CHANGED);
-                need(control.equals(r.get("current_attempt_id")) && r.get("state").equals(d.get("runState").stringValue()) && Set.of("SUCCEEDED","FAILED").contains(r.get("state")) && number(r,"row_version")==decimal(d,"runVersion")+1 && r.get("outcome_code").equals(d.get("code").stringValue()) && r.get("retry_eligible").equals(d.get("retryEligible").booleanValue()) && r.get("finished_at")!=null,EVIDENCE_CHANGED);
+                need(control.equals(r.get("current_attempt_id")) && r.get("state").equals(d.get("runState").stringValue()) && Set.of("SUCCEEDED","FAILED","CANCELLED").contains(r.get("state")) && number(r,"row_version")==decimal(d,"runVersion")+1 && r.get("outcome_code").equals(d.get("code").stringValue()) && r.get("retry_eligible").equals(d.get("retryEligible").booleanValue()) && r.get("finished_at")!=null,EVIDENCE_CHANGED);
                 need("APPLIED".equals(k.get("state")) && k.get("reason").equals(d.get("code").stringValue()) && k.get("target_attempt_id").toString().equals(d.get("predecessor").stringValue()) && number(k,"row_version")==decimal(d,"controlVersion")+1 && k.get("applied_at")!=null,EVIDENCE_CHANGED);
                 need(checkpoint.equals(s.get("checkpoint_id")) && number(s,"row_version")==decimal(d,"stageVersion") && s.get("command_sha256").equals(d.get("commandSha256").stringValue()) && s.get("result_sha256").equals(d.get("stageResultSha256").stringValue()) && (r.get("state").equals("SUCCEEDED")?s.get("state").equals("VERIFIED"):s.get("state").equals("FAILED")),EVIDENCE_CHANGED);
                 var old=one(jdbc.queryForList("SELECT checkpoint_id,result_sha256 FROM ddip_management.stage_invocations WHERE attempt_id=? AND stage='VERIFY_RESULT' AND item_ordinal=0",control));need(old.get("checkpoint_id").toString().equals(d.get("originalCheckpointId").stringValue()) && old.get("result_sha256").equals(d.get("originalResultSha256").stringValue()),EVIDENCE_CHANGED);
@@ -187,7 +218,8 @@ final class RecoveryFinalization {
                     var evidence=SourceJson.parse((byte[])ar.get("evidence_bytes"),PreflightFiles.LARGE);need(Arrays.equals((byte[])r.get("counts_bytes"),SourceJson.canonical(evidence.get("counts"))),EVIDENCE_CHANGED);
                     need(jdbc.queryForObject("SELECT count(*) FROM ddip_management.stage_artifacts WHERE attempt_id=? AND stage='VERIFY_RESULT' AND item_ordinal=1 AND role='RESULT' AND ordinal=0 AND artifact_id=?",Long.class,control,artifact)==1,EVIDENCE_CHANGED);
                     need(jdbc.queryForList("SELECT role,ordinal,dependency_artifact_id AS artifact_id FROM ddip_management.artifact_dependencies WHERE artifact_id=? ORDER BY role,ordinal",artifact).equals(jdbc.queryForList("SELECT role,ordinal,artifact_id FROM ddip_management.run_inputs WHERE run_id=? ORDER BY role,ordinal",run)),EVIDENCE_CHANGED);
-                }else need(r.get("state").equals("FAILED") && r.get("counts_bytes")==null && jdbc.queryForObject("SELECT count(*) FROM ddip_management.stage_artifacts WHERE attempt_id=?",Long.class,control)==0,EVIDENCE_CHANGED);
+                }else need(Set.of("FAILED","CANCELLED").contains(r.get("state")) && r.get("counts_bytes")==null && jdbc.queryForObject("SELECT count(*) FROM ddip_management.stage_artifacts WHERE attempt_id=?",Long.class,control)==0,EVIDENCE_CHANGED);
+                verifyCancellationReceipt(run,control,d,raw);
                 if(q!=null)need(d.equals(details(q,artifact,artifact==null?null:d.get("artifactEvidenceSha256").stringValue(),d.get("retryEligible").booleanValue(),d.get("finalReview"))),EVIDENCE_CHANGED);
                 return new Receipt(Status.CONFIRMED,run,control,(String)r.get("state"),(String)r.get("outcome_code"),artifact,(Boolean)r.get("retry_eligible"));
             });guard.checkHeld(guard.binding().installationId());return result;

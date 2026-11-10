@@ -41,6 +41,30 @@ class ReliabilityExecutionIT extends ReliabilityExecutionFixtures {
         for(var entry:before.entrySet()){Path p=Path.of(entry.getKey());assertThat(Files.getLastModifiedTime(p)+":"+SourceJson.sha(Files.readAllBytes(p))).isEqualTo(entry.getValue());}
         assertSuccess(replay.artifactId());
     }
+    @Test void cancellationAfterRealVerificationFencesSuccessAndRetainsPublication()throws Exception {
+        var verified=new CountDownLatch(1);var admitted=new CountDownLatch(1);
+        var verifier=new ReadOnlyVerifierProcess(){@Override Result run(List<String> c,Map<String,String> e,Path d,Duration t,Observer observer){
+            var result=super.run(c,e,d,t,observer);verified.countDown();
+            try{assertThat(admitted.await(15,TimeUnit.SECONDS)).isTrue();}catch(InterruptedException ex){Thread.currentThread().interrupt();throw new AssertionError(ex);}return result;
+        }};
+        try(var pool=Executors.newSingleThreadExecutor()){
+            var request=pool.submit(()->{assertThat(verified.await(90,TimeUnit.SECONDS)).isTrue();try{return requestCancel("race");}finally{admitted.countDown();}});
+            var failure=catchThrowable(()->adapter(new ReadOnlyVerifierProcess(true),verifier).run(guard,prepared,RUNTIME));
+            assertThat(failure).isInstanceOf(RunningCancellation.class);assertThat(request.get(15,TimeUnit.SECONDS).get("state").stringValue()).isEqualTo("REQUESTED");
+            assertThat(workers.settleCancellation(guard,(RuntimeException)failure).status()).isEqualTo("RECOVERY_ONLY");blocked();assertThat(hasNativeFiles()).isTrue();
+            assertThat(jdbc.queryForObject("SELECT state FROM ddip_management.controls WHERE type='CANCEL'",String.class)).isEqualTo("REQUESTED");
+        }
+    }
+    @Test void verifiedSuccessWinningBeforeCancelCannotBeOverwritten(){
+        var completed=execute();assertSuccess(completed.artifactId());
+        assertThatThrownBy(()->requestCancel("late")).hasMessage("STATE_CONFLICT");assertSuccess(completed.artifactId());
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.controls",Long.class)).isZero();
+    }
+    private JsonNode requestCancel(String key){
+        long version=jdbc.queryForObject("SELECT row_version FROM ddip_management.runs WHERE run_id=?",Long.class,run);
+        var body=SourceJson.object().put("action","CANCEL").putNull("attemptId").putNull("quiescenceConfirmed");
+        return new ControlRepository(jdbc,tx,INSTALL).request(ControlCommands.parse(run.toString(),SourceJson.canonical(body),key,"\""+version+"\""));
+    }
     void assertSuccess(UUID artifact) {
         assertThat(state()).isEqualTo("SUCCEEDED");assertThat(jdbc.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isNull();
         assertThat(jdbc.queryForObject("SELECT state FROM ddip_management.attempts WHERE attempt_id=?",String.class,owner.attemptId())).isEqualTo("SUCCEEDED");
