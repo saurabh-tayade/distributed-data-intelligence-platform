@@ -1,12 +1,12 @@
 import { useSyncExternalStore } from 'react';
-import { CANCEL_BODY, parseControl, validateCancelCommand } from '../managementApi';
+import { CANCEL_BODY, isCancellationReceipt, parseControl, validateCancelCommand } from '../managementApi';
 import type { CancelCommand, CancelResponse, RunDetailResponse } from '../managementApi';
 import type { RunIntent } from './runIntent';
 
 export const CANCEL_INTENT_KEY = 'ddip.cancel-run-intent.v1';
 const EVENT = 'ddip-cancel-intent';
 export interface CancelIntent {
-  version: 1; command: CancelCommand; phase: RunIntent['phase']; error?: RunIntent['error']; receipt?: CancelResponse;
+  version: 1; mode?: 'queued' | 'running'; command: CancelCommand; phase: RunIntent['phase']; error?: RunIntent['error']; receipt?: CancelResponse;
 }
 function snapshot() { try { return sessionStorage.getItem(CANCEL_INTENT_KEY) ?? ''; } catch { return '!unavailable'; } }
 function subscribe(listener: () => void) {
@@ -18,12 +18,13 @@ export function readCancelIntent(raw = snapshot()): CancelIntent | null {
   if (raw.length > 24576) throw new Error('Oversized saved cancellation');
   const value = JSON.parse(raw) as CancelIntent;
   if (!value || value.version !== 1 || !['review', 'pending', 'uncertain', 'rejected', 'confirmed'].includes(value.phase)
-    || Object.keys(value).some((key) => !['version', 'command', 'phase', 'error', 'receipt'].includes(key))) throw new Error('Invalid saved cancellation');
+    || Object.keys(value).some((key) => !['version', 'command', 'phase', 'error', 'receipt', 'mode'].includes(key))) throw new Error('Invalid saved cancellation');
+  if (value.mode !== undefined && value.mode !== 'queued' && value.mode !== 'running') throw new Error('Invalid cancellation mode');
   validateCancelCommand(value.command);
   if (value.receipt) {
     const r = value.receipt;
     parseControl({ apiVersion: r.apiVersion, data: r.data, meta: r.meta }, value.command.runId, r.data.controlId, r.etag);
-    if (value.phase !== 'confirmed' || r.data.type !== 'CANCEL' || r.data.state !== 'APPLIED' || r.data.reason !== 'CANCELLED' || r.location !== `/api/management/v1/runs/${value.command.runId}/controls/${r.data.controlId}`) throw new Error('Invalid receipt');
+    if (value.phase !== 'confirmed' || !isCancellationReceipt(r.data) || r.location !== `/api/management/v1/runs/${value.command.runId}/controls/${r.data.controlId}`) throw new Error('Invalid receipt');
   }
   if (value.phase === 'confirmed' && !value.receipt) throw new Error('Missing receipt');
   if (value.error && (typeof value.error.ambiguous !== 'boolean' || ![null, true, false].includes(value.error.retryable)
@@ -42,9 +43,12 @@ export function saveCancelIntent(value: CancelIntent | null) {
   window.dispatchEvent(new Event(EVENT));
 }
 export function canCancelRun(record: RunDetailResponse) {
-  return record.data.state === 'QUEUED' && record.data.attempts.count === '0' && record.data.attempts.currentAttemptId === null;
+  const run = record.data;
+  return run.state === 'QUEUED' && run.attempts.count === '0' && run.attempts.currentAttemptId === null
+    || run.state === 'RUNNING' && run.pipeline === 'RELIABILITY_V2' && run.attempts.count === '1' && run.attempts.currentAttemptId !== null
+      && run.latestControl?.state !== 'REQUESTED';
 }
 export function reviewCancelRun(record: RunDetailResponse) {
   if (snapshot() !== '' || !canCancelRun(record)) throw new Error('Cancellation unavailable');
-  saveCancelIntent({ version: 1, phase: 'review', command: { runId: record.data.runId, key: crypto.randomUUID(), body: CANCEL_BODY, ifMatch: record.etag } });
+  saveCancelIntent({ version: 1, mode: record.data.state === 'RUNNING' ? 'running' : 'queued', phase: 'review', command: { runId: record.data.runId, key: crypto.randomUUID(), body: CANCEL_BODY, ifMatch: record.etag } });
 }

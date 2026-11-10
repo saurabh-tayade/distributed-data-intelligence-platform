@@ -5,8 +5,8 @@
 This increment implements the existing ADR 0010 `QUEUED -> CANCELLED` boundary
 for original, never-claimed runs, independently of ordinary Content dispatch.
 It adds no worker activation, public fetch, retry, recovery, process termination,
-publication verification or output cleanup authority. Running cancellation and
-safe retry remain unfinished E5 work. PR #137 and its public acceptance gates
+publication verification or output cleanup authority. [Running Reliability cancellation](running-run-cancellation.md) is a separate control path;
+safe retry remains unfinished E5 work. PR #137 and its public acceptance gates
 are unchanged; this feature does not depend on that branch.
 
 Only a queued run with no current or historical attempt, stage or result can
@@ -41,8 +41,9 @@ control versions are distinct. Read the run again to inspect its current state.
 Exact key/body/version replay returns the original control even though the
 run version advanced. Do not mint a new key to resolve a lost acknowledgment.
 
-A stale run version fails with 412; a nonqueued or previously attempted run
-fails with 409. Neither creates a control. If worker claim wins the race,
+A stale run version fails with 412; an unsupported previously attempted run
+fails with 409. Active original Reliability executions use the separate running-control
+path. Neither creates a control. If worker claim wins the race, the reviewed queued version is stale and
 cancellation does not stop or change that worker. If cancellation wins, claim
 cannot select the cancelled run. Control and audit capacity limits still apply;
 terminal cancellation releases its own future audit reservation atomically.

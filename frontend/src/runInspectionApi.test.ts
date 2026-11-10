@@ -94,6 +94,16 @@ describe('run inspection wire contracts', () => {
   });
 
   it.each([
+    ['RUN_CANCEL_REQUESTED', 'RUNNING', 'CANCEL_REQUESTED', 'ACCEPTED'],
+    ['RUN_RECOVERY_REQUIRED', 'CANCEL_REQUESTED', 'RECOVERY_REQUIRED', 'RECOVERY_REQUIRED'],
+    ['CONTROL_APPLIED', 'REQUESTED', 'APPLIED', 'CANCELLED'],
+    ['CONTROL_TOO_LATE', 'REQUESTED', 'TOO_LATE', 'SUCCEEDED'],
+  ] as const)('reads running cancellation audit %s without conflating control and run states', (action, beforeState, afterState, code) => {
+    const row = { ...auditEvent(), action, beforeState, afterState, code, context: { attemptId: ATTEMPT_ID, controlId: CONTROL_ID } };
+    expect(parseEvents(historyPage([row])).data).toEqual([row]);
+  });
+
+  it.each([
     ['descending', [auditEvent('10'), auditEvent('2')]], ['duplicate', [auditEvent(), auditEvent()]],
     ['numeric sequence', [{ ...auditEvent(), eventSeq: 42 }]], ['zero sequence', [auditEvent('0')]], ['overflow', [auditEvent('9223372036854775808')]],
     ['unknown action', [{ ...auditEvent(), action: 'PRIVATE_ACTION' }]], ['unknown audit state', [{ ...auditEvent(), beforeState: 'SUCCESSFUL' }]],

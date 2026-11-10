@@ -12,7 +12,7 @@ final class QueuedCancelRepository {
     QueuedCancelRepository(JdbcTemplate jdbc,ManagementTransactions tx,UUID installation){this.jdbc=jdbc;this.tx=tx;this.installation=installation;}
     JsonNode request(ControlCommands.Command command){return tx.required(()->{
         // Same ordering as claim: a winning cancellation prevents any attempt; a winning claim rejects this control.
-        var slots=jdbc.queryForList("SELECT installation_id FROM ddip_management.coordinator WHERE singleton_id=1 FOR UPDATE");
+        var slots=jdbc.queryForList("SELECT * FROM ddip_management.coordinator WHERE singleton_id=1 FOR UPDATE");
         require(slots.size()==1 && installation.equals(slots.getFirst().get("installation_id")));
         var old=jdbc.queryForList("SELECT control_id,normalized_request,request_sha256 FROM ddip_management.controls WHERE run_id=? AND idempotency_key=?",command.runId(),command.key());
         if(!old.isEmpty()){
@@ -24,6 +24,7 @@ final class QueuedCancelRepository {
         if(runs.isEmpty())throw new SourceFailure(NOT_FOUND);
         var run=runs.getFirst();
         if(((Number)run.get("row_version")).longValue()!=command.expectedVersion())throw new SourceFailure(PRECONDITION_FAILED);
+        if("RUNNING".equals(run.get("state"))){var admitted=new RunningCancelRepository(jdbc,installation).admit(command,slots.getFirst(),run);return receipt(command,UUID.fromString(admitted.get("controlId").stringValue()));}
         require("QUEUED".equals(run.get("state")) && run.get("current_attempt_id")==null && run.get("current_stage")==null && run.get("result_artifact_id")==null);
         require(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.attempts WHERE run_id=?)",Boolean.class,command.runId()));
         require(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.controls WHERE run_id=? AND state='REQUESTED')",Boolean.class,command.runId()));

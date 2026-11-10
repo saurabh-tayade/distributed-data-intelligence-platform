@@ -725,13 +725,55 @@ public final class WorkerRepository {
         exactly(jdbc.update("UPDATE ddip_management.attempts SET state=?,finished_at=clock_timestamp(),outcome_code=?,row_version=row_version+1 WHERE attempt_id=? AND run_id=? AND instance_id=? AND owner_epoch=? AND state=? AND row_version=?",state,code,o.attemptId(),o.runId(),o.worker().instanceId(),o.worker().epoch(),o.attemptState(),o.attemptVersion()));
         audit(o.runId(),o.attemptId(),state.equals("INTERRUPTED")?"ATTEMPT_INTERRUPTED":"ATTEMPT_FINISHED",o.attemptState(),state,o.attemptVersion(),o.attemptVersion()+1,code);
     }
+    private RunningCancellation cancellation;
+    private boolean cancellationCleanupUncertain;
+    void noteSupervisorFailure(PreflightFailure failure){if(!failure.quiescent() || failure.code()==PreflightFailure.Code.INTERRUPTED || failure.code()==PreflightFailure.Code.TERMINATION_UNCONFIRMED)cancellationCleanupUncertain=true;}
+    /** Only the dispatcher invokes this after native supervision has returned and completed cleanup. */
+    Session settleCancellation(InstallationHostGuard guard,RuntimeException failure){
+        var signal=cancellation;
+        if(signal==null || authorizationStopped)return null;
+        held(guard,signal.owner.worker());
+        boolean clean=failure==signal && !signal.cleanupUncertain && !cancellationCleanupUncertain;
+        var result=ownerTransaction(()->{
+            var o=signal.owner;var w=o.worker();var c=slot();checkSession(c,w);
+            require("READY".equals(c.get("mode")) && o.attemptId().equals(c.get("active_attempt_id")) && w.instanceId().equals(c.get("owner_instance_id")) && c.get("active_import_id")==null,OWNERSHIP_LOST);
+            var r=one(jdbc.queryForList("SELECT state,row_version,current_attempt_id FROM ddip_management.runs WHERE run_id=? FOR UPDATE",o.runId()));
+            var a=one(jdbc.queryForList("SELECT * FROM ddip_management.attempts WHERE attempt_id=? FOR UPDATE",o.attemptId()));
+            require(o.runId().equals(a.get("run_id")) && "EXECUTE".equals(a.get("kind")) && w.instanceId().equals(a.get("instance_id")) && w.epoch()==number(a,"owner_epoch") && o.attemptState().equals(a.get("state")) && o.attemptVersion()==number(a,"row_version"),OWNERSHIP_LOST);
+            var current=RunningCancellation.detect(jdbc,o,r);require(current!=null && current.control.equals(signal.control),OWNERSHIP_LOST);
+            var stages=jdbc.queryForList("SELECT * FROM ddip_management.stage_invocations WHERE attempt_id=? ORDER BY stage,item_ordinal FOR UPDATE",o.attemptId());
+            boolean noWriter=stages.stream().allMatch(stage->"CHECK_INPUTS".equals(stage.get("stage")) || "PUBLISH_RELIABILITY".equals(stage.get("stage")) && "INTENT".equals(stage.get("state")) && stage.get("command_address")==null && stage.get("child_pid")==null);
+            boolean terminal=clean && noWriter;String state=terminal?"CANCELLED":"RECOVERY_REQUIRED";
+            long unfinished=jdbc.queryForObject("SELECT count(*) FROM ddip_management.runs WHERE state IN ('QUEUED','RUNNING','CANCEL_REQUESTED','RECOVERY_REQUIRED')",Long.class);
+            AuditCapacity.requireAvailable(jdbc,stages.size()+3,terminal?unfinished-1:unfinished);
+            for(var stage:stages)if(Set.of("INTENT","RUNNING").contains(stage.get("state"))){
+                String next=terminal?"FAILED":"UNKNOWN";
+                exactly(jdbc.update("UPDATE ddip_management.stage_invocations SET state=?,outcome_code=?,finished_at=clock_timestamp(),row_version=row_version+1 WHERE attempt_id=? AND stage=? AND item_ordinal=? AND row_version=?",next,state,o.attemptId(),stage.get("stage"),stage.get("item_ordinal"),stage.get("row_version")));
+                audit(o.runId(),o.attemptId(),terminal?"STAGE_FAILED":"STAGE_UNKNOWN",(String)stage.get("state"),next,number(stage,"row_version"),number(stage,"row_version")+1,state);
+            }
+            finishAttempt(o,terminal?"CANCELLED":"INTERRUPTED",state);
+            exactly(jdbc.update("UPDATE ddip_management.runs SET state=?,outcome_code=?,finished_at=CASE WHEN ? THEN clock_timestamp() ELSE NULL END,retry_eligible=false,row_version=row_version+1 WHERE run_id=? AND current_attempt_id=? AND state='CANCEL_REQUESTED' AND row_version=?",state,state,terminal,o.runId(),o.attemptId(),o.runVersion()+1));
+            audit(o.runId(),o.attemptId(),terminal?"RUN_CANCELLED":"RUN_RECOVERY_REQUIRED","CANCEL_REQUESTED",state,o.runVersion()+1,o.runVersion()+2,state);
+            if(terminal){
+                exactly(jdbc.update("UPDATE ddip_management.controls SET state='APPLIED',reason='CANCELLED',applied_at=clock_timestamp(),row_version=row_version+1 WHERE control_id=? AND state='REQUESTED' AND row_version=0",signal.control));
+                jdbc.update("INSERT INTO ddip_management.audit_events(actor_scope,run_id,attempt_id,control_id,action,before_state,after_state,before_version,after_version,safe_code,details_bytes) VALUES ('local-operator',?,?,?,'CONTROL_APPLIED','REQUESTED','APPLIED',0,1,'CANCELLED',?)",o.runId(),o.attemptId(),signal.control,SourceJson.canonical(SourceJson.object().put("protocolVersion",1)));
+                releaseOwned(o);return with(w,"READY",w.epoch(),w.coordinatorVersion()+1,w.workerVersion());
+            }
+            exactly(jdbc.update("UPDATE ddip_management.coordinator SET mode='RECOVERY_ONLY',row_version=row_version+1 WHERE singleton_id=1 AND row_version=?",w.coordinatorVersion()));
+            exactly(jdbc.update("UPDATE ddip_management.worker_instances SET status='RECOVERY_ONLY',row_version=row_version+1 WHERE instance_id=? AND row_version=?",w.instanceId(),w.workerVersion()));
+            return with(w,"RECOVERY_ONLY",w.epoch(),w.coordinatorVersion()+1,w.workerVersion()+1);
+        });
+        cancellation=null;cancellationCleanupUncertain=false;return result;
+    }
     private void owned(Owner o) {
         var c=slot();checkSession(c,o.worker());
         require("READY".equals(c.get("mode")) && o.attemptId().equals(c.get("active_attempt_id")) && o.worker().instanceId().equals(c.get("owner_instance_id")) && c.get("active_import_id")==null && "READY".equals(o.worker().status()),OWNERSHIP_LOST);
         var r=one(jdbc.queryForList("SELECT state,row_version,current_attempt_id FROM ddip_management.runs WHERE run_id=? FOR UPDATE",o.runId()));
-        require("RUNNING".equals(r.get("state")) && o.attemptId().equals(r.get("current_attempt_id")) && number(r,"row_version")==o.runVersion(),OWNERSHIP_LOST);
         var a=one(jdbc.queryForList("SELECT run_id,instance_id,owner_epoch,state,row_version FROM ddip_management.attempts WHERE attempt_id=? FOR UPDATE",o.attemptId()));
         require(o.runId().equals(a.get("run_id")) && o.worker().instanceId().equals(a.get("instance_id")) && o.worker().epoch()==number(a,"owner_epoch") && o.attemptState().equals(a.get("state")) && number(a,"row_version")==o.attemptVersion(),OWNERSHIP_LOST);
+        var cancelled=RunningCancellation.detect(jdbc,o,r);
+        if(cancelled!=null){cancellation=cancelled;throw cancelled;}
+        require("RUNNING".equals(r.get("state")) && o.attemptId().equals(r.get("current_attempt_id")) && number(r,"row_version")==o.runVersion(),OWNERSHIP_LOST);
     }
     private void held(InstallationHostGuard g,Session s) {
         outsideTransaction();

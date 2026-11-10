@@ -25,9 +25,9 @@ class QueuedCancelIT extends RunApiFixtures {
     @Test void cancellationWinsBeforeRealClaim()throws Exception{
         try(var guard=guard()){var worker=WorkerTestSupport.reliability(jdbc,tx,INSTALL);var session=register(worker,guard);controls.request(command("cancel",0));assertThat(worker.claim(guard,session,UUID.randomUUID()).status()).isEqualTo("EMPTY");assertThat(count("attempts")).isZero();}
     }
-    @Test void realClaimWinsAndRunningCancellationIsRejected()throws Exception{
+    @Test void realClaimWinsAndFreshRunningCancellationIsRequested()throws Exception{
         try(var guard=guard()){var worker=WorkerTestSupport.reliability(jdbc,tx,INSTALL);var session=register(worker,guard);assertThat(worker.claim(guard,session,UUID.randomUUID()).status()).isEqualTo("CLAIMED");var slot=jdbc.queryForList("SELECT * FROM ddip_management.coordinator");
-            assertThatThrownBy(()->controls.request(command("stale",0))).hasMessage("PRECONDITION_FAILED");assertThatThrownBy(()->controls.request(command("running",1))).hasMessage("STATE_CONFLICT");assertThat(count("controls")).isZero();assertThat(jdbc.queryForList("SELECT * FROM ddip_management.coordinator")).isEqualTo(slot);}
+            assertThatThrownBy(()->controls.request(command("stale",0))).hasMessage("PRECONDITION_FAILED");assertThat(controls.request(command("running",1)).get("state").stringValue()).isEqualTo("REQUESTED");assertThat(count("controls")).isEqualTo(1);assertThat(jdbc.queryForList("SELECT * FROM ddip_management.coordinator")).isEqualTo(slot);}
     }
     @Test void concurrentRealClaimAndCancelHaveOneWinner()throws Exception{
         try(var guard=guard();var pool=Executors.newFixedThreadPool(2)){

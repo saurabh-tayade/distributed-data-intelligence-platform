@@ -123,7 +123,7 @@ class ReadOnlyVerifierProcess {
             }
             if(interrupted)Thread.currentThread().interrupt();
         }
-        if(uncertain)throw new PreflightFailure(TERMINATION_UNCONFIRMED,false);
+        if(uncertain){if(failure instanceof RunningCancellation cancellation){cancellation.cleanupUncertain=true;throw cancellation;}throw new PreflightFailure(TERMINATION_UNCONFIRMED,false);}
         if(failure!=null)throw failure;
         if(result==null)throw new PreflightFailure(RESULT_INVALID,false);
         return result;

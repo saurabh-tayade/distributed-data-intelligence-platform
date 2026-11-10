@@ -45,6 +45,33 @@ class RecoveryFinalizationIT extends RecoveryVerificationFixtures {
         }
         var before=nativeSnapshot();var q=qualified();var result=finalizer().finish(guard,q,freshReview());released(result,"FAILED",code,retry);assertThat(result.artifactId()).isNull();assertThat(nativeSnapshot()).isEqualTo(before);assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.artifacts WHERE kind='RELIABILITY_V2'",Long.class)).isZero();assertThat(finalizer().resolve(guard,control,q.checkpoint(),qualification.sha256())).isEqualTo(result);
     }
+    UUID admittedCancel() {
+        byte[] raw=SourceJson.canonical(SourceJson.object().put("action","CANCEL").putNull("attemptId").putNull("quiescenceConfirmed"));
+        return UUID.fromString(new ControlRepository(jdbc,tx,INSTALL).request(ControlCommands.parse(run.toString(),raw,"running-cancel","\"1\"")).get("controlId").stringValue());
+    }
+    @Override void handoff(){
+        clock.now=Instant.now();var body=SourceJson.object().put("action","RECONCILE").put("attemptId",owner.attemptId().toString()).put("quiescenceConfirmed",true);long version=jdbc.queryForObject("SELECT row_version FROM ddip_management.runs WHERE run_id=?",Long.class,run);
+        control=UUID.fromString(new ControlRepository(jdbc,tx,INSTALL).request(ControlCommands.parse(run.toString(),SourceJson.canonical(body),"verify-recovery","\""+version+"\"")).get("controlId").stringValue());var registered=new WorkerRepository(jdbc,tx,INSTALL).register(guard,PROFILE,owner.worker().profileDigest(),owner.worker().deploymentDigest());var t=handoffs.inspect(guard,registered,control);review=new RecoveryQuiescence.Review(t.digest(),clock.instant(),true,true,true,t.unresolvedCheckpoints(),List.of());qualification=handoffs.qualify(guard,t,review,RUNTIME);recoveryOwner=handoffs.transfer(guard,qualification).owner();bootstrap=handoffs.bootstrap(guard,qualification.address(),qualification.sha256(),RUNTIME);
+    }
+    @ParameterizedTest @ValueSource(strings={"published","absent"}) void pendingCancellationResolvesOnlyVerifiedPublicationOrAbsence(String mode)throws Exception {
+        if(mode.equals("absent"))deleteTree(publication());UUID cancel=admittedCancel();var before=nativeSnapshot();var q=qualified();
+        var armed=new AtomicBoolean();var lost=lostAck(armed);var ht=new RecoveryHandoff(lost,transactions(lost),INSTALL,clock,RecoveryQuiescence.LOCAL,step->{});var svc=new RecoveryFinalization(lost,transactions(lost),ht,new RecoveryVerification(lost,transactions(lost),ht),step->{if(step==RecoveryFinalization.Step.AUDIT)armed.set(true);});
+        assertThatThrownBy(()->svc.finish(guard,q,freshReview())).hasMessage("MANAGEMENT_UNAVAILABLE");guard.close();guard=InstallationHostGuard.acquire(binding);
+        var result=finalizer().resolve(guard,control,q.checkpoint(),qualification.sha256());
+        released(result,mode.equals("published")?"SUCCEEDED":"CANCELLED",mode.equals("published")?"RECOVERED_PUBLICATION":"CANCELLED",false);
+        assertThat(jdbc.queryForObject("SELECT state FROM ddip_management.controls WHERE control_id=?",String.class,cancel)).isEqualTo(mode.equals("published")?"TOO_LATE":"APPLIED");
+        assertThat(jdbc.queryForObject("SELECT reason FROM ddip_management.controls WHERE control_id=?",String.class,cancel)).isEqualTo(mode.equals("published")?"SUCCEEDED":"CANCELLED");
+        assertThat(finalizer().resolve(guard,cancel,q.checkpoint(),qualification.sha256()).status()).isEqualTo(RecoveryFinalization.Status.UNRESOLVED);assertThat(finalizer().resolve(guard,control,UUID.randomUUID(),qualification.sha256()).status()).isEqualTo(RecoveryFinalization.Status.UNRESOLVED);
+        long audits=jdbc.queryForObject("SELECT count(*) FROM ddip_management.audit_events",Long.class);assertThat(finalizer().resolve(guard,control,q.checkpoint(),qualification.sha256())).isEqualTo(result);assertThat(finalizer().finish(guard,q,freshReview())).isEqualTo(result);assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.audit_events",Long.class)).isEqualTo(audits);assertThat(nativeSnapshot()).isEqualTo(before);
+    }
+    @Test void pendingCancellationDoesNotConvertIncompletePublicationToCancellation()throws Exception {
+        Files.delete(publication().resolve("complete.json"));admittedCancel();handoff();observed=recoveryService().verify(guard,bootstrap,review);
+        assertThatThrownBy(()->finalizer().qualify(guard,bootstrap,observed,freshReview())).hasMessage("EVIDENCE_UNAVAILABLE");stillBlocked();
+    }
+    @Test void cancellationMutationRollsBackWithFinalization()throws Exception {
+        UUID cancel=admittedCancel();var q=qualified();var svc=new RecoveryFinalization(jdbc,tx,handoffs,recoveryService(),step->{if(step==RecoveryFinalization.Step.WORKER)throw new RecoveryFailure(RecoveryFailure.Code.INVALID_REQUEST);});
+        assertThatThrownBy(()->svc.finish(guard,q,freshReview())).hasMessage("INVALID_REQUEST");stillBlocked();assertThat(jdbc.queryForObject("SELECT state FROM ddip_management.controls WHERE control_id=?",String.class,cancel)).isEqualTo("REQUESTED");assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.audit_events WHERE action IN ('CONTROL_APPLIED','CONTROL_TOO_LATE')",Long.class)).isZero();
+    }
     Path dependencyMarker(){var input=originalPack.get("bundle").get("capturedSelection").get("inputs").get(0);String role=input.get("role").stringValue().equals("RELIABILITY_BATCH")?"batch":"reference";return Path.of(fixture.get("bundle").get("bindings").get(role).get("root").stringValue()).resolve(input.get("relativeAddress").stringValue()).resolve("complete.json");}
     void stillBlocked(){occupied();assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.audit_events WHERE action='RECOVERY_FINALIZED'",Long.class)).isZero();}
     @ParameterizedTest @ValueSource(strings={"output","dependency","evidence","provenance","root","identity","guard","stale","coordinator","stage","owner","cancel"}) void changedOrUnavailableFinalizationPreconditionsRetainOwnership(String mode)throws Exception {
