@@ -708,3 +708,35 @@ export async function sendRunSubmission(command: RunSubmissionCommand, signal: A
     return { ...receipt, location: expected };
   } catch { throw new RunSubmissionError(202, null, null, null, true); }
 }
+
+export const CANCEL_BODY = '{"action":"CANCEL","attemptId":null,"quiescenceConfirmed":null}';
+export interface CancelCommand { runId: string; key: string; body: string; ifMatch: string }
+export type CancelResponse = ControlResponse & { location: string };
+export function validateCancelCommand(command: CancelCommand) {
+  need(command && Object.keys(command).length === 4 && isManagementId(command.runId) && isManagementId(command.key));
+  need(command.body === CANCEL_BODY && typeof command.ifMatch === 'string' && /^"(0|[1-9][0-9]{0,18})"$/.test(command.ifMatch));
+  need(BigInt(command.ifMatch.slice(1, -1)) <= 9223372036854775807n);
+}
+export async function sendCancelCommand(command: CancelCommand, signal: AbortSignal): Promise<CancelResponse> {
+  validateCancelCommand(command);
+  let response: Response;
+  try {
+    response = await managementFetch(`${runPath(command.runId)}/controls`, signal, { method: 'POST', body: command.body,
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-DDIP-Local-Request': '1',
+        'Idempotency-Key': command.key, 'If-Match': command.ifMatch } });
+  } catch { throw new RunSubmissionError(null, null, null, null, true); }
+  if (response.status !== 202) {
+    const meta = await failureMetadata(response, [...(runSubmissionFailures[response.status] ?? []), ...(response.status === 412 ? ['PRECONDITION_FAILED'] : response.status === 428 ? ['PRECONDITION_REQUIRED'] : [])]);
+    throw new RunSubmissionError(response.status, meta.code, meta.correlationId, meta.retryable, meta.code === null || response.status >= 500);
+  }
+  try {
+    need(response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() === 'application/json');
+    const body: unknown = await response.json(), { row } = recordEnvelope(body); need(isManagementId(row.controlId));
+    const receipt = parseControl(body, command.runId, row.controlId, response.headers.get('ETag'));
+    need(receipt.data.type === 'CANCEL' && receipt.data.state === 'APPLIED' && receipt.data.reason === 'CANCELLED');
+    const expected = `${runPath(command.runId)}/controls/${row.controlId}`, location = response.headers.get('Location'); need(location !== null);
+    const url = new URL(location, window.location.origin);
+    need(url.origin === window.location.origin && url.pathname === expected && !url.search && !url.hash && !url.username && !url.password);
+    return { ...receipt, location: expected };
+  } catch { throw new RunSubmissionError(202, null, null, null, true); }
+}

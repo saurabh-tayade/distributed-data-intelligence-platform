@@ -7,7 +7,7 @@ The passive-worker sections below describe earlier checkpoints. [C3a control adm
 records recovery intent. [C3b internal handoff](#c3b-internal-recovery-handoff) is tested without
 granting native disposition authority by itself. [C3c.4 controlled local recovery](#c3c4-controlled-local-operational-recovery)
 connects handoff, bootstrap, independent native verification and atomic finalization through a trusted
-non-web operator role. Managed Content execution, cancellation and retry remain deferred.
+non-web operator role. [Queued cancellation](../../docs/operations/queued-run-cancellation.md) is available for never-claimed runs. Ordinary Content dispatch, running cancellation and guarded retry remain gated or deferred.
 Analytics-only startup and its publication selection are unchanged.
 
 ## Acceptance and structure

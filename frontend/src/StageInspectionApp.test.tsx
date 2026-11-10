@@ -43,7 +43,7 @@ describe('selected-attempt stage records', () => {
     expect(stageCalls(fetch)).toHaveLength(4); expect(within(screen.getByRole('region', { name: 'Run record' })).getByText('Run row version')).toBeVisible();
     expect(screen.getByRole('region', { name: 'Audit events' })).toBeVisible(); expect(screen.getByRole('region', { name: 'Latest control receipt' })).toBeVisible();
     expect(fetch.mock.calls.every((call) => (call[1] as RequestInit).method === 'GET')).toBe(true);
-    expect(screen.queryByRole('button', { name: /recover|resume|reconcile|cancel|retry run|start stage|verify stage/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /recover|resume|reconcile|retry run|start stage|verify stage/i })).not.toBeInTheDocument();
   });
 
   it('preserves server identity order, item ordinals, stage states, nulls, counts and checkpoints', async () => {

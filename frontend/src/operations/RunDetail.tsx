@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import { canCancelRun, reviewCancelRun, useCancelIntent } from './cancelIntent';
 import type { ControlReceipt, LatestControl } from '../managementApi';
 import type { ExecutionFilters } from '../navigation';
 import { executionsHref } from '../navigation';
@@ -31,12 +33,13 @@ function ControlPanel({ runId, controlId }: { runId: string; controlId: string }
 }
 export function RunDetail({ runId, returnQuery }: { runId: string; returnQuery: ExecutionFilters }) {
   const model = useRunDetail(runId), record = model.data?.data ?? null;
+  const cancellation = useCancelIntent(), [storageError, setStorageError] = useState(false);
   return <section aria-label="Run inspection">
     <a className="source-back" href={executionsHref(returnQuery)}>Back to Executions</a>
     <div className="page-heading"><div><p className="eyebrow">OPERATIONS WORKSPACE <span aria-hidden="true">/</span> RUN INSPECTION</p>
       <h1>Run detail<span className="title-period">.</span></h1><code className="inspection-id">{runId}</code>
     </div><button className="secondary-button" type="button" disabled={model.refreshing || model.hidden} onClick={model.refresh}>Refresh run detail</button></div>
-    <p className="scope-notice">Read-only inspection. Retry eligibility does not authorize RETRY. Historical verification does not requalify an artifact or activate Analytics. Ordinary Content dispatch remains disabled.</p>
+    <p className="scope-notice">Queued-run cancellation requires explicit review. Retry eligibility does not authorize RETRY. Historical verification does not requalify an artifact or activate Analytics. Ordinary Content dispatch remains disabled.</p>
     <section className="panel source-detail-panel" aria-label="Run record" aria-busy={model.refreshing}>
       <h2>Persisted run record</h2>
       {model.hidden && <p role="status" className="inspection-note">Run reads are suspended while the document is hidden.</p>}
@@ -70,6 +73,13 @@ export function RunDetail({ runId, returnQuery }: { runId: string; returnQuery: 
           : <ul className="inspection-references">{record.inputArtifactIds.map((id, index) => <li key={`${index}:${id}`}><code>{id}</code></li>)}</ul>}
         {record.latestControl && <><h4>Latest control reference in displayed run record</h4><ControlFields control={record.latestControl} /></>}
       </>}
+    </section>
+    <section className="panel" aria-label="Queued-run cancellation"><h2>Queued-run cancellation</h2>
+      <p>Only QUEUED runs with no attempts can be cancelled here. RETRY and running-run cancellation remain disabled.</p>
+      <button type="button" disabled={!model.data || !canCancelRun(model.data) || model.refreshing || model.hidden || !!model.error || cancellation.unavailable || !!cancellation.intent} onClick={() => {
+        try { if (model.data) reviewCancelRun(model.data); } catch { setStorageError(true); }
+      }}>Review queued-run cancellation</button>
+      {storageError && <p role="alert">Unable to retain cancellation review. No request was sent.</p>}
     </section>
     <AttemptHistory runId={runId} /><AuditTimeline runId={runId} />
     <section className="panel source-detail-panel" aria-label="Latest control receipt"><h2>Latest control receipt</h2>

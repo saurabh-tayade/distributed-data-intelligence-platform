@@ -10,6 +10,7 @@ import { useAnalytics } from './useAnalytics';
 import { SourceRegistration } from './operations/SourceEditor';
 import { SourceCommandPanel } from './operations/SourceCommandPanel';
 import { ReliabilitySubmission } from './operations/ReliabilitySubmission';
+import { CancelRunPanel } from './operations/CancelRunPanel';
 import { RunSubmissionPanel } from './operations/RunSubmissionPanel';
 import { useReliability } from './useReliability';
 import { ContentWorkspace } from './ContentWorkspace';
@@ -53,6 +54,7 @@ export function App() {
     </nav>}
     <SourceCommandPanel key={JSON.stringify(route)} visible={operations} />
     <RunSubmissionPanel visible={operations} />
+    <CancelRunPanel visible={operations} />
     {/* Keep the Analytics model and publication pin across workspace navigation. */}
     <div hidden={route !== 'analytics'}><AnalyticsWorkspace model={model} /></div>
     <div hidden={route !== 'content'}><ContentWorkspace model={content} /></div>
