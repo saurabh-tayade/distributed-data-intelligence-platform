@@ -41,18 +41,19 @@ public final class WorkerRepository {
             return new Session(installation,process.instanceId(),profileId,profileDigest,deploymentDigest,guard.binding().digest(),status,number(c,"epoch"),number(c,"row_version"),0);
         });
     }
-    public Claim claim(InstallationHostGuard guard,Session session,UUID attemptId) {return claim(guard,session,attemptId,null,false);}
-    Claim claimResumed(InstallationHostGuard guard,Session session,UUID attemptId,UUID run){return claim(guard,session,attemptId,Objects.requireNonNull(run),false);}
+    public Claim claim(InstallationHostGuard guard,Session session,UUID attemptId) {return claim(guard,session,attemptId,null,false,false);}
+    Claim claimRetry(InstallationHostGuard guard,Session session,UUID attemptId,UUID run){return claim(guard,session,attemptId,Objects.requireNonNull(run),false,true);}
+    Claim claimResumed(InstallationHostGuard guard,Session session,UUID attemptId,UUID run){return claim(guard,session,attemptId,Objects.requireNonNull(run),false,false);}
     /** Explicit inactive admission seam, never selected by ordinary dispatch. */
-    Claim claimNarrow(InstallationHostGuard guard,Session session,UUID attemptId,UUID run){return claim(guard,session,attemptId,Objects.requireNonNull(run),true);}
-    private Claim claim(InstallationHostGuard guard,Session session,UUID attemptId,UUID exactRun,boolean narrow) {
+    Claim claimNarrow(InstallationHostGuard guard,Session session,UUID attemptId,UUID run){return claim(guard,session,attemptId,Objects.requireNonNull(run),true,false);}
+    private Claim claim(InstallationHostGuard guard,Session session,UUID attemptId,UUID exactRun,boolean narrow,boolean retryOnly) {
         held(guard,session);require(attemptId!=null,WORKER_CONFIGURATION_INVALID);
         // Only the fixed packaged adapter or isolated test capability supplies eligibility.
         if(!capability.available())return new Claim("NO_EXECUTOR",null,null,session,null);
         return ownerTransaction(()->{
             var c=slot();checkSession(c,session);require("READY".equals(session.status()) && idle(c),WORKER_NOT_READY);
             require(jdbc.queryForObject("SELECT count(*) FROM ddip_management.attempts WHERE attempt_id=?",Long.class,attemptId)==0,CLAIM_UNCERTAIN);
-            var next=jdbc.queryForList("SELECT run_id FROM ddip_management.runs WHERE state='QUEUED' AND execution_profile_id=? AND ((pipeline='CONTENT_RSS_V1' AND ?) OR (pipeline='RELIABILITY_V2' AND ?)) AND (?::uuid IS NULL OR run_id=?::uuid) ORDER BY submission_seq LIMIT 1",session.profileId(),capability.supports("CONTENT_RSS_V1"),capability.supports("RELIABILITY_V2"),exactRun,exactRun);
+            var next=jdbc.queryForList("SELECT run_id FROM ddip_management.runs WHERE state='QUEUED' AND execution_profile_id=? AND ((pipeline='CONTENT_RSS_V1' AND ?) OR (pipeline='RELIABILITY_V2' AND ?)) AND (?::uuid IS NULL OR run_id=?::uuid) AND (?::uuid IS NOT NULL OR NOT EXISTS(SELECT 1 FROM ddip_management.audit_events e WHERE e.run_id=runs.run_id AND e.action='RELIABILITY_RETRY_QUEUED' AND e.after_version=runs.row_version)) ORDER BY submission_seq LIMIT 1",session.profileId(),capability.supports("CONTENT_RSS_V1"),capability.supports("RELIABILITY_V2"),exactRun,exactRun,exactRun);
             if(next.isEmpty())return new Claim("EMPTY",null,null,session,null);
             UUID runId=(UUID)next.getFirst().get("run_id");
             var sources=jdbc.queryForList("SELECT s.source_id,s.enabled,s.profile_family,r.revision,r.captured_gate_version,r.captured_enabled,v.configuration_bytes,v.configuration_sha256,v.endpoint_id,v.endpoint_sha256 FROM ddip_management.run_sources r JOIN ddip_management.sources s ON (s.product_id,s.source_id)=(r.product_id,r.source_id) JOIN ddip_management.source_revisions v ON (v.product_id,v.source_id,v.revision)=(r.product_id,r.source_id,r.revision) WHERE r.run_id=? ORDER BY s.product_id COLLATE \"C\",s.source_id COLLATE \"C\" FOR UPDATE OF s",runId);
@@ -79,7 +80,12 @@ public final class WorkerRepository {
                 audit(runId,null,failure.equals("SOURCE_DISABLED")?"SOURCE_DISABLED_AT_DISPATCH":"RUN_FAILED","QUEUED","FAILED",number(r,"row_version"),number(r,"row_version")+1,failure);
                 return new Claim("REJECTED",runId,failure,session,null);
             }
-            var resume=exactRun==null || narrow?null:ContentResumeLineage.queued(jdbc,runId,number(r,"row_version"));
+            boolean retryQueued=jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.audit_events WHERE run_id=? AND action='RELIABILITY_RETRY_QUEUED' AND after_version=?)",Boolean.class,runId,number(r,"row_version"));
+            require(!retryOnly || retryQueued,WORKER_NOT_READY);
+            require(!retryQueued || retryOnly && exactRun!=null && "RELIABILITY_V2".equals(r.get("pipeline")),WORKER_NOT_READY);
+            var retry=retryQueued?ReliabilityRetryPlan.queued(jdbc,runId,number(r,"row_version")):null;
+            if(retry!=null)require(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.artifacts WHERE kind='RELIABILITY_V2' AND native_identity=?)",Boolean.class,retry.get("nativeFingerprint").stringValue()),WORKER_NOT_READY);
+            var resume=exactRun==null || narrow || "RELIABILITY_V2".equals(r.get("pipeline"))?null:ContentResumeLineage.queued(jdbc,runId,number(r,"row_version"));
             int attemptNo=jdbc.queryForObject("SELECT COALESCE(max(attempt_no),0)+1 FROM ddip_management.attempts WHERE run_id=?",Integer.class,runId);
             require(attemptNo<=(narrow?19:20),WORKER_NOT_READY);long epoch=Math.addExact(session.epoch(),1);
             jdbc.update("INSERT INTO ddip_management.attempts(attempt_id,run_id,attempt_no,kind,instance_id,owner_epoch,state,reused_checkpoint_id,content_admission_policy) VALUES (?,?,?,'EXECUTE',?,?,'CLAIMED',?,?)",attemptId,runId,attemptNo,session.instanceId(),epoch,resume==null || resume.get("checkpointId").isNull()?null:UUID.fromString(resume.get("checkpointId").stringValue()),narrow?NarrowContentProfile.POLICY:null);
@@ -89,6 +95,7 @@ public final class WorkerRepository {
             audit(runId,attemptId,"RUN_CLAIMED","QUEUED","RUNNING",number(r,"row_version"),number(r,"row_version")+1,"CLAIMED");
             audit(runId,attemptId,"ATTEMPT_CLAIMED",null,"CLAIMED",null,0L,"CLAIMED");
             if(resume!=null)jdbc.update("INSERT INTO ddip_management.audit_events(actor_scope,run_id,attempt_id,control_id,action,after_state,after_version,safe_code,details_bytes) VALUES ('local-operator',?,?,?,'CONTENT_RESUME_CLAIMED','CLAIMED',0,'CLAIMED',?)",runId,attemptId,UUID.fromString(resume.get("resumeControlId").stringValue()),SourceJson.canonical(resume));
+            if(retry!=null)jdbc.update("INSERT INTO ddip_management.audit_events(actor_scope,run_id,attempt_id,control_id,action,after_state,after_version,safe_code,details_bytes) VALUES ('local-operator',?,?,?,'RELIABILITY_RETRY_CLAIMED','CLAIMED',0,'CLAIMED',?)",runId,attemptId,UUID.fromString(retry.get("retryControlId").stringValue()),SourceJson.canonical(retry));
             Session bound=with(session,session.status(),epoch,session.coordinatorVersion()+1,session.workerVersion());
             Owner owner=new Owner(bound,runId,attemptId,number(r,"row_version")+1,0,"CLAIMED");
             return new Claim("CLAIMED",runId,"CLAIMED",bound,owner);
@@ -720,7 +727,11 @@ public final class WorkerRepository {
         catch(ManagementFailure ex){authorizationStopped=true;throw ex;}
         catch(WorkerFailure ex){if(ex.code()==OWNERSHIP_LOST || ex.code()==CLAIM_UNCERTAIN)authorizationStopped=true;throw ex;}
     }
-    private void controls(Owner owner) {require(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.controls WHERE run_id=? AND type='CANCEL' AND state IN ('REQUESTED','APPLIED'))",Boolean.class,owner.runId()),WORKER_NOT_READY);}
+    private void controls(Owner owner) {
+        boolean retried=jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.audit_events e JOIN ddip_management.controls c USING(control_id,run_id) WHERE e.run_id=? AND e.attempt_id=? AND e.action='RELIABILITY_RETRY_CLAIMED' AND c.type='RETRY' AND c.state='APPLIED')",Boolean.class,owner.runId(),owner.attemptId());
+        if(retried){require(RecoveryFinalization.currentCancellations(jdbc,owner.runId(),owner.attemptId()).isEmpty(),WORKER_NOT_READY);return;}
+        require(!jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ddip_management.controls WHERE run_id=? AND type='CANCEL' AND state IN ('REQUESTED','APPLIED'))",Boolean.class,owner.runId()),WORKER_NOT_READY);
+    }
     private void finishAttempt(Owner o,String state,String code) {
         exactly(jdbc.update("UPDATE ddip_management.attempts SET state=?,finished_at=clock_timestamp(),outcome_code=?,row_version=row_version+1 WHERE attempt_id=? AND run_id=? AND instance_id=? AND owner_epoch=? AND state=? AND row_version=?",state,code,o.attemptId(),o.runId(),o.worker().instanceId(),o.worker().epoch(),o.attemptState(),o.attemptVersion()));
         audit(o.runId(),o.attemptId(),state.equals("INTERRUPTED")?"ATTEMPT_INTERRUPTED":"ATTEMPT_FINISHED",o.attemptState(),state,o.attemptVersion(),o.attemptVersion()+1,code);

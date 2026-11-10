@@ -24,6 +24,8 @@
     "platform.contentapi.execution.RecoveryVerificationIT",
     "platform.contentapi.execution.ReliabilityExecutionIT",
     "platform.contentapi.execution.ReliabilityPreflightIT",
+    "platform.contentapi.execution.ReliabilityRetryEvidenceIT",
+    "platform.contentapi.execution.ReliabilityRetryIT",
     "platform.contentapi.execution.ReliabilityWorkerIT"
   ],
   "ingestion": [

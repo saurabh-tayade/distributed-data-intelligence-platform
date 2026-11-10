@@ -146,3 +146,5 @@ semantics and does not activate a launcher, receipt commit or ordinary Content d
 - [0043: Integrated original-run Content pipeline](0043-integrated-original-content-pipeline.md)
 
 - [0046: Reliability running cancellation](0046-reliability-running-cancellation.md)
+
+- [ADR 0047: Guarded Reliability retry](0047-guarded-reliability-retry.md)

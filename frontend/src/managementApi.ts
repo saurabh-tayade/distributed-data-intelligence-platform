@@ -38,7 +38,7 @@ export const RUN_STATES = ['QUEUED', 'RUNNING', 'PAUSED', 'RECOVERY_REQUIRED', '
 export type RunState = typeof RUN_STATES[number];
 export const RUN_STAGES = ['CHECK_INPUTS', 'FETCH_SOURCE', 'STORE_BRONZE', 'SILVER', 'PREPARE_GOLD', 'PUBLISH_GOLD', 'PUBLISH_CONTENT', 'PUBLISH_RELIABILITY', 'VERIFY_RESULT'] as const;
 // RunInspectionValues.CODES: public classifications, never arbitrary private diagnostics.
-export const RUN_OUTCOMES = ['RESUME_QUEUED', 'RESUME_CHECKPOINT_UNSUPPORTED', 'RESUME_EVIDENCE_INVALID', 'RESUME_EVIDENCE_UNAVAILABLE', 'RESUME_NAMESPACE_UNSAFE',
+export const RUN_OUTCOMES = ['RETRY_QUEUED', 'RESUME_QUEUED', 'RESUME_CHECKPOINT_UNSUPPORTED', 'RESUME_EVIDENCE_INVALID', 'RESUME_EVIDENCE_UNAVAILABLE', 'RESUME_NAMESPACE_UNSAFE',
   'ACCEPTED', 'CLAIMED', 'STARTED', 'VERIFIED', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'INTERRUPTED', 'UNKNOWN', 'UPDATED', 'UNCHANGED',
   'INPUT_UNAVAILABLE', 'INPUT_INVALID', 'INPUT_CHANGED', 'PUBLICATION_UNAVAILABLE', 'PUBLICATION_INVALID', 'PUBLICATION_CHANGED', 'INCOMPLETE_OUTPUT',
   'FETCH_FAILED', 'FETCH_EVIDENCE_LOST', 'BRONZE_CONFLICT', 'BRONZE_ABSENT', 'BRONZE_PAYLOAD_ONLY', 'STAGE_TIMEOUT', 'STAGE_OUTPUT_LIMIT',
@@ -62,7 +62,7 @@ export const ATTEMPT_STATES = ['CLAIMED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'CAN
 export const CONTROL_TYPES = ['CANCEL', 'RETRY', 'RECONCILE', 'RESUME'] as const;
 export const CONTROL_STATES = ['REQUESTED', 'APPLIED', 'TOO_LATE', 'REJECTED'] as const;
 export const AUDIT_STATES = [...RUN_STATES, 'CLAIMED', 'INTERRUPTED', 'INTENT', 'VERIFIED', 'UNKNOWN', 'REQUESTED', 'APPLIED', 'TOO_LATE', 'REJECTED', 'RECOVERY_ONLY', 'READY'] as const;
-export const AUDIT_ACTIONS = ['CONTENT_RESUME_QUEUED', 'CONTENT_RESUME_CLAIMED', 'RUN_SUBMITTED', 'RUN_CLAIMED', 'RUN_STARTED', 'RUN_CANCEL_REQUESTED', 'RUN_CANCELLED', 'RUN_FAILED', 'RUN_SUCCEEDED', 'RUN_RECOVERY_REQUIRED', 'RUN_REQUEUED',
+export const AUDIT_ACTIONS = ['RELIABILITY_RETRY_QUEUED', 'RELIABILITY_RETRY_CLAIMED', 'CONTENT_RESUME_QUEUED', 'CONTENT_RESUME_CLAIMED', 'RUN_SUBMITTED', 'RUN_CLAIMED', 'RUN_STARTED', 'RUN_CANCEL_REQUESTED', 'RUN_CANCELLED', 'RUN_FAILED', 'RUN_SUCCEEDED', 'RUN_RECOVERY_REQUIRED', 'RUN_REQUEUED',
   'ATTEMPT_CLAIMED', 'ATTEMPT_STARTED', 'ATTEMPT_FINISHED', 'ATTEMPT_INTERRUPTED', 'STAGE_INTENT', 'STAGE_LAUNCH_AUTHORIZED', 'STAGE_STARTED', 'STAGE_VERIFIED', 'STAGE_FAILED', 'STAGE_UNKNOWN',
   'CONTROL_REQUESTED', 'CONTROL_APPLIED', 'CONTROL_TOO_LATE', 'CONTROL_REJECTED', 'RECOVERY_HANDOFF', 'RECOVERY_CLOSED', 'SOURCE_DISABLED_AT_DISPATCH',
   'RECOVERY_ATTEMPT_RUNNING', 'RECOVERY_STAGE_INTENT', 'RECOVERY_LAUNCH_AUTHORIZED', 'RECOVERY_CHILD_STARTED', 'RECOVERY_STAGE_OBSERVED',
@@ -740,6 +740,42 @@ export async function sendCancelCommand(command: CancelCommand, signal: AbortSig
     const body: unknown = await response.json(), { row } = recordEnvelope(body); need(isManagementId(row.controlId));
     const receipt = parseControl(body, command.runId, row.controlId, response.headers.get('ETag'));
     need(isCancellationReceipt(receipt.data));
+    const expected = `${runPath(command.runId)}/controls/${row.controlId}`, location = response.headers.get('Location'); need(location !== null);
+    const url = new URL(location, window.location.origin);
+    need(url.origin === window.location.origin && url.pathname === expected && !url.search && !url.hash && !url.username && !url.password);
+    return { ...receipt, location: expected };
+  } catch { throw new RunSubmissionError(202, null, null, null, true); }
+}
+
+export const RETRY_BODY = '{"action":"RETRY","attemptId":null,"quiescenceConfirmed":null}';
+export interface RetryCommand { runId: string; key: string; body: string; ifMatch: string }
+export type RetryResponse = ControlResponse & { location: string };
+export function validateRetryCommand(command: RetryCommand) {
+  need(command && Object.keys(command).length === 4 && isManagementId(command.runId) && isManagementId(command.key));
+  need(command.body === RETRY_BODY && typeof command.ifMatch === 'string' && /^"(0|[1-9][0-9]{0,18})"$/.test(command.ifMatch));
+  need(BigInt(command.ifMatch.slice(1, -1)) <= 9223372036854775807n);
+}
+export function isRetryReceipt(receipt: ControlReceipt) {
+  return receipt.type === 'RETRY' && (receipt.state === 'REQUESTED' && receipt.reason === null
+    || receipt.state === 'APPLIED' && receipt.reason === 'RETRY_QUEUED');
+}
+export async function sendRetryCommand(command: RetryCommand, signal: AbortSignal): Promise<RetryResponse> {
+  validateRetryCommand(command);
+  let response: Response;
+  try {
+    response = await managementFetch(`${runPath(command.runId)}/controls`, signal, { method: 'POST', body: command.body,
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-DDIP-Local-Request': '1',
+        'Idempotency-Key': command.key, 'If-Match': command.ifMatch } });
+  } catch { throw new RunSubmissionError(null, null, null, null, true); }
+  if (response.status !== 202) {
+    const meta = await failureMetadata(response, [...(runSubmissionFailures[response.status] ?? []), ...(response.status === 412 ? ['PRECONDITION_FAILED'] : response.status === 428 ? ['PRECONDITION_REQUIRED'] : [])]);
+    throw new RunSubmissionError(response.status, meta.code, meta.correlationId, meta.retryable, meta.code === null || response.status >= 500);
+  }
+  try {
+    need(response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() === 'application/json');
+    const body: unknown = await response.json(), { row } = recordEnvelope(body); need(isManagementId(row.controlId));
+    const receipt = parseControl(body, command.runId, row.controlId, response.headers.get('ETag'));
+    need(isRetryReceipt(receipt.data));
     const expected = `${runPath(command.runId)}/controls/${row.controlId}`, location = response.headers.get('Location'); need(location !== null);
     const url = new URL(location, window.location.origin);
     need(url.origin === window.location.origin && url.pathname === expected && !url.search && !url.hash && !url.username && !url.password);

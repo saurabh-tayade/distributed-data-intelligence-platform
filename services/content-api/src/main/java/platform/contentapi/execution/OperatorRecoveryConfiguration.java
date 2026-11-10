@@ -41,7 +41,16 @@ public class OperatorRecoveryConfiguration {
                     exitCode=new NarrowContentTerminalOperator(jdbc,tx,installation,env).run(nativeAction);return;
                 }
                 UUID control=uuid(env.getProperty("ddip.recovery.control-id",""));
-                String action=env.getProperty("ddip.recovery.action","");need(Set.of("inspect","recover","resume","execute-resume").contains(action),INVALID_REQUEST);
+                String action=env.getProperty("ddip.recovery.action","");need(Set.of("inspect","recover","resume","execute-resume","retry","execute-retry").contains(action),INVALID_REQUEST);
+                if(action.equals("retry") || action.equals("execute-retry")){
+                    String profile=token("ddip.worker.execution-profile-id"),binding=token("ddip.worker.control-binding-id"),runtime=token("ddip.worker.runtime-profile-id");
+                    try(var guard=InstallationHostGuard.acquire(new ImportBindings(jdbc,tx,installation).control(binding,profile))){
+                        var service=new ReliabilityRetry(jdbc,tx,installation);
+                        if(action.equals("retry")){JsonNode plan;try{plan=service.requeue(guard,control,runtime);}catch(ManagementFailure ex){plan=service.applied(control);if(plan==null)throw ex;}emit(SourceJson.object().put("status","REQUEUE_RECORDED").put("controlId",control.toString()).put("runId",plan.get("runId").stringValue()));}
+                        else{UUID result=service.execute(guard,control,runtime);emit(SourceJson.object().put("status","EXECUTION_RECORDED").put("controlId",control.toString()).put("artifactId",result.toString()));}
+                        exitCode=0;return;
+                    }
+                }
                 if(action.equals("resume") || action.equals("execute-resume")){
                     String profile=token("ddip.worker.execution-profile-id"),binding=token("ddip.worker.control-binding-id"),runtime=token("ddip.worker.runtime-profile-id");
                     try(var guard=InstallationHostGuard.acquire(new ImportBindings(jdbc,tx,installation).control(binding,profile))){

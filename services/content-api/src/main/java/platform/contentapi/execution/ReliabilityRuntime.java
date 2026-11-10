@@ -22,6 +22,11 @@ public final class ReliabilityRuntime {
     public static ReliabilityRuntime load(JdbcTemplate jdbc,ManagementTransactions tx,InstallationHostGuard guard,WorkerRepository.Owner owner,String id,JsonNode frozen) {
         return load(jdbc,tx,guard,owner.worker().profileId(),owner.worker().profileDigest(),owner.worker().deploymentDigest(),id,frozen);
     }
+    /** Terminal-run read-only qualification; does not fabricate a worker or authorize execution. */
+    static ReliabilityRuntime terminal(JdbcTemplate jdbc,ManagementTransactions tx,InstallationHostGuard guard,String id,JsonNode frozen) {
+        var p=frozen.get("executionProfile");
+        return load(jdbc,tx,guard,p.get("profileId").stringValue(),p.get("configurationSha256").stringValue(),p.get("configuration").get("runtime").get("deploymentSha256").stringValue(),id,frozen);
+    }
     /** Startup resolves only approved profile/binding metadata. No run or attempt is fabricated. */
     static ReliabilityRuntime startup(JdbcTemplate jdbc,ManagementTransactions tx,InstallationHostGuard guard,String profile,String digest,String deployment,String id) {
         var selected=SourceJson.object().put("pipeline","RELIABILITY_V2");
