@@ -52,7 +52,7 @@ export function RetryRunPanel({ visible }: { visible: boolean }) {
     <h2 id="retry-review-title" ref={heading} tabIndex={-1}>{phase === 'review' ? 'Review guarded Reliability retry' : 'Retry receipt'}</h2>
     <p>Request retry of Reliability run <code>{command.runId}</code>. The server checks the captured run ETag <code>{command.ifMatch}</code>.</p>
     <p>Admission records intent only. A separate local operator command must freshly verify immutable inputs and an absent output namespace under the installation guard before requeueing. Historical retry eligibility is not launch authority.</p>
-    <p>No output is deleted or repaired. Content retry and cancellation of later attempts remain unsupported.</p>
+    <p>No output is deleted or repaired. Content retry remains unsupported. Cancelling a queued or running Reliability retry requires a separate explicit review.</p>
     <p>Idempotency key: <code>{command.key}</code></p>
     <details open><summary>Complete frozen retry</summary><pre className="source-request-body">{JSON.stringify(JSON.parse(command.body), null, 2)}</pre></details>
     {error && <div role="alert"><p>Retry was not confirmed. Review the reported failure. No automatic retry occurs.</p><ManagementErrorDetails error={error} mutation /></div>}

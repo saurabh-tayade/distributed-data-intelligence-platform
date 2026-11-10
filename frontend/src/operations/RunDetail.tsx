@@ -77,7 +77,7 @@ export function RunDetail({ runId, returnQuery }: { runId: string; returnQuery: 
       </>}
     </section>
     <section className="panel" aria-label="Run cancellation"><h2>Run cancellation</h2>
-      <p>Cancel never-started QUEUED runs, or request a bounded stop of a first-attempt RUNNING Reliability run. Running cancellation may require recovery and verified publication can still succeed. Content running cancellation and cancellation of later attempts remain disabled.</p>
+      <p>Cancel never-started QUEUED runs or an admitted queued Reliability retry, or request a bounded stop of a running Reliability attempt. Displayed retry receipts are review hints; the server validates the exact current lifecycle. Queued cancellation prevents the next execution without erasing history. Running cancellation may require recovery and verified publication can still succeed. Content running cancellation and Content retry cancellation remain disabled.</p>
       <button type="button" disabled={!model.data || !canCancelRun(model.data) || model.refreshing || model.hidden || !!model.error || cancellation.unavailable || !!cancellation.intent} onClick={() => {
         try { if (model.data) reviewCancelRun(model.data); } catch { setStorageError(true); }
       }}>Review {record?.state === 'RUNNING' ? 'running' : 'queued'}-run cancellation</button>

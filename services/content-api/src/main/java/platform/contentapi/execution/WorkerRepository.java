@@ -739,7 +739,7 @@ public final class WorkerRepository {
     private RunningCancellation cancellation;
     private boolean cancellationCleanupUncertain;
     void noteSupervisorFailure(PreflightFailure failure){if(!failure.quiescent() || failure.code()==PreflightFailure.Code.INTERRUPTED || failure.code()==PreflightFailure.Code.TERMINATION_UNCONFIRMED)cancellationCleanupUncertain=true;}
-    /** Only the dispatcher invokes this after native supervision has returned and completed cleanup. */
+    /** Only a guarded execution driver invokes this after native supervision has returned and completed cleanup. */
     Session settleCancellation(InstallationHostGuard guard,RuntimeException failure){
         var signal=cancellation;
         if(signal==null || authorizationStopped)return null;

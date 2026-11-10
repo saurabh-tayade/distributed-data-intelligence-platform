@@ -47,7 +47,8 @@ public class OperatorRecoveryConfiguration {
                     try(var guard=InstallationHostGuard.acquire(new ImportBindings(jdbc,tx,installation).control(binding,profile))){
                         var service=new ReliabilityRetry(jdbc,tx,installation);
                         if(action.equals("retry")){JsonNode plan;try{plan=service.requeue(guard,control,runtime);}catch(ManagementFailure ex){plan=service.applied(control);if(plan==null)throw ex;}emit(SourceJson.object().put("status","REQUEUE_RECORDED").put("controlId",control.toString()).put("runId",plan.get("runId").stringValue()));}
-                        else{UUID result=service.execute(guard,control,runtime);emit(SourceJson.object().put("status","EXECUTION_RECORDED").put("controlId",control.toString()).put("artifactId",result.toString()));}
+                        else{try{UUID result=service.execute(guard,control,runtime);emit(SourceJson.object().put("status","EXECUTION_RECORDED").put("controlId",control.toString()).put("artifactId",result.toString()));}
+                            catch(ReliabilityRetry.CancellationRecorded cancelled){cancelledRetry(control,cancelled);return;}}
                         exitCode=0;return;
                     }
                 }
@@ -137,6 +138,10 @@ public class OperatorRecoveryConfiguration {
             emit(SourceJson.object().put("status","COMPLETED").put("controlId",control.toString()).put("runId",receipt.run().toString()).put("runState",receipt.state()).put("code",receipt.code()).put("retryEligible",receipt.retryEligible()));exitCode=0;
         }
         private String token(String key){String value=env.getProperty(key,"");need(value.matches("[A-Za-z0-9_-]{1,128}"),INVALID_REQUEST);return value;}
+        void cancelledRetry(UUID retryControl,ReliabilityRetry.CancellationRecorded cancelled){
+            emit(SourceJson.object().put("status",cancelled.status()).put("retryControlId",retryControl.toString()).put("runId",cancelled.runId().toString()));
+            exitCode=cancelled.status().equals("CANCELLED")?0:2;
+        }
         public int getExitCode(){return exitCode;}
     }
 
