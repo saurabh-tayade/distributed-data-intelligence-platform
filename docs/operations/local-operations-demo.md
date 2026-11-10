@@ -35,6 +35,35 @@ The example Python path is the repository's established ignored local environmen
 another installed environment with the exact versions is supported. `DDIP_TEST_PYTHON`
 is also accepted when `DDIP_DEMO_PYTHON` is unset. No machine-specific path is committed.
 
+## Hosted offline lifecycle validation
+
+When a local Docker host is unavailable, the manual GitHub Actions workflow
+**Offline managed demo acceptance** (`.github/workflows/managed-demo.yml`) runs
+on an isolated Ubuntu 24.04 runner with the existing pinned dependencies.
+The first manual dispatch requires the workflow to exist on the default branch.
+Choose **Run workflow** and the reviewed branch/revision. Record the run URL,
+exact checkout SHA and terminal result; a published workflow or green ordinary
+CI alone is **not** evidence that the managed demo passed.
+
+The harness `python3 -I -B scripts/check-managed-demo.py` starts the real launcher,
+waits for its HTTP/native verification and successful Reliability run, stops it
+through ownership-checked `down`, verifies resource removal, then repeats with a
+fresh installation identity. It refuses existing installations and never
+force-cleans resources whose ownership or shutdown cannot be established.
+
+“Offline” means synthetic local input fixtures, not an air-gapped dependency
+installation: Maven/npm/PyPI and the pinned PostgreSQL image may be downloaded.
+No real feed is fetched. The workflow has read-only repository permissions,
+uploads no private demo files and logs only allowlisted lifecycle diagnostics.
+The harness contract tests also run in ordinary PR CI, without Docker.
+
+This check does **not** establish SeaweedFS persistence, a database restart with
+retained state, manual browser/accessibility acceptance, real public-feed
+acceptance, or performance/scale qualification. Two fresh installations are not
+a persistence/recovery test. Those acceptance items remain separately tracked;
+Content dispatch stays disabled. At introduction, local harness tests were run
+but the hosted Docker lifecycle was **not yet executed**.
+
 ## Start, inspect and stop
 
 ```sh

@@ -1,0 +1,44 @@
+name: Offline managed demo acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  managed-demo:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      SPARK_LOCAL_IP: 127.0.0.1
+      TZ: UTC
+    steps:
+      - name: Check out selected revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12.15'
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Install existing locked dependencies
+        run: |
+          python -m pip install -r processing/requirements-bronze.txt -r processing/requirements-analytics.txt
+          npm ci --prefix frontend --no-audit --no-fund
+      - name: Validate harness and run two isolated demo lifecycles
+        run: |
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          export DDIP_DEMO_PYTHON="$(command -v python)"
+          python -I -B -m unittest discover -s scripts/tests -p test_managed_demo_check.py -v
+          echo "Exact checkout: $(git rev-parse HEAD)"
+          java -version
+          node --version
+          python --version
+          docker version --format '{{.Server.Version}}'
+          python -I -B scripts/check-managed-demo.py
