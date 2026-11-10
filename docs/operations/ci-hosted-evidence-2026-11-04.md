@@ -156,6 +156,14 @@ and [41887971634](https://github.com/saurabh-tayade/distributed-data-intelligenc
 were still running and are excluded from completed-run claims. This docs-only work does not rerun
 application suites, change GitHub settings, publish a release or change the issue state.
 
+## November 10 follow-up: release procedure
+
+The earlier observation above remains a historical record: no automated publication gate exists.
+The [required release verification procedure](release-validation-gate.md) now specifies the
+exact-commit full-main-CI evidence an operator must record before a tag or release. This uses the
+existing workflow and does not add release automation, change required checks, claim an automated
+publication block, or establish the separate local/browser acceptance criteria.
+
 ## Reproduce the evidence
 
 Use read-only Actions run/job endpoints; request the exact attempt when a run has been rerun:

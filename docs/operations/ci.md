@@ -341,8 +341,10 @@ separate required checks. No check is hidden with a workflow-level path filter.
 
 **No ruleset change is required for the implemented selection policy.** Keep these four contexts.
 Successful full and representative selective runs are now recorded in the
-[hosted evidence](ci-hosted-evidence-2026-11-04.md). Release/tag publication is not separately gated;
-the issue's release-gate criterion remains an explicit owner decision.
+[hosted evidence](ci-hosted-evidence-2026-11-04.md). Before publishing a release or tag, follow the
+[required release verification procedure](release-validation-gate.md) against its exact commit.
+This is an operator-enforced gate, not automated prevention of GitHub release/tag publication;
+no workflow or repository permission is changed by that procedure.
 
 ## Alternatives and maintenance tradeoffs
 
@@ -492,7 +494,7 @@ python3 -I -B -m unittest discover -s .github/ci/tests -v
 
 The [November 4 evidence record](ci-hosted-evidence-2026-11-04.md) contains current completed
 change-aware runs, all full-run job durations, Gold/Content recovery timeout margins, classification
-examples and the remaining release-gate decision. The baseline below is retained for comparison.
+examples and the release-gate enforcement limitation. The baseline below is retained for comparison.
 
 These successful **Phase 1 parallel-layout measurements** were originally read from Actions APIs
 on October 26, 2026. Main was dd725da; the PR head was dbec28d. Both used ubuntu-24.04 and the
