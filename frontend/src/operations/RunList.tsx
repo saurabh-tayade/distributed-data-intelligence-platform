@@ -38,6 +38,7 @@ export function RunList({ query, active = true }: { query: ExecutionFilters; act
       <h1>Executions<span className="title-period">.</span></h1>
       <p className="page-description">Persisted execution records in newest-submission-first order.</p>
     </div><span className="row-badge">Read-only</span></div>
+    <p className="inspection-note">Open a run to inspect its outcome, next step, attempts, stages and audit events. Admission can precede execution; a recorded result does not change the publication shown in Analytics.</p>
     <p className="scope-notice">Historical Content runs can appear here. Ordinary Content worker dispatch remains disabled. This view does not submit runs or recovery requests.</p>
     <form className="source-filters execution-filters" aria-label="Execution filters" noValidate onSubmit={(event) => {
       event.preventDefault();

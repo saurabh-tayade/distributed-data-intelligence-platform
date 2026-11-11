@@ -78,7 +78,8 @@ export function ContentWorkspace({ model }: { model: ReturnType<typeof useConten
         <div><dt>Publisher reference fingerprint</dt><dd><code>{identity.reference.snapshotFingerprint}</code></dd></div>
       </dl> : <p>Awaiting verified Content selection identities.</p>}
     </section>
-    <p className="scope-notice">This Content selection is pinned independently from the existing Gold analytics view. Its base Gold selection may differ from that view.</p>
+    <p className="scope-notice">This Content selection is pinned independently from the existing Gold analytics view. Its base Gold selection may differ from that view.
+      {' '}The local operator selects it at API startup. Completing an Operations run does not change this selection.</p>
     <p className="metric-explanation">Discovery means first observed within the selected history, not original publication or first appearance on the internet.
       Observations count recorded ingestion observations, not readership. Missing reference metadata does not remove articles.</p>
     <nav className="operations-navigation" aria-label="Content reports">

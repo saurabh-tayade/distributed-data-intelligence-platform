@@ -53,6 +53,8 @@ export function SourceEditor({ baseline, onCancel }: { baseline?: SourceResponse
   return <section className="panel source-editor" aria-labelledby="source-editor-title">
     <h2 id="source-editor-title">{baseline ? 'New immutable revision' : 'Register a source'}</h2>
     <p>Use reviewed references only. The server validates the current catalog and installed storage binding. This operation does not start ingestion or enable Content dispatch.</p>
+    <p className="inspection-note">The local operator installs these endpoint, profile and storage references. This form does not upload files or provision profiles.
+      {baseline ? ' Review compatible imported inputs again before submitting a run against a new revision.' : ' After registration, review admission status and prepare a separate run using compatible imported inputs.'}</p>
     {baseline && <p>Based on revision {baseline.data.currentRevision}, row version <code>{baseline.data.rowVersion}</code>. The profile remains <code>{baseline.data.config.profile}</code>. A changed name or configuration creates an immutable revision; an identical request may leave the revision unchanged.</p>}
     {!capabilities && !error && <p role="status">Loading reviewed source capabilities</p>}
     {error && <div role="alert"><p>Reviewed source capabilities are unavailable. Source configuration cannot be submitted.</p><ManagementErrorDetails error={error} />
