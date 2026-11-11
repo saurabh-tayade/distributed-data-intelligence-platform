@@ -16,8 +16,11 @@ export function SourceList({ active }: { active: boolean }) {
       <p className="eyebrow">OPERATIONS WORKSPACE <span aria-hidden="true">/</span> SOURCE CATALOG</p>
       <h1>Sources<span className="title-period">.</span></h1>
       <p className="page-description">Registered sources, current revisions and admission status.</p>
-    </div><a className="secondary-button" href="#/operations/sources/new">Register source</a></div>
+    </div><div className="source-action-buttons"><a className="secondary-button" href="#/operations/sources/new">Register source</a>
+      <a className="primary-button" href="#/operations/submit">Choose Reliability inputs</a></div></div>
     <p className="scope-notice">Enabled sources are eligible for admission. This catalog does not start ingestion or activate Content dispatch.</p>
+    <p className="inspection-note">For a Reliability run, the local operator first installs approved profiles and imports synthetic batches and a service reference.
+      Registering a source records its configuration; enabling admission lets you select compatible imported inputs in a separate submission.</p>
     <div className="source-filters" role="group" aria-label="Source filters">
       <label>Product<select value={filters.productId} onChange={(event) => model.changeFilters({ productId: event.target.value as ProductId | '' })}>
         <option value="">All products</option><option value="application-reliability">Application Reliability</option><option value="content-intelligence">Content Intelligence</option>
@@ -42,7 +45,7 @@ export function SourceList({ active }: { active: boolean }) {
       </section>}
       {page && page.data.length === 0 && <section className="state-panel" role="status">
         <h2>{filters.productId || filters.enabled ? 'No sources match these filters' : 'No registered sources'}</h2>
-        <p>{filters.productId || filters.enabled ? 'Choose another product or admission status, or refresh the list.' : 'The management API returned an empty source catalog.'}</p>
+        <p>{filters.productId || filters.enabled ? 'Choose another product or admission status, or refresh the list.' : 'Register a source using the reviewed references installed by the local operator. Registration does not import data or start a run.'}</p>
       </section>}
       {page && page.data.length > 0 && <section className="panel table-panel" aria-labelledby="sources-title">
         <div className="panel-heading"><h2 id="sources-title">Registered sources</h2><span className="row-badge">{page.data.length} returned on this page</span></div>

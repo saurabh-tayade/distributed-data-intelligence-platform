@@ -857,3 +857,33 @@ Operations supports reviewed cancellation of original, never-claimed queued runs
 See the [queued cancellation contract](../docs/operations/queued-run-cancellation.md)
 for API conditions, retained request resolution, race semantics and remaining gates.
 Running cancellation and retry are not enabled by this increment.
+
+## R1.1 — Reliability operator journey
+
+The current bounded UI refinement makes the existing operator sequence explicit:
+reviewed source → compatible imported inputs → frozen review → confirmation → run inspection
+→ historical verified result → independently selected Analytics. **Choose Reliability inputs**
+from Sources or enabled Reliability Source Detail opens selection without preselecting a source
+or submitting a request. Profile, source revision, batch and service-reference compatibility
+checks are unchanged. Imports and profile provisioning remain local operator procedures.
+
+The review panel summarizes the saved source revisions, execution profile, batch count and
+service-reference artifact, with expandable batch IDs and exact JSON. It retains the original
+body/idempotency key and explicit confirmation/resolution semantics. Run inspection leads with
+recorded state/outcome and next-step guidance, preserving stale-read warnings, guarded controls,
+technical metadata and independent attempt/stage/audit histories.
+
+**Open independently selected Reliability analytics** navigates to the existing analytical
+route. It does not activate the run result. The operator selects each exact publication at
+API startup; Gold, enriched Content and Reliability remain independently pinned. Retry admission
+still needs separate trusted operator requalification/execution commands; cancellation intent
+does not establish observed cancellation. See the current [retry](../docs/operations/reliability-retry.md)
+and [running cancellation](../docs/operations/running-run-cancellation.md) procedures for those
+later implemented control increments.
+
+The [R1-AC01–R1-AC10 acceptance record](../docs/operations/r1-1-reliability-operator-acceptance.md)
+separates code, executed automated checks and outstanding actual browser/demo evidence.
+Browser host and supported disposable-demo prerequisites were unavailable during this slice;
+no existing installation was adopted or removed. #53 and the joint #145 browser review remain
+open. Ordinary Content execution remains disabled; no backend, processing, schema, identity,
+selection, upload or recovery capability is added by R1.1.

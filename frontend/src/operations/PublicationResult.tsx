@@ -5,6 +5,7 @@ export function PublicationResult({ result }: { result: RunResult | null }) {
   if (result === null) return <span>No result recorded</span>;
   return <>
     <strong>VERIFIED_AT_EXECUTION</strong><span className="run-metadata">Historical verification only</span>
+    <span className="run-metadata">Current artifact health and Analytics selection are checked separately.</span>
     <details className="run-result"><summary>Recorded result metadata</summary><dl>
       <dt>Artifact ID</dt><dd><code>{result.artifactId}</code></dd>
       <dt>Native fingerprint</dt><dd><code>{result.nativeFingerprint}</code></dd>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { RunSubmissionError, sendRunSubmission } from '../managementApi';
+import { parseReliabilityRequest, RunSubmissionError, sendRunSubmission } from '../managementApi';
 import { runHref } from '../navigation';
 import { ManagementErrorDetails } from './ManagementErrorDetails';
 import { confirmedRunIntent, readRunIntent, saveRunIntent, useRunIntent } from './runIntent';
@@ -54,12 +54,24 @@ export function RunSubmissionPanel({ visible }: { visible: boolean }) {
     <p>Tab storage is unavailable or contains an invalid unresolved run intent. Preserve it for operator inspection. New run submissions are disabled.</p></div>;
   if (!intent) return null;
   const { command, phase, error, receipt } = intent;
+  const selection = parseReliabilityRequest(JSON.parse(command.body));
   return <section className="panel source-action-review" aria-labelledby="run-review-title" aria-busy={busy}>
     <h2 id="run-review-title" ref={heading} tabIndex={-1}>{phase === 'review' ? 'Review Reliability run' : 'Reliability submission receipt'}</h2>
     <p>Pipeline: <strong>RELIABILITY_V2</strong> · Product: Application Reliability.</p>
     <p>Review all immutable identifiers and source revisions below. Admission does not start a worker or activate Analytics results. Subsequent processing depends on the configured Reliability worker.</p>
+    <section aria-label="Frozen selection summary">
+      <h3>Frozen selection</h3>
+      <dl className="source-metadata">
+        <div><dt>Execution profile</dt><dd><code>{selection.executionProfileId}</code></dd></div>
+        <div><dt>Selected input batches</dt><dd>{selection.batchArtifactIds.length}</dd></div>
+        <div><dt>Captured source revisions</dt><dd><ul className="inspection-references">{selection.sources.map((source) => <li key={source.sourceId}>
+          <code>{source.sourceId}</code> · revision {source.revision}</li>)}</ul></dd></div>
+        <div><dt>Service-reference artifact</dt><dd><code>{selection.serviceReferenceArtifactId}</code></dd></div>
+      </dl>
+      <details><summary>Selected batch artifact IDs</summary><ul className="inspection-references">{selection.batchArtifactIds.map((id) => <li key={id}><code>{id}</code></li>)}</ul></details>
+    </section>
     <p>Idempotency key: <code>{command.key}</code></p>
-    <details open><summary>Complete frozen submission</summary><pre className="source-request-body">{JSON.stringify(JSON.parse(command.body), null, 2)}</pre></details>
+    <details><summary>Complete frozen submission</summary><pre className="source-request-body">{JSON.stringify(JSON.parse(command.body), null, 2)}</pre></details>
     {error && <div role="alert"><p>{explanation(error.status)}</p><ManagementErrorDetails error={error} mutation /></div>}
     {(phase === 'uncertain' || phase === 'pending' && !busy) && <p role="alert">Outcome unknown. The original key and exact body are retained in this tab. Resolve the same request before starting a different intent. No automatic replay occurs.</p>}
     {phase === 'pending' && busy && <p role="status">Admission request pending.</p>}

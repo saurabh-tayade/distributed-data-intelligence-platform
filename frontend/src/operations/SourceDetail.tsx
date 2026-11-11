@@ -45,8 +45,13 @@ export function SourceDetail({ identity }: { identity: SourceIdentity }) {
       <h1>Source detail<span className="title-period">.</span></h1>
       <p className="page-description">{productLabel(identity.productId)} <span aria-hidden="true">/</span> <code>{identity.sourceId}</code></p>
     </div><button className="secondary-button" type="button" onClick={model.refresh}>Refresh source and revisions</button></div>
-    <p className="related-executions"><a href={executionsHref(identity)}>View executions for this source</a></p>
+    <div className="source-action-buttons"><a className="secondary-button" href={executionsHref(identity)}>View executions for this source</a>
+      {source?.productId === 'application-reliability' && source.enabled && <a className="primary-button" href="#/operations/submit">Choose Reliability inputs</a>}</div>
     <p className="scope-notice">Enabled is an admission gate, not health or revision approval. A registered source does not imply ingestion or processing. Content dispatch is not activated here.</p>
+    {source?.productId === 'application-reliability' && <p className="inspection-note">{source.enabled
+      ? 'Next: choose an approved execution profile, then deliberately select this source and batches matching its current revision. Inputs are not preselected from this page.'
+      : 'To prepare a run, enable admission through Source management actions, then choose compatible imported Reliability inputs.'}
+      {' '}A new immutable revision does not update existing runs or imported batches; matching inputs must be reviewed again.</p>}
 
     <section className="panel source-detail-panel" aria-labelledby="current-source-title" aria-busy={model.detail === null}>
       <h2 id="current-source-title">Current source record</h2>

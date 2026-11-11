@@ -125,14 +125,17 @@ function SubmissionSelection({ active }: { active: boolean }) {
     <p className="scope-notice">Discovery is advisory registration metadata, not worker health or native-file readiness. Source admission and current revisions can change. Final server admission is authoritative.</p>
     <fieldset className="source-form-fields" disabled={checking}>
       <legend className="visually-hidden">Reliability run selections</legend>
+      <p className="inspection-note">1. Choose an approved execution profile. Then select enabled sources, matching imported batches and one service reference.
+        Review creates a frozen request in this tab; only confirmation sends it to the server.</p>
       <Catalog title="Execution profiles" scope="profiles" active load={fetchReliabilityProfiles} empty="No compatible registered Reliability execution profiles were returned. Install a supported profile through the existing operator procedure.">
         {(rows) => <div className="submission-choices">{rows.map((item) => <div key={item.executionProfileId}><label>
           <input type="radio" name="execution-profile" checked={chosenProfile === item.executionProfileId} onChange={() => changeProfile(item)} />
-          <span><code>{item.executionProfileId}</code> · {item.sourceProfile} · {item.inputFormat}</span></label>
+          <span><strong>{item.inputFormat} request batches</strong> · {item.sourceProfile}<code className="inspection-id">{item.executionProfileId}</code></span></label>
           <details><summary>Profile contract metadata</summary><p>RELIABILITY_V2 · Run profile {item.runProfileVersion} · Pipeline {item.pipelineVersion}</p>
             <p>Configuration SHA-256: <code>{item.configurationSha256}</code></p><p>Registered: <Timestamp value={item.createdAt} /></p></details></div>)}</div>}
       </Catalog>
       {profile && <>
+        <p className="inspection-note">2. Select enabled sources. Each source needs at least one batch matching its captured current revision, profile and input storage reference.</p>
         <p>Selected profile: <code>{chosenProfile}</code> · {profile.sourceProfile} · SHA-256 <code>{profile.configurationSha256}</code>.</p>
         <Catalog title="Enabled Reliability sources" scope={`${chosenProfile}:${epoch}`} active load={loadSources} empty="No enabled Reliability sources were returned. Source configuration and admission are managed separately.">
           {(rows) => <div className="submission-choices">{rows.map((s) => <label key={s.sourceId}><input type="checkbox" checked={sources.some((chosen) => chosen.sourceId === s.sourceId)}
@@ -149,13 +152,15 @@ function SubmissionSelection({ active }: { active: boolean }) {
           <option value="">All sources in the selected profile</option>{sources.map((s) => <option key={s.sourceId} value={s.sourceId}>{s.sourceId}</option>)}
         </select></label>
         {!sources.length && <p>Select a current compatible source before browsing batch artifacts.</p>}
+        {!!sources.length && <p className="inspection-note">3. Choose matching imported batches. Unavailable or incompatible inputs cannot be made ready by registering a source here.</p>}
         <Catalog title="Batch artifacts" scope={`${chosenProfile}:${sourceScope}:${sourceFilter}:${epoch}`} active={!!sources.length} load={loadBatches}
           empty="No compatible receipt-linked batch artifacts were returned. Discovery omits registrations without successful operator-import receipts; no import is performed here.">
           {(rows) => <div className="submission-choices">{rows.map((item) => item.role === 'RELIABILITY_BATCH' && <div key={item.artifactId}>
             <label><input type="checkbox" checked={batches.some((b) => b.artifactId === item.artifactId)}
               disabled={!batchMatches(profile, sources, item) || batches.length >= 32 && !batches.some((b) => b.artifactId === item.artifactId)}
               onChange={() => setBatches((old) => old.some((b) => b.artifactId === item.artifactId) ? old.filter((b) => b.artifactId !== item.artifactId) : [...old, item])} />
-              <span><code>{item.artifactId}</code> · {item.identity.batchId} · {item.identity.sourceId} revision {item.identity.sourceRevision} · {item.nativeFormat}</span></label>
+              <span><strong>{item.identity.batchId}</strong> · {item.identity.sourceId} revision {item.identity.sourceRevision} · {item.nativeFormat}
+                <code className="inspection-id">{item.artifactId}</code></span></label>
             {!batchMatches(profile, sources, item) && <p>Select the matching current source revision, profile and storage reference to use this batch.</p>}<ArtifactMetadata artifact={item} />
           </div>)}</div>}
         </Catalog>
@@ -163,11 +168,12 @@ function SubmissionSelection({ active }: { active: boolean }) {
           {batches.map((b) => <p key={b.artifactId}><code>{b.artifactId}</code> · {b.identity.sourceId} revision {b.identity.sourceRevision}{' '}
             <button type="button" className="secondary-button" onClick={() => setBatches((old) => old.filter((item) => item.artifactId !== b.artifactId))}>Remove batch {b.identity.batchId}</button></p>)}
         </section>
+        <p className="inspection-note">4. Choose one imported service-reference snapshot for the whole run. Then review the exact frozen selection before confirming admission.</p>
         <Catalog title="Service references" scope={`${chosenProfile}:${epoch}`} active load={loadReferences}
           empty="No compatible receipt-linked service-reference artifacts were returned. Existing operator imports and profile storage associations are required.">
           {(rows) => <div className="submission-choices">{rows.map((item) => item.role === 'SERVICE_REFERENCE' && <div key={item.artifactId}>
             <label><input type="radio" name="service-reference" checked={reference?.artifactId === item.artifactId} onChange={() => setReference(item)} />
-              <span><code>{item.artifactId}</code> · {item.identity.referenceId} · revision {item.identity.revision}</span></label><ArtifactMetadata artifact={item} />
+              <span><strong>{item.identity.referenceId}</strong> · revision {item.identity.revision}<code className="inspection-id">{item.artifactId}</code></span></label><ArtifactMetadata artifact={item} />
           </div>)}</div>}
         </Catalog>
         {reference && <p>Selected service reference: <code>{reference.artifactId}</code> · {reference.identity.referenceId} revision {reference.identity.revision}.</p>}
@@ -187,6 +193,11 @@ export function ReliabilitySubmission() {
     <p className="eyebrow">OPERATIONS WORKSPACE / RELIABILITY</p><h1>Submit Reliability Run</h1>
     <p className="page-description">Select registered inputs, review the frozen request and explicitly confirm admission.</p>
   </div></div>
+    <aside className="panel operator-guide" aria-label="Reliability prerequisites"><h2>Before you submit</h2>
+      <p>The local operator must install an approved execution profile and import synthetic batches and a service reference. Source registration and admission are managed separately.</p>
+      <p><a href="#/operations/sources">Review registered sources</a>. Discovery lists registered choices; it does not establish that a compatible worker is ready.</p>
+      <p>Submission does not start a worker or change the publication selected in Analytics.</p>
+    </aside>
     {intent && <p className="scope-notice">Resolve, dismiss or cancel the retained run intent above before preparing another submission.</p>}
     <SubmissionSelection active={!intent && !unavailable} />
   </section>;

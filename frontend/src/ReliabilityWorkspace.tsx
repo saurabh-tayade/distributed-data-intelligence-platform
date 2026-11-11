@@ -107,6 +107,8 @@ export function ReliabilityWorkspace({ model }: { model: ReturnType<typeof useRe
       <div className="publication-value">{publication ? <code aria-label="Reliability publication fingerprint">{publication}</code> : <span>Awaiting a verified Reliability publication</span>}
         <span className="publication-description">{publication ? 'Snapshot identity · SHA-256' : blocked ? 'Session invalidated. Reload to verify a new publication.' : 'Choose a report to request verified data.'}</span></div>
     </section>
+    <p className="scope-notice">These reports use the Reliability publication selected by the local operator at API startup.
+      {' '}Completing a managed run does not activate its result here. Gold and enriched Content retain independent selections.</p>
     <nav aria-label="Reliability reports" className="pagination-controls">
       {(['request-windows', 'input-coverage', 'reference-coverage'] as const).map(report => <button key={report} type="button"
         className="secondary-button" aria-current={model.report === report ? 'page' : undefined} disabled={blocked}

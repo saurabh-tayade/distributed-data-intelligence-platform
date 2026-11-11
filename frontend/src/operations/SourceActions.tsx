@@ -14,6 +14,8 @@ export function SourceActions({ source }: { source: SourceResponse }) {
   }, []);
   return <details className="panel source-actions"><summary>Source management actions</summary>
     <p>Source admission and configuration only. Disabling admission does not cancel active processing.</p>
+    <p className="inspection-note">Create revision records a new immutable configuration. Enable admission permits new compatible submissions.
+      Neither action imports batches, starts a worker or changes a run's captured revision.</p>
     <div className="source-action-buttons"><button type="button" className="secondary-button" disabled={!!intent || unavailable} onClick={() => setBaseline(source)}>Create revision</button>
       <button type="button" className="secondary-button" disabled={!!intent || unavailable} onClick={() => {
         try {

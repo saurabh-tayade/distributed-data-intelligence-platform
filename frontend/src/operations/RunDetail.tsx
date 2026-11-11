@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { canRetryRun, reviewRetryRun, useRetryIntent } from './retryIntent';
 import { canCancelRun, reviewCancelRun, useCancelIntent } from './cancelIntent';
-import type { ControlReceipt, LatestControl } from '../managementApi';
+import type { ControlReceipt, LatestControl, RunState } from '../managementApi';
 import type { ExecutionFilters } from '../navigation';
 import { executionsHref } from '../navigation';
 import { Timestamp } from '../components/Timestamp';
@@ -11,6 +11,17 @@ import { PublicationResult } from './PublicationResult';
 import { AttemptHistory, AuditTimeline } from './RunHistoryPanels';
 import { useControl } from './useControl';
 import { useRunDetail } from './useRunDetail';
+
+const stateGuidance: Record<RunState, { title: string; next: string }> = {
+  QUEUED: { title: 'Waiting for execution', next: 'Admission is recorded. A compatible configured worker must claim the run before processing starts. Inspect the current stage and attempts for recorded execution.' },
+  RUNNING: { title: 'Execution in progress', next: 'Inspect the current stage, attempts and recorded counts. Run reads refresh while visible; refresh stages and audit history separately.' },
+  CANCEL_REQUESTED: { title: 'Cancellation requested', next: 'The cancellation intent is recorded; cancellation is not yet confirmed. Inspect the latest control receipt and run outcome. Independent operator recovery may be required.' },
+  SUCCEEDED: { title: 'Run completed', next: 'Inspect the recorded publication and captured inputs below. Verification was performed at execution time; the selected Analytics publication is independent.' },
+  FAILED: { title: 'Run failed', next: 'Inspect the outcome, attempts and audit events before deciding what to do next. Retry requires recorded eligibility, explicit review and separate operator commands; it is not automatic.' },
+  CANCELLED: { title: 'Cancellation recorded', next: 'The persisted run records cancellation. Inspect its control receipt and history; cancellation does not remove retained inputs, outputs or earlier attempts.' },
+  PAUSED: { title: 'Paused at an operator boundary', next: 'Inspect the recorded checkpoint and history with the local operator. This screen does not resume the run or grant recovery authority.' },
+  RECOVERY_REQUIRED: { title: 'Operator recovery required', next: 'Preserve the installation and retained evidence. The local operator must follow the documented guarded recovery procedure; this screen does not clear ownership or retry the run.' },
+};
 
 function ControlFields({ control }: { control: LatestControl | ControlReceipt }) {
   return <dl className="source-metadata">
@@ -53,6 +64,11 @@ export function RunDetail({ runId, returnQuery }: { runId: string; returnQuery: 
       </>}
       {model.nextPollMs !== null && !model.hidden && <p className="inspection-note" role="status">{model.error ? 'Automatic read retry' : 'Next active-run read'} scheduled {model.nextPollMs / 1000} seconds after the previous read settled.</p>}
       {record && <>
+        <div className="operator-run-summary">
+          <h3>{model.error ? 'Last recorded state: ' : ''}{stateGuidance[record.state].title}</h3>
+          <p>Outcome code: <code>{record.outcomeCode ?? 'Not recorded'}</code></p>
+          <p>{stateGuidance[record.state].next}</p>
+        </div>
         {['PAUSED', 'RECOVERY_REQUIRED'].includes(record.state) && <p className="scope-notice" role="status">{record.state === 'PAUSED' ? 'Paused at an operator boundary; this is not cancellation.' : 'Recovery is required; this is distinct from a processing failure.'} Operator attention is required. Refresh manually; no automatic recovery is performed.</p>}
         <dl className="source-metadata">
           <div><dt>Run ID</dt><dd><code>{record.runId}</code></dd></div><div><dt>Product</dt><dd>{productLabel(record.productId)}</dd></div>
@@ -60,7 +76,6 @@ export function RunDetail({ runId, returnQuery }: { runId: string; returnQuery: 
           <div><dt>Run state</dt><dd>{record.state}</dd></div><div><dt>Current stage</dt><dd>{record.currentStage ?? 'Not recorded'}</dd></div>
           <div><dt>Run row version</dt><dd><code>{record.rowVersion}</code></dd></div>
           <div><dt>Requested (UTC)</dt><dd><Timestamp value={record.requestedAt} /></dd></div><div><dt>Finished (UTC)</dt><dd><Timestamp value={record.finishedAt} /></dd></div>
-          <div><dt>Outcome code</dt><dd><code>{record.outcomeCode ?? 'Not recorded'}</code></dd></div>
           <div><dt>Retry eligibility (informational)</dt><dd>{String(record.retryEligibility)}</dd></div>
           <div><dt>Attempt count</dt><dd><code>{record.attempts.count}</code></dd></div>
           <div><dt>Current attempt ID</dt><dd><code>{record.attempts.currentAttemptId ?? 'Not recorded'}</code></dd></div>
@@ -76,6 +91,12 @@ export function RunDetail({ runId, returnQuery }: { runId: string; returnQuery: 
         {record.latestControl && <><h4>Latest control reference in displayed run record</h4><ControlFields control={record.latestControl} /></>}
       </>}
     </section>
+    {record?.productId === 'application-reliability' && <aside className="panel operator-guide" aria-label="Reliability analytics handoff">
+      <h2>Explore the selected Reliability analytics</h2>
+      <p>A successful run does not select its result in Analytics. The local operator selects an exact publication at API startup; reloading this page does not change that selection.</p>
+      <p><a className="secondary-button" href="#/analytics/reliability">Open independently selected Reliability analytics</a></p>
+      <p>Compare the Analytics publication fingerprint with the recorded result before attributing analytical rows to this run. Gold and enriched Content have their own independent selections.</p>
+    </aside>}
     <section className="panel" aria-label="Run cancellation"><h2>Run cancellation</h2>
       <p>Cancel never-started QUEUED runs or an admitted queued Reliability retry, or request a bounded stop of a running Reliability attempt. Displayed retry receipts are review hints; the server validates the exact current lifecycle. Queued cancellation prevents the next execution without erasing history. Running cancellation may require recovery and verified publication can still succeed. Content running cancellation and Content retry cancellation remain disabled.</p>
       <button type="button" disabled={!model.data || !canCancelRun(model.data) || model.refreshing || model.hidden || !!model.error || cancellation.unavailable || !!cancellation.intent} onClick={() => {
