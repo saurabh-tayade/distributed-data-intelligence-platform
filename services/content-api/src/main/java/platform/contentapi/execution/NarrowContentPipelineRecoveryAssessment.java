@@ -81,12 +81,23 @@ final class NarrowContentPipelineRecoveryAssessment {
         var artifacts=new ArrayList<ArtifactFact>();var facts=new ArrayList<OperationFact>();var files=new ArrayList<Fileset>();var fetchFiles=new HashMap<String,byte[]>();var signature=SourceJson.object().put("admission",admission.admissionSha256()).put("phases",admission.phases().toString()).put("owner",owner.entrySet().stream().filter(e->!e.getKey().equals("counts_bytes")).toList().toString());var signatures=signature.putArray("rows");
         Prefix prefix=Prefix.ADMISSION;
         UUID fetch=id(j,"content_native_operations",attempt),bronze=id(j,"content_bronze_reservations",attempt),silver=id(j,"content_silver_reservations",attempt);
-        boolean fetchComplete=false,bronzeComplete=false;
+        boolean fetchComplete=false,bronzeComplete=false,publicSource=false;
+        String publicLaunchId=null,publicLaunchDigest=null;
         if(fetch!=null){
             require(ready!=null,RUNTIME_MISMATCH);var r=NarrowContentFetchReservation.inspect(j,tx,fetch);var l=NarrowContentFetchLaunch.inspect(j,tx,fetch);var c=NarrowContentFetchCompletion.inspect(j,tx,fetch);
             require(r.attempt().equals(attempt),RUNTIME_MISMATCH);fetchComplete=c.isPresent();prefix=fetchComplete?Prefix.FETCH_CHECKPOINT:Prefix.FETCH_INCOMPLETE;
             facts.add(new OperationFact(0,fetch,"FETCH_SOURCE",l.phases(),fetchComplete,r.commandSha256(),c.map(x->x.completionSha256()).orElse(null)));
             child(recorded,"FETCH_CHILD",fetch,l.child());
+            var reservation=one(j.queryForList("SELECT bootstrap_bytes,bootstrap_sha256 FROM ddip_management.content_native_operations WHERE operation_id=? LIMIT 2",fetch));
+            var bootstrap=canonical(reservation,"bootstrap",65535);
+            if(bootstrap.get("reservationVersion").intValue()==2){
+                // Commit the independently validated recorded launch/policy binding. Do not
+                // reselect today's pipeline registration for an earlier consumed invocation.
+                // V1 fingerprints remain byte-for-byte unchanged.
+                publicSource=true;publicLaunchId=bootstrap.get("publicFetch").get("launchProfileId").stringValue();
+                publicLaunchDigest=bootstrap.get("publicFetch").get("launchProfileSha256").stringValue();
+                signature.put("publicFetchReservationSha256",(String)reservation.get("bootstrap_sha256"));
+            }
             if(fetchComplete){
                 fetchFiles.put("command",NarrowContentFetchReservation.reconstruct(j,tx,ready,fetch).commandBytes());
                 var cp=one(j.queryForList("SELECT journal_descriptor,expected_evidence FROM ddip_management.content_fetch_checkpoints WHERE operation_id=? LIMIT 2",fetch));
@@ -95,6 +106,16 @@ final class NarrowContentPipelineRecoveryAssessment {
         }
         if(bronze!=null){
             require(fetchComplete,RUNTIME_MISMATCH);var r=NarrowContentBronzeReservation.inspect(j,tx,bronze);var l=NarrowContentBronzeLaunch.inspect(j,tx,bronze);var c=NarrowContentBronzeCompletion.inspect(j,tx,bronze);
+            if(l.launchProfileId()!=null){
+                var profile=ContentFetchLaunchRuntime.read(j,tx,"content_bronze_launch_profiles","launch_profile_id",l.launchProfileId());
+                require(profile.digest().equals(l.launchProfileSha256())
+                        && profile.configuration().get("strictBronzeLaunchVersion").intValue()==(publicSource?2:1),RUNTIME_MISMATCH);
+                if(publicSource){
+                    require(profile.configuration().get("fetchLaunchProfileId").stringValue().equals(publicLaunchId)
+                            && profile.configuration().get("fetchLaunchProfileSha256").stringValue().equals(publicLaunchDigest),RUNTIME_MISMATCH);
+                    signature.put("publicBronzeLaunchProfileSha256",profile.digest());
+                }
+            }
             require(r.attempt().equals(attempt) && r.fetchOperation().equals(fetch),RUNTIME_MISMATCH);bronzeComplete=c.isPresent();prefix=bronzeComplete?Prefix.BRONZE_CHECKPOINT:Prefix.BRONZE_INCOMPLETE;
             facts.add(new OperationFact(1,bronze,"STORE_BRONZE",l.phases(),bronzeComplete,r.commandSha256(),c.map(x->x.verifiedSha256()).orElse(null)));child(recorded,"BRONZE_CHILD",bronze,l.child());
             for(var row:j.queryForList("SELECT child_pid,child_started_at FROM ddip_management.content_bronze_verification_phases WHERE operation_id=? AND phase='CHILD_RECORDED' LIMIT 2",bronze))
@@ -105,6 +126,18 @@ final class NarrowContentPipelineRecoveryAssessment {
             var ordered=List.of("VERIFY_BOUND","START_AUTHORIZED","CHILD_RECORDED","RELEASE_AUTHORIZED","OBSERVED");require(verification.size()<=5,RUNTIME_MISMATCH);
             verification.sort(Comparator.comparingInt(v->ordered.indexOf((String)v.get("phase"))));require(verification.stream().map(v->(String)v.get("phase")).toList().equals(ordered.subList(0,verification.size())),RUNTIME_MISMATCH);
             for(var v:verification){
+                if("VERIFY_BOUND".equals(v.get("phase"))){
+                    var profile=ContentFetchLaunchRuntime.read(j,tx,"content_bronze_verification_profiles","verification_profile_id",(String)v.get("verification_profile_id"));
+                    var registered=NarrowContentRuntimeQualification.inspect(j,tx,ready);
+                    StrictBronzeVerificationRuntime.validateRegistration(j,tx,profile.configuration(),registered.registration(),ready.host());
+                    require(profile.digest().equals(v.get("verification_profile_sha256"))
+                            && profile.configuration().get("strictBronzeVerificationVersion").intValue()==(publicSource?2:1),RUNTIME_MISMATCH);
+                    if(publicSource){
+                        require(profile.configuration().get("fetchLaunchProfileId").stringValue().equals(publicLaunchId)
+                                && profile.configuration().get("fetchLaunchProfileSha256").stringValue().equals(publicLaunchDigest),RUNTIME_MISMATCH);
+                        signature.put("publicBronzeVerificationProfileSha256",profile.digest());
+                    }
+                }
                 for(String key:List.of("receipt","verified"))if(v.get(key+"_bytes")!=null)canonical(v,key,65536);
                 signatures.add(v.entrySet().stream().filter(e->!e.getKey().endsWith("_bytes")).toList().toString());
             }
@@ -134,7 +167,13 @@ final class NarrowContentPipelineRecoveryAssessment {
             var directory=context.originalDirectory(op.ledgerStage,op.ledgerOrdinal);var origin=op.nativeCheckpointOrigin();
             require(directory.getFileName().toString().equals(row.get("checkpoint_id").toString()) && context.originalDirectory(origin.ledgerStage,origin.ledgerOrdinal).getFileName().toString().equals(row.get("native_checkpoint_id").toString()),RUNTIME_MISMATCH);
             var profile=one(j.queryForList("SELECT configuration_bytes,configuration_sha256 FROM ddip_management.content_pipeline_profiles WHERE profile_id=? LIMIT 2",row.get("profile_id")));
-            var config=canonical(profile,"configuration",65536);validateProfile(config,ready,runtime);require(row.get("profile_sha256").equals(profile.get("configuration_sha256")) && config.get("runProfileSha256").stringValue().equals(ready.frozen().profileSha256()) && config.get("contentRuntimeSha256").stringValue().equals(ready.frozen().runtimeSha256()) && config.get("strictRuntimeSha256").stringValue().equals(StrictContentPipelineRuntime.protocolDigest()),RUNTIME_MISMATCH);
+            var config=canonical(profile,"configuration",65536);validateProfile(j,tx,config,ready,runtime);
+            require(config.get("strictContentPipelineVersion").intValue()==(publicSource?2:1),RUNTIME_MISMATCH);
+            if(publicSource){
+                publicLinks(j,fetch,bronze,config);
+                signatures.add("public-pipeline-profile:"+row.get("profile_id")+":"+profile.get("configuration_sha256"));
+            }
+            require(row.get("profile_sha256").equals(profile.get("configuration_sha256")) && config.get("runProfileSha256").stringValue().equals(ready.frozen().profileSha256()) && config.get("contentRuntimeSha256").stringValue().equals(ready.frozen().runtimeSha256()) && config.get("strictRuntimeSha256").stringValue().equals(StrictContentPipelineRuntime.protocolDigest()),RUNTIME_MISMATCH);
             if(step==7)silverInput=silverInput(j,commands.get(4),evidence.get(4),receipt,commands.get(2),run,ready.source(),bytes(one(j.queryForList("SELECT command_bytes FROM ddip_management.content_bronze_reservations WHERE operation_id=? LIMIT 2",bronze)),"command",65536).get("storage").get("credentialsSha256"));
             if(step==13){var artifact=NarrowContentPipeline.artifact("GOLD",commands.get(9),evidence.get(10));var a=artifact(j,artifact,"GOLD");goldProof=SourceJson.object().put("artifactId",a.get("artifact_id").toString()).put("evidenceSha256",(String)a.get("evidence_sha256"));((tools.jackson.databind.node.ObjectNode)goldProof).set("artifact",artifact);((tools.jackson.databind.node.ObjectNode)goldProof).set("command",commands.get(9));}
             JsonNode prepared=op.family==NarrowContentOperationRouting.Family.GOLD && step!=7?value(evidence.get(7),"prepared"):op.family==NarrowContentOperationRouting.Family.CONTENT && step!=13?value(evidence.get(13),"prepared"):null;
@@ -180,7 +219,25 @@ final class NarrowContentPipelineRecoveryAssessment {
         for(var f:facts)signatures.add(f.toString());for(var p:recorded)signatures.add(p.toString());for(var a:artifacts)signatures.add(a.toString());
         return new Snapshot(prefix,ready,List.copyOf(facts),List.copyOf(recorded),List.copyOf(files),Map.copyOf(fetchFiles),List.copyOf(artifacts),SourceJson.sha(SourceJson.canonical(signature)));
     }
-    private static void validateProfile(JsonNode c,NarrowContentEvidenceContext.Expected ready,NarrowContentRuntimeQualification.Snapshot runtime){
+    private static void publicLinks(JdbcTemplate jdbc,UUID fetch,UUID bronze,JsonNode config){
+        var links=List.of(new String[]{"content_native_launch_phases","launch_profile_id","launch_profile_sha256","LAUNCH_BOUND","fetchLaunchProfile"},
+                new String[]{"content_bronze_launch_phases","launch_profile_id","launch_profile_sha256","LAUNCH_BOUND","bronzeLaunchProfile"},
+                new String[]{"content_bronze_verification_phases","verification_profile_id","verification_profile_sha256","VERIFY_BOUND","bronzeVerificationProfile"});
+        for(int index=0;index<links.size();index++){
+            UUID operation=index==0?fetch:bronze;if(operation==null)continue;var link=links.get(index);
+            var rows=jdbc.queryForList("SELECT "+link[1]+","+link[2]+" FROM ddip_management."+link[0]+" WHERE operation_id=? AND phase=? LIMIT 2",operation,link[3]);
+            require(rows.size()<=1,RUNTIME_MISMATCH);
+            if(!rows.isEmpty())require(config.get(link[4]+"Id").stringValue().equals(rows.getFirst().get(link[1]))
+                    && config.get(link[4]+"Sha256").stringValue().equals(rows.getFirst().get(link[2])),RUNTIME_MISMATCH);
+        }
+    }
+    private static void validateProfile(JdbcTemplate jdbc,ManagementTransactions tx,JsonNode c,NarrowContentEvidenceContext.Expected ready,NarrowContentRuntimeQualification.Snapshot runtime){
+        if(c.get("strictContentPipelineVersion")!=null && c.get("strictContentPipelineVersion").isInt() && c.get("strictContentPipelineVersion").intValue()==2){
+            StrictContentPipelineRuntime.validateComposition(jdbc,tx,c,runtime.registration(),ready.host());
+            for(String name:c.get("modules").propertyNames()){require(name.matches("[A-Za-z0-9_]+[.]py"),RUNTIME_MISMATCH);hash(c.get("modules").get(name).stringValue());}
+            for(String name:List.of("strict_native_content.py","strict_native_runtime.py","strict_native_sink.py"))require(c.get("modules").has(name),RUNTIME_MISMATCH);
+            return;
+        }
         SourceJson.fields(c,"strictContentPipelineVersion","runProfileId","runProfileSha256","contentRuntimeId","contentRuntimeSha256","controlBindingId","strictRuntimeSha256","python","processingRoot","javaHome","modules","versions","fetchLaunchProfileId","bronzeLaunchProfileId","bronzeVerificationProfileId");
         require(c.get("strictContentPipelineVersion").isInt() && c.get("strictContentPipelineVersion").intValue()==1 && c.get("runProfileId").equals(runtime.frozenSelection().get("executionProfile").get("profileId")) && c.get("contentRuntimeId").stringValue().equals(runtime.id(NarrowContentRuntimeQualification.Family.CONTENT)) && c.get("controlBindingId").stringValue().equals(ready.host().id()),RUNTIME_MISMATCH);
         for(String key:List.of("python","processingRoot","javaHome"))require(c.get(key).equals(runtime.configuration("SILVER").get(key)),RUNTIME_MISMATCH);

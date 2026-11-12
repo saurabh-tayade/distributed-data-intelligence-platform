@@ -52,7 +52,30 @@ public final class DiscoveryRepository {
           AND EXISTS (SELECT 1 FROM ddip_management.content_pipeline_profiles strict
               CROSS JOIN LATERAL (SELECT convert_from(strict.configuration_bytes,'UTF8')::jsonb AS config) sc
               JOIN ddip_management.execution_profiles runtime ON runtime.profile_id=sc.config->>'contentRuntimeId'
-              WHERE sc.config->'strictContentPipelineVersion'='1'::jsonb AND sc.config->>'runProfileId'=p.profile_id
+              WHERE (sc.config->'strictContentPipelineVersion'='1'::jsonb OR
+                  (sc.config->'strictContentPipelineVersion'='2'::jsonb AND EXISTS (
+                    SELECT 1 FROM ddip_management.content_fetch_launch_profiles fl
+                    JOIN ddip_management.content_bronze_launch_profiles bronze ON bronze.launch_profile_id=sc.config->>'bronzeLaunchProfileId'
+                    JOIN ddip_management.content_bronze_verification_profiles verifier ON verifier.verification_profile_id=sc.config->>'bronzeVerificationProfileId'
+                    CROSS JOIN LATERAL (SELECT convert_from(fl.configuration_bytes,'UTF8')::jsonb AS f,
+                        convert_from(bronze.configuration_bytes,'UTF8')::jsonb AS b,
+                        convert_from(verifier.configuration_bytes,'UTF8')::jsonb AS v) links
+                    WHERE fl.launch_profile_id=sc.config->>'fetchLaunchProfileId'
+                      AND fl.configuration_sha256=sc.config->>'fetchLaunchProfileSha256'
+                      AND bronze.configuration_sha256=sc.config->>'bronzeLaunchProfileSha256'
+                      AND verifier.configuration_sha256=sc.config->>'bronzeVerificationProfileSha256'
+                      AND links.f->'strictFetchLaunchVersion'='2'::jsonb AND links.f->'testEndpoint'='false'::jsonb
+                      AND links.b->'strictBronzeLaunchVersion'='2'::jsonb AND links.v->'strictBronzeVerificationVersion'='2'::jsonb
+                      AND links.b->'sourceTestEndpoint'='false'::jsonb AND links.v->'sourceTestEndpoint'='false'::jsonb
+                      AND links.b->>'storageEndpointPolicy'='LITERAL_LOOPBACK_HTTP_V1' AND links.v->'storageEndpointPolicy'=links.b->'storageEndpointPolicy'
+                      AND links.b->>'fetchLaunchProfileId'=fl.launch_profile_id AND links.v->'fetchLaunchProfileId'=links.b->'fetchLaunchProfileId'
+                      AND links.b->>'fetchLaunchProfileSha256'=fl.configuration_sha256 AND links.v->'fetchLaunchProfileSha256'=links.b->'fetchLaunchProfileSha256'
+                      AND links.f->'runProfileId'=sc.config->'runProfileId' AND links.b->'runProfileId'=sc.config->'runProfileId' AND links.v->'runProfileId'=sc.config->'runProfileId'
+                      AND links.f->'runProfileSha256'=sc.config->'runProfileSha256' AND links.b->'runProfileSha256'=sc.config->'runProfileSha256' AND links.v->'runProfileSha256'=sc.config->'runProfileSha256'
+                      AND links.f->'controlBindingId'=sc.config->'controlBindingId' AND links.b->'controlBindingId'=sc.config->'controlBindingId' AND links.v->'controlBindingId'=sc.config->'controlBindingId'
+                      AND links.b->'bronzeRuntimeId'=links.v->'bronzeRuntimeId' AND links.b->'bronzeRuntimeSha256'=links.v->'bronzeRuntimeSha256'
+                      AND links.b->'storageBindingId'=links.v->'storageBindingId' AND links.b->'storageBindingSha256'=links.v->'storageBindingSha256'
+                  ))) AND sc.config->>'runProfileId'=p.profile_id
                 AND sc.config->>'runProfileSha256'=p.configuration_sha256
                 AND sc.config->>'contentRuntimeId'=c.config->>'contentRuntimeId'
                 AND sc.config->>'contentRuntimeSha256'=runtime.configuration_sha256

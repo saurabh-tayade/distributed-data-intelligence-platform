@@ -191,7 +191,7 @@ final class NarrowContentBronzeLaunch {
                 require(profiles.size()==1 && digest.equals(profiles.getFirst().get("configuration_sha256")),RUNTIME_MISMATCH);
                 byte[] bytes=(byte[])profiles.getFirst().get("configuration_bytes");require(digest.equals(SourceJson.sha(bytes)),RUNTIME_MISMATCH);
                 var ready=NarrowContentFetchReservation.metadata(jdbc,consumed.attempt()).ready();
-                profile=PreflightFiles.canonical(bytes,65536);StrictBronzeLaunchRuntime.validate(profile,NarrowContentRuntimeQualification.inspect(jdbc,tx,ready),ready.host());
+                profile=PreflightFiles.canonical(bytes,65536);StrictBronzeLaunchRuntime.validateRegistration(jdbc,tx,profile,NarrowContentRuntimeQualification.inspect(jdbc,tx,ready).registration(),ready.host());
             }
             if(rows.size()>=4){var row=rows.get(3);child=new InstallationHostGuard.ProcessIdentity((UUID)row.get("child_instance_id"),((Number)row.get("child_pid")).longValue(),((java.sql.Timestamp)row.get("child_started_at")).toInstant());}
             if(rows.size()>=5){

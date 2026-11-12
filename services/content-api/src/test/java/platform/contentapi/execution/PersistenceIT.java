@@ -82,6 +82,32 @@ class PersistenceIT {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM ddip_management.execution_profiles",Integer.class)).isEqualTo(1);
         assertThat(coordinator.read().installationId()).isEqualTo(INSTALLATION);
     }
+    @ParameterizedTest @ValueSource(ints={1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22})
+    void everyHistoricalSchemaUpgradesWithoutRewritingFrozenEvidence(int version) {
+        Flyway.configure().dataSource(jdbc.getDataSource()).defaultSchema("ddip_management")
+                .schemas("ddip_management").target(Integer.toString(version)).load().migrate();
+        jdbc.update("INSERT INTO ddip_management.coordinator(singleton_id,installation_id,mode) VALUES (1,?,'READY')",INSTALLATION);
+        profile();
+        if(version>=2)source("historical");
+        UUID id=version>=3?run("historical-replay"):null;
+        String migrations="SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version::integer<=? ORDER BY installed_rank";
+        var oldMigrations=jdbc.queryForList(migrations,version);
+        // Encode bytea explicitly: JDBC byte[] identity is not an evidence comparison.
+        String snapshot="SELECT to_jsonb(t)::text FROM (SELECT run_id,idempotency_key,encode(normalized_request,'hex') request,request_sha256,encode(captured_selection,'hex') selection,selection_sha256,execution_profile_id,state,row_version FROM ddip_management.runs WHERE run_id=?) t";
+        var before=id==null?null:jdbc.queryForObject(snapshot,String.class,id);
+        String sourceSnapshot="SELECT product_id||':'||source_id||':'||revision||':'||encode(configuration_bytes,'hex')||':'||configuration_sha256 FROM ddip_management.source_revisions";
+        var revision=version<2?null:jdbc.queryForObject(sourceSnapshot,String.class);
+        schema.verify(true);
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("23");
+        assertThat(jdbc.queryForList(migrations,version)).isEqualTo(oldMigrations);
+        if(id!=null)assertThat(jdbc.queryForObject(snapshot,String.class,id)).isEqualTo(before);
+        if(version>=2)assertThat(jdbc.queryForObject(sourceSnapshot,String.class)).isEqualTo(revision);
+        assertThat(jdbc.queryForObject("SELECT configuration_bytes FROM ddip_management.execution_profiles WHERE profile_id='local'",byte[].class)).containsExactly(OBJECT);
+        var installed=jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history ORDER BY installed_rank");
+        schema.verify(true); schema.verify(false);
+        assertThat(jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history ORDER BY installed_rank")).isEqualTo(installed);
+        if(id!=null)assertThat(jdbc.queryForObject(snapshot,String.class,id)).isEqualTo(before);
+    }
     @Test void checksumMismatchIsRejectedWithoutRepair() {
         migrate(); jdbc.update("UPDATE ddip_management.flyway_schema_history SET checksum=checksum+1 WHERE version='2'");
         assertThatThrownBy(() -> schema.verify(false)).isInstanceOf(ManagementFailure.class).hasMessage("MANAGEMENT_INCOMPATIBLE");
