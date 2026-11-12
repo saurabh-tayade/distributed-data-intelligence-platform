@@ -53,6 +53,7 @@ This does not reproduce hosted Ubuntu x86_64 or qualify public DNS/TLS egress.
 | `bash ingestion/scripts/public-fetch-packaged-smoke.sh` | 3 production-main rejection cases and exact JAR isolation passed | separate from Maven |
 | Content API `verify -Ppostgres`, units below | 145 passed | included below |
 | Same invocation, five new public ITs plus `PersistenceIT` | 139 passed, zero failures/errors/skips; includes all 22 historical schema targets | 1m55s total |
+| Seven populated historical-upgrade suites, `-Dit.test=Class#populated*` | 11 passed, zero failures/errors/skips | 1m03s |
 | `python3 -I -B -m unittest discover -s .github/ci/tests -v` | 69 passed | 6.736s Python elapsed |
 | `bash scripts/test-run-batch.sh` | 5 argument cases passed | not benchmarked |
 | Node 24 `npm run check`; `git diff --check` | Markdown/local links, hygiene, whitespace passed | not benchmarked |
@@ -86,7 +87,11 @@ packaging step inherited the runner's default JDK 17. The packaging smoke now us
 recorded in the successful Maven report, rejecting any other report version. Offline red/green
 validation with an invalid inherited JAVA_HOME and a focused script-wiring regression prove
 the runtime selection; all three production-main smoke cases pass. Production launch policy is
-unchanged. The superseding head requires a fresh complete CI run.
+unchanged. The native compatibility run also exposed remaining latest-migration count assertions still
+expecting V22. Seven historical suites now count the additive V23 migration, with original
+pre-upgrade targets, all evidence/receipt byte comparisons and the explicit V15→V16 one-step
+assertion preserved. The 11 populated upgrade cases pass after correction. The superseding
+head requires a fresh complete CI run.
 
 Initial sandbox runs failed local socket/process permissions. A macOS retry also failed the
 strict public environment guard because that JDK exposes default proxy properties; its native
@@ -193,8 +198,11 @@ services/content-api/src/test/java/platform/contentapi/execution/PublicContentPr
 services/content-api/src/test/java/platform/contentapi/execution/StrictPublicFetchProfileTest.java
 services/content-api/src/test/java/platform/contentapi/management/NarrowContentAdmissionIT.java
 services/content-api/src/test/java/platform/contentapi/management/NarrowContentBronzeCheckpointSqlIT.java
+services/content-api/src/test/java/platform/contentapi/management/NarrowContentBronzeReservationIT.java
 services/content-api/src/test/java/platform/contentapi/management/NarrowContentFetchCompletionIT.java
 services/content-api/src/test/java/platform/contentapi/management/NarrowContentFetchRecoveryFinalizationIT.java
+services/content-api/src/test/java/platform/contentapi/management/NarrowContentFetchReservationIT.java
+services/content-api/src/test/java/platform/contentapi/management/NarrowContentOperationJournalIT.java
 services/content-api/src/test/java/platform/contentapi/management/NarrowContentPublicBronzeHistoryIT.java
 services/content-api/src/test/java/platform/contentapi/management/NarrowContentPublicCheckpointFixtures.java
 services/content-api/src/test/java/platform/contentapi/management/NarrowContentPublicCheckpointIT.java
