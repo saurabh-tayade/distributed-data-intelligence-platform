@@ -13,15 +13,15 @@ import static platform.contentapi.execution.PreflightFailure.need;
 import static platform.contentapi.execution.PreflightFailure.Code.*;
 
 /** Separate immutable launch identity. Historical FETCH v2 remains a ledger-v1 adapter. */
-final class StrictFetchLaunchRuntime {
+final class StrictFetchLaunchRuntime implements ContentFetchLaunchRuntime {
     static final String MAIN="platform.ingestion.managed.StrictManagedRssFetch";
     private record FileObservation(InstallationHostGuard.Identity identity,FileTime modified,long size,String sha256) { }
     private final String id,digest;
-    private final JsonNode configuration,frozen;
+    private final JsonNode configuration,storage;
     private final InstallationHostGuard guard;
     private final Map<Path,FileObservation> installed;
-    private StrictFetchLaunchRuntime(String id,String digest,JsonNode configuration,JsonNode frozen,InstallationHostGuard guard){
-        this.id=id;this.digest=digest;this.configuration=configuration.deepCopy();this.frozen=frozen.deepCopy();this.guard=guard;
+    private StrictFetchLaunchRuntime(String id,String digest,JsonNode configuration,JsonNode storage,InstallationHostGuard guard){
+        this.id=id;this.digest=digest;this.configuration=configuration.deepCopy();this.storage=storage.deepCopy();this.guard=guard;
         installed=observe();
     }
     static StrictFetchLaunchRuntime load(JdbcTemplate jdbc,ManagementTransactions tx,InstallationHostGuard guard,
@@ -32,10 +32,20 @@ final class StrictFetchLaunchRuntime {
         byte[] bytes=(byte[])row.getFirst().get("configuration_bytes");String digest=(String)row.getFirst().get("configuration_sha256");
         need(SourceJson.sha(bytes).equals(digest),RUNTIME_MISMATCH);
         var c=PreflightFiles.canonical(bytes,65536);validate(c,registered,guard.binding());
-        return new StrictFetchLaunchRuntime(id,digest,c,registered.frozenSelection(),guard);
+        return new StrictFetchLaunchRuntime(id,digest,c,registered.registration().storageBindings(),guard);
     }
     /** Pure correspondence, including a distinct launch-manifest digest rather than rewriting FETCH. */
     static void validate(JsonNode c,NarrowContentRuntimeQualification.Snapshot registered,InstallationHostGuard.Binding binding){
+        validateRegistration(c,registered.registration(),binding);
+        try{
+            // This bounded slice deliberately permits literal loopback only, without DNS.
+            URI uri=URI.create(registered.frozenSelection().get("sources").get(0).get("endpoint").get("uri").stringValue());
+            need(Set.of("http","https").contains(uri.getScheme()) && Set.of("127.0.0.1","[::1]").contains(uri.getHost())
+                    && uri.getRawUserInfo()==null && uri.getRawQuery()==null && uri.getRawFragment()==null
+                    && uri.getPort()!=0 && uri.getPort()<=65535,RUNTIME_MISMATCH);
+        }catch(PreflightFailure ex){throw ex;}catch(RuntimeException ex){throw new PreflightFailure(RUNTIME_MISMATCH);}
+    }
+    static void validateRegistration(JsonNode c,NarrowContentRuntimeQualification.Registration registered,InstallationHostGuard.Binding binding){
         try{
             SourceJson.fields(c,"strictFetchLaunchVersion","fetchRuntimeId","fetchRuntimeSha256","runProfileId","runProfileSha256",
                     "controlBindingId","javaHome","manifest","deploymentSha256","testEndpoint");
@@ -48,14 +58,9 @@ final class StrictFetchLaunchRuntime {
             expected.set("manifest",manifest);expected.put("deploymentSha256",SourceJson.sha(SourceJson.canonical(manifest))).put("testEndpoint",true);
             need(Arrays.equals(SourceJson.canonical(c),SourceJson.canonical(expected)) && fetch.get("testEndpoint").booleanValue()
                     && binding.id().equals(c.get("controlBindingId").stringValue()),RUNTIME_MISMATCH);
-            // This bounded slice deliberately permits literal loopback only, without DNS.
-            URI uri=URI.create(registered.frozenSelection().get("sources").get(0).get("endpoint").get("uri").stringValue());
-            need(Set.of("http","https").contains(uri.getScheme()) && Set.of("127.0.0.1","[::1]").contains(uri.getHost())
-                    && uri.getRawUserInfo()==null && uri.getRawQuery()==null && uri.getRawFragment()==null
-                    && uri.getPort()!=0 && uri.getPort()<=65535,RUNTIME_MISMATCH);
         }catch(PreflightFailure ex){throw ex;}catch(RuntimeException ex){throw new PreflightFailure(RUNTIME_MISMATCH);}
     }
-    void check(){need(installed.equals(observe()),INPUT_CHANGED);}
+    public void check(){need(installed.equals(observe()),INPUT_CHANGED);}
     private Map<Path,FileObservation> observe(){
         guard.checkHeld(guard.binding().installationId());
         try{
@@ -74,7 +79,7 @@ final class StrictFetchLaunchRuntime {
                 var observation=observation(path,(int)Math.min(64L*1024*1024,256L*1024*1024-total),entry.get("sha256").stringValue());
                 total+=observation.size();need(total<=256L*1024*1024,RESOURCE_LIMIT);result.put(path,observation);
             }
-            for(Path path:result.keySet())for(var storage:frozen.get("storageBindings")){
+            for(Path path:result.keySet())for(var storage:this.storage){
                 var c=storage.get("configuration");
                 if(c.has("root"))need(!path.startsWith(Path.of(c.get("root").stringValue())),RUNTIME_MISMATCH);
                 if(c.has("credentialsFile"))need(!path.equals(Path.of(c.get("credentialsFile").stringValue())),RUNTIME_MISMATCH);
@@ -89,11 +94,12 @@ final class StrictFetchLaunchRuntime {
         byte[] bytes=PreflightFiles.read(path,maximum,false);String hash=SourceJson.sha(bytes);
         need((expected==null || hash.equals(expected)) && id.equals(InstallationHostGuard.identity(path))
                 && modified.equals(Files.getLastModifiedTime(path,LinkOption.NOFOLLOW_LINKS)),INPUT_CHANGED);
+        if(expected!=null)StrictPublicFetchLaunchRuntime.checkJar(bytes,false,false);
         return new FileObservation(id,modified,bytes.length,hash);
     }
-    String id(){return id;}String digest(){return digest;}
-    List<String> command(){var cp=new ArrayList<String>();for(var entry:configuration.get("manifest").get("classpath"))cp.add(entry.get("path").stringValue());
+    public String id(){return id;}public String digest(){return digest;}
+    public List<String> command(){var cp=new ArrayList<String>();for(var entry:configuration.get("manifest").get("classpath"))cp.add(entry.get("path").stringValue());
         return List.of(Path.of(configuration.get("javaHome").stringValue(),"bin/java").toString(),"-Xmx128m","-cp",String.join(File.pathSeparator,cp),MAIN);}
-    Map<String,String> environment(){return Map.of("PATH","/usr/bin:/bin","TZ","UTC","LANG","C.UTF-8");}
+    public Map<String,String> environment(){return Map.of("PATH","/usr/bin:/bin","TZ","UTC","LANG","C.UTF-8");}
     @Override public String toString(){return "StrictFetchLaunchRuntime[registered, loopback only]";}
 }

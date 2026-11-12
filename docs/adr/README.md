@@ -150,3 +150,5 @@ semantics and does not activate a launcher, receipt commit or ordinary Content d
 - [ADR 0047: Guarded Reliability retry](0047-guarded-reliability-retry.md)
 
 - [0048: Cancellation of explicitly retried Reliability runs](0048-reliability-retry-cancellation.md)
+
+- [0049: Inactive bounded public FETCH and immutable Content composition v2](0049-inactive-bounded-public-content-composition.md)

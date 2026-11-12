@@ -374,6 +374,12 @@ class GateTests(unittest.TestCase):
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_public_packaging_is_checked_after_ingestion_verify(self):
+        body=block("ingestion")
+        self.assertLess(body.index("mvn -B -ntp -f ingestion/pom.xml verify"),
+                        body.index("bash ingestion/scripts/public-fetch-packaged-smoke.sh"))
+        self.assertNotIn("-DskipTests",body)
+
     def test_real_bronze_storage_is_isolated_and_cleaned_up(self):
         body = POSTGRES_WORKFLOW
         self.assertIn("chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d", body)

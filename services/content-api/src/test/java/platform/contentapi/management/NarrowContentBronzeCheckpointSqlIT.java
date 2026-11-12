@@ -38,7 +38,7 @@ class NarrowContentBronzeCheckpointSqlIT extends NarrowContentBronzeLaunchFixtur
             assertThat(jdbc.queryForList("SELECT "+historical+"::text FROM ddip_management."+table+" t ORDER BY "+historical+"::text",String.class)).as(table).isEqualTo(before.get(table));
         }
         assertThat(filesystem()).isEqualTo(files);assertThat(bronzeFacts()).isEqualTo(launch);
-        assertThat(jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IS NOT NULL AND version NOT IN ('19','20','21','22') ORDER BY installed_rank")).isEqualTo(migrations);
+        assertThat(jdbc.queryForList("SELECT version,checksum,installed_on FROM ddip_management.flyway_schema_history WHERE version IS NOT NULL AND version NOT IN ('19','20','21','22','23') ORDER BY installed_rank")).isEqualTo(migrations);
         for(String table:List.of("content_bronze_verification_profiles","content_bronze_verification_phases","content_bronze_checkpoints"))assertThat(count(table)).isZero();bronzeRetained();
     }
     @BeforeEach void verificationProfile(){

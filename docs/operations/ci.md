@@ -129,25 +129,26 @@ with positive test counts and no failures, errors or skips. This guards selectio
 well as test success. [PR #72 evidence](pr72-postgres-partitions.md) records all class assignments,
 hosted timing inputs, local measurements, commands and remaining hosted acceptance requirements.
 
-The current inventory is **core=14, reliability=7, ingestion=3, gold=3,
-content_recovery=3, native_fetch_recovery=11, native_bronze=5, native_publication=5,
-native_pipeline_recovery=7 (58 total)**.
+The current inventory is **core=18, reliability=10, ingestion=3, gold=3,
+content_recovery=3, native_fetch_recovery=13, native_bronze=6, native_publication=5,
+native_pipeline_recovery=7 (68 total)**.
 Gold contains `RssGoldIT`, `RssContentIT` and
 `ContentFinalizationIT`. Content recovery contains `ContentRecoveryIT`, `ContentResumeIT` and
 `ContentInheritedRecoveryIT`; their native cases retain separate original/resumed worker processes,
 real storage and PostgreSQL restart coverage. No integration class or case is removed or weakened.
 
-The native FETCH partition contains the eleven `NarrowContentFetch*IT` classes in the inventory.
+The native FETCH partition contains the eleven `NarrowContentFetch*IT` classes plus
+`NarrowContentPublicReleaseHistoryIT` and `NarrowContentPublicCheckpointIT`.
 It runs the complete `NarrowContentFetchOperatorIT` adapter suite in an isolated Maven invocation
-first, then runs the ten remaining suites. These selections are disjoint and cover the complete
+first, then runs the twelve remaining suites. These selections are disjoint and cover the complete
 partition. No `clean` or report deletion occurs between invocations: the final XML coverage check
-requires successful reports from all eleven classes, including the initial smoke. A smoke failure
+requires successful reports from all thirteen classes, including the initial smoke. A smoke failure
 stops the job immediately; a missing smoke report fails the final check. Unit tests still run only
 in core. The former partial checkpoint/assessment warm-up is replaced by this full-class smoke;
 all checkpoint and assessment cases remain in the required remaining selection.
 
-The native Bronze partition contains five `NarrowContentBronze*IT` classes, including SQL
-checkpoint coverage. Native publication contains `NarrowContentSilverReservationIT`,
+The native Bronze partition contains five `NarrowContentBronze*IT` classes plus
+`NarrowContentPublicBronzeHistoryIT`, including SQL checkpoint coverage. Native publication contains `NarrowContentSilverReservationIT`,
 `NarrowContentSilverReservationSqlIT`, `NarrowContentPipelineIT`, `NarrowContentPipelineSqlIT`
 and `NarrowContentSubmissionDiscoveryIT`. Native pipeline recovery contains `NarrowContentPressureIT`,
 `NarrowContentPipelineCrashIT`, `NarrowContentPipelineRestartIT`,
@@ -835,3 +836,18 @@ within 90 minutes and all five required backend jobs plus the aggregate pass. Th
 hosted heartbeat age was not retained; the new phase diagnostics will expose it on future runs.
 The longer budget is not a throughput optimization or scalability result. Operational Content
 recovery, D4/Gold/enrichment and production Content dispatch remain outside this correction.
+
+## E5.2-A inactive public composition validation
+
+The ingestion job now runs `ingestion/scripts/public-fetch-packaged-smoke.sh` after Maven
+`verify`. This checks actual separate provider packaging and production-main rejection paths
+without public DNS or HTTP. It does not qualify public production egress or activation.
+
+The five new PostgreSQL suites are assigned exhaustively: core owns `StrictPublicFetchProfileIT`
+and `NarrowContentPublicHistoryIT`; native FETCH recovery owns `NarrowContentPublicReleaseHistoryIT`
+and `NarrowContentPublicCheckpointIT`; native Bronze owns `NarrowContentPublicBronzeHistoryIT`.
+Core also runs the 22 added V1–V22 upgrade cases in `PersistenceIT`. Existing Reliability retry
+and cancellation classes retain their current assignments. No service, timeout, dependency,
+required context, classifier or aggregate success condition changes. The PostgreSQL inventory
+now contains 68 classes; the separate HTTP profile contains three and Python retains 47 modules.
+See the [implementation evidence](e5-2a-inactive-public-content.md) for local results and limits.

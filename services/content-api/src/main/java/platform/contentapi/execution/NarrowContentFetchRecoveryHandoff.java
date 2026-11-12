@@ -252,6 +252,17 @@ final class NarrowContentFetchRecoveryHandoff {
         return new Snapshot(c,r,a,k,old,next,history,lineage);
     }
     private void validateOriginal(InstallationHostGuard guard,WorkerRepository.Session w,Snapshot s){
+        // This is a NEW handoff eligibility gate, not a historical receipt reader.
+        // Public original attempts remain excluded from deferred FETCH-only recovery.
+        var reservation=one(jdbc.queryForList("SELECT bootstrap_bytes,bootstrap_sha256 FROM ddip_management.content_native_operations WHERE operation_id=?",s.operation()));
+        var packet=canonical((byte[])reservation.get("bootstrap_bytes"),(String)reservation.get("bootstrap_sha256"),65535);
+        need(packet.get("reservationVersion").isInt() && packet.get("reservationVersion").intValue()==1
+                && "FETCH_SOURCE_RESERVATION".equals(text(packet,"mode"))
+                && packet.get("fetch").get("testEndpoint").isBoolean() && packet.get("fetch").get("testEndpoint").booleanValue(),EVIDENCE_UNAVAILABLE);
+        var profile=one(jdbc.queryForList("SELECT p.configuration_bytes,p.configuration_sha256 FROM ddip_management.content_native_launch_phases l JOIN ddip_management.content_fetch_launch_profiles p ON p.launch_profile_id=l.launch_profile_id AND p.configuration_sha256=l.launch_profile_sha256 WHERE l.operation_id=? AND l.phase='LAUNCH_BOUND'",s.operation()));
+        var launch=canonical((byte[])profile.get("configuration_bytes"),(String)profile.get("configuration_sha256"),65536);
+        need(launch.get("strictFetchLaunchVersion").isInt() && launch.get("strictFetchLaunchVersion").intValue()==1
+                && launch.get("testEndpoint").isBoolean() && launch.get("testEndpoint").booleanValue(),EVIDENCE_UNAVAILABLE);
         need(s.history.stream().allMatch(a->a.get("attempt_id").equals(s.oldId()) ||
                 "EXECUTE".equals(a.get("kind")) && Set.of("FAILED","CANCELLED").contains(a.get("state"))
                 && a.get("content_admission_policy")==null && a.get("content_recovery_policy")==null

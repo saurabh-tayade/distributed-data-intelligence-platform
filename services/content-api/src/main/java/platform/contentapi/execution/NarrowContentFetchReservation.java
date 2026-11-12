@@ -40,8 +40,11 @@ final class NarrowContentFetchReservation {
     }
     Facts reserve(InstallationHostGuard guard,WorkerRepository.Owner owner,UUID operation){return reserve(guard,owner,operation,b->{});}
     Facts reserve(InstallationHostGuard guard,WorkerRepository.Owner owner,UUID operation,Consumer<Boundary> fault){
+        return reserve(guard,owner,operation,null,fault);
+    }
+    Facts reserve(InstallationHostGuard guard,WorkerRepository.Owner owner,UUID operation,ContentFetchLaunchRuntime.Profile publicProfile,Consumer<Boundary> fault){
         require(fault!=null,WORKER_CONFIGURATION_INVALID);
-        Payload prepared=prepare(guard,owner,operation);
+        Payload prepared=prepare(guard,owner,operation,publicProfile);
         fault.accept(Boundary.INSPECTED);
         // Filesystem inspection ends before SQL; no external effect follows it.
         var ready=NarrowContentAdmission.inspectReady(jdbc,tx,guard,owner.runId(),owner.attemptId());
@@ -49,8 +52,10 @@ final class NarrowContentFetchReservation {
         workers.narrowOperationTransaction(guard,owner,()->{
             var metadata=metadata(jdbc,owner.attemptId());
             require(ready.equals(metadata.ready()),RUNTIME_MISMATCH);
-            Payload current=build(metadata.ready(),NarrowContentRuntimeQualification.inspect(jdbc,tx,metadata.ready()),
-                    metadata.expected(),metadata.current(),operation);
+            var registered=NarrowContentRuntimeQualification.inspect(jdbc,tx,metadata.ready());
+            Payload current=publicProfile==null?build(metadata.ready(),registered,metadata.expected(),metadata.current(),operation)
+                    :buildPublic(metadata.ready(),registered,metadata.expected(),metadata.current(),operation,
+                            ContentFetchLaunchRuntime.forRunProfile(jdbc,tx,registered.registration(),metadata.ready().host()));
             require(same(prepared,current),RUNTIME_MISMATCH);
             // An uncertain commit stops this owner's authorization channel in WorkerRepository.
             // Neither this call nor inspection repairs/retries the consumed reservation.
@@ -63,7 +68,8 @@ final class NarrowContentFetchReservation {
         return inspect(operation);
     }
     /** Read-only construction seam. All identity inputs come from independently read metadata. */
-    Payload prepare(InstallationHostGuard guard,WorkerRepository.Owner owner,UUID operation){
+    Payload prepare(InstallationHostGuard guard,WorkerRepository.Owner owner,UUID operation){return prepare(guard,owner,operation,null);}
+    Payload prepare(InstallationHostGuard guard,WorkerRepository.Owner owner,UUID operation,ContentFetchLaunchRuntime.Profile publicProfile){
         require(guard!=null && owner!=null && operation!=null,WORKER_CONFIGURATION_INVALID);
         var ready=NarrowContentAdmission.inspectReady(jdbc,tx,guard,owner.runId(),owner.attemptId());
         absent(ready);
@@ -71,7 +77,12 @@ final class NarrowContentFetchReservation {
             var m=metadata(jdbc,owner.attemptId());
             require(ready.equals(m.ready()) && m.current().equals(new Identity(owner.worker().installationId(),owner.worker().instanceId(),
                     owner.worker().epoch(),owner.runId(),owner.attemptId())),RUNTIME_MISMATCH);
-            return build(ready,NarrowContentRuntimeQualification.inspect(jdbc,tx,ready),m.expected(),m.current(),operation);
+            var registered=NarrowContentRuntimeQualification.inspect(jdbc,tx,ready);
+            if(publicProfile==null)return build(ready,registered,m.expected(),m.current(),operation);
+            var qualified=ContentFetchLaunchRuntime.forRunProfile(jdbc,tx,registered.registration(),ready.host());
+            require(qualified.id().equals(publicProfile.id()) && qualified.digest().equals(publicProfile.digest())
+                    && qualified.configuration().equals(publicProfile.configuration()),RUNTIME_MISMATCH);
+            return buildPublic(ready,registered,m.expected(),m.current(),operation,qualified);
         });
     }
     /** SQL-only historical inspection. Never grants a live owner, path effect or session. */
@@ -81,9 +92,9 @@ final class NarrowContentFetchReservation {
         return tx.required(()->{
             var row=one(jdbc.queryForList("SELECT attempt_id,stage,item_ordinal,checkpoint_id,command_bytes,command_sha256,bootstrap_bytes,bootstrap_sha256 FROM ddip_management.content_native_operations WHERE operation_id=?",operation));
             var m=metadata(jdbc,(UUID)row.get("attempt_id"));
-            var expected=build(m.ready(),NarrowContentRuntimeQualification.inspect(jdbc,tx,m.ready()),m.expected(),m.current(),operation);
             var command=canonical((byte[])row.get("command_bytes"),(String)row.get("command_sha256"),65536);
             var bootstrap=canonical((byte[])row.get("bootstrap_bytes"),(String)row.get("bootstrap_sha256"),65535);
+            var expected=buildRecorded(jdbc,tx,m,operation,bootstrap);
             require("FETCH_SOURCE".equals(row.get("stage")) && ((Number)row.get("item_ordinal")).intValue()==0
                     && expected.checkpoint().equals(row.get("checkpoint_id"))
                     && Arrays.equals(expected.commandBytes(),SourceJson.canonical(command))
@@ -98,8 +109,23 @@ final class NarrowContentFetchReservation {
             require(facts.attempt().equals(ready.attempt()),RUNTIME_MISMATCH);
             var m=metadata(jdbc,ready.attempt());
             require(ready.equals(m.ready()),RUNTIME_MISMATCH);
-            return build(ready,NarrowContentRuntimeQualification.inspect(jdbc,tx,ready),m.expected(),m.current(),operation);
+            var row=one(jdbc.queryForList("SELECT bootstrap_bytes,bootstrap_sha256 FROM ddip_management.content_native_operations WHERE operation_id=?",operation));
+            return buildRecorded(jdbc,tx,m,operation,canonical((byte[])row.get("bootstrap_bytes"),(String)row.get("bootstrap_sha256"),65535));
         });
+    }
+    private static Payload buildRecorded(JdbcTemplate jdbc,ManagementTransactions tx,Metadata m,UUID operation,tools.jackson.databind.JsonNode stored){
+        require(stored.get("reservationVersion")!=null && stored.get("reservationVersion").isInt(),RUNTIME_MISMATCH);
+        var registered=NarrowContentRuntimeQualification.inspect(jdbc,tx,m.ready());
+        if(stored.get("reservationVersion").intValue()==1)return build(m.ready(),registered,m.expected(),m.current(),operation);
+        require(stored.get("reservationVersion").intValue()==2,RUNTIME_MISMATCH);
+        // The recorded identifier is a lookup key, never its own authority. Validate the
+        // immutable row and frozen registration independently; later registrations cannot
+        // change an already consumed reservation's meaning.
+        var link=stored.get("publicFetch");
+        SourceJson.fields(link,"launchProfileId","launchProfileSha256","networkPolicySha256","selectedEndpoint","networkPolicy");
+        var profile=ContentFetchLaunchRuntime.registered(jdbc,tx,registered.registration(),m.ready().host(),text(link,"launchProfileId"));
+        require(profile.version()==2 && profile.digest().equals(text(link,"launchProfileSha256")),RUNTIME_MISMATCH);
+        return buildPublic(m.ready(),registered,m.expected(),m.current(),operation,profile);
     }
     private static boolean same(Payload a,Payload b){
         return a.operation().equals(b.operation()) && a.attempt().equals(b.attempt()) && a.checkpoint().equals(b.checkpoint())
@@ -155,6 +181,21 @@ final class NarrowContentFetchReservation {
         bootstrap.set("expected",e);bootstrap.set("current",c);bootstrap.set("fetch",fetch);
         byte[] bootstrapBytes=SourceJson.canonical(bootstrap);require(bootstrapBytes.length<65536,RUNTIME_MISMATCH);
         return new Payload(operation,ready.attempt(),checkpoint,commandBytes,bootstrapBytes);
+    }
+    /** Exact public composition. A caller's stored packet is never its own launch/profile authority. */
+    static Payload buildPublic(NarrowContentEvidenceContext.Expected ready,NarrowContentRuntimeQualification.Snapshot registered,
+            Identity expected,Identity current,UUID operation,ContentFetchLaunchRuntime.Profile profile){
+        require(profile!=null && profile.version()==2,RUNTIME_MISMATCH);
+        ContentFetchLaunchRuntime.validateSelection(profile,registered,ready.host());
+        var original=build(ready,registered,expected,current,operation);
+        var bootstrap=(ObjectNode)PreflightFiles.canonical(original.bootstrapBytes(),65535);
+        bootstrap.put("reservationVersion",2).put("mode","PUBLIC_FETCH_SOURCE_RESERVATION");
+        var publicFetch=bootstrap.putObject("publicFetch").put("launchProfileId",profile.id())
+                .put("launchProfileSha256",profile.digest()).put("networkPolicySha256",text(profile.configuration(),"networkPolicySha256"));
+        publicFetch.set("selectedEndpoint",registered.frozenSelection().get("sources").get(0).get("endpoint").deepCopy());
+        publicFetch.set("networkPolicy",profile.configuration().get("networkPolicy").deepCopy());
+        byte[] bytes=SourceJson.canonical(bootstrap);require(bytes.length<65536,RUNTIME_MISMATCH);
+        return new Payload(operation,original.attempt(),original.checkpoint(),original.commandBytes(),bytes);
     }
     /** Immutable enrollment and READY, plus separately observed durable attempt ownership. */
     static Metadata metadata(JdbcTemplate jdbc,UUID attempt){
