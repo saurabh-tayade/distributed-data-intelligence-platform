@@ -374,6 +374,32 @@ class GateTests(unittest.TestCase):
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_packaged_smoke_reuses_jdk21_report_instead_of_parent_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            script=root/'ingestion/scripts/public-fetch-packaged-smoke.sh'
+            script.parent.mkdir(parents=True)
+            script.write_text((ROOT/'ingestion/scripts/public-fetch-packaged-smoke.sh').read_text())
+            reports=root/'ingestion/target/surefire-reports'; reports.mkdir(parents=True)
+            java=root/'tested-jdk/bin/java'; java.parent.mkdir(parents=True)
+            marker=root/'invoked'
+            java.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "'+str(marker)+'"\n')
+            java.chmod(0o755)
+            for version in ('21','17'):
+                with self.subTest(version=version):
+                    marker.unlink(missing_ok=True)
+                    report='<testsuite><properties>'+''.join(
+                        '<property name="'+key+'" value="'+value+'"/>' for key,value in (
+                            ('java.home',str(java.parent.parent)),
+                            ('java.specification.version',version),
+                            ('java.class.path','test-classpath')))+'</properties></testsuite>'
+                    (reports/'TEST-platform.ingestion.managed.StrictPublicManagedRssFetchTest.xml').write_text(report)
+                    result=subprocess.run(['bash',str(script)],env={**os.environ,'JAVA_HOME':str(root/'wrong-default')},capture_output=True,text=True)
+                    self.assertEqual(result.returncode,0 if version=='21' else 1,result.stderr)
+                    self.assertEqual(marker.exists(),version=='21')
+                    if version=='21':
+                        self.assertEqual(marker.read_text().splitlines()[:3],['-cp','test-classpath','platform.ingestion.managed.PublicFetchPackagedSmoke'])
+
     def test_public_packaging_is_checked_after_ingestion_verify(self):
         body=block("ingestion")
         self.assertLess(body.index("mvn -B -ntp -f ingestion/pom.xml verify"),

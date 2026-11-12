@@ -841,7 +841,9 @@ recovery, D4/Gold/enrichment and production Content dispatch remain outside this
 
 The ingestion job now runs `ingestion/scripts/public-fetch-packaged-smoke.sh` after Maven
 `verify`. This checks actual separate provider packaging and production-main rejection paths
-without public DNS or HTTP. It does not qualify public production egress or activation.
+without public DNS or HTTP. The smoke reuses the JDK 21 recorded in the Maven report, since
+step-local JAVA_HOME exports do not persist to another workflow step. A non-21 report fails.
+It does not qualify public production egress or activation.
 
 The five new PostgreSQL suites are assigned exhaustively: core owns `StrictPublicFetchProfileIT`
 and `NarrowContentPublicHistoryIT`; native FETCH recovery owns `NarrowContentPublicReleaseHistoryIT`

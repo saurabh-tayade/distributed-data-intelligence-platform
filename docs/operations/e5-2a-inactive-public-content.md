@@ -53,7 +53,7 @@ This does not reproduce hosted Ubuntu x86_64 or qualify public DNS/TLS egress.
 | `bash ingestion/scripts/public-fetch-packaged-smoke.sh` | 3 production-main rejection cases and exact JAR isolation passed | separate from Maven |
 | Content API `verify -Ppostgres`, units below | 145 passed | included below |
 | Same invocation, five new public ITs plus `PersistenceIT` | 139 passed, zero failures/errors/skips; includes all 22 historical schema targets | 1m55s total |
-| `python3 -I -B -m unittest discover -s .github/ci/tests -v` | 68 passed | 6.172s Python elapsed |
+| `python3 -I -B -m unittest discover -s .github/ci/tests -v` | 69 passed | 6.736s Python elapsed |
 | `bash scripts/test-run-batch.sh` | 5 argument cases passed | not benchmarked |
 | Node 24 `npm run check`; `git diff --check` | Markdown/local links, hygiene, whitespace passed | not benchmarked |
 
@@ -81,7 +81,12 @@ on the draft PR head. The PR evidence is updated after the run, avoiding a docum
 would invalidate the exact tested head. No earlier CI run substitutes for it. Initial
 [CI #242](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/43276327883)
 found an extra blank line in this record (MD012). The document was corrected without changing
-the lint rule or application tree; its superseding head requires a fresh complete CI run.
+the lint rule or application tree. That run's 338 ingestion cases passed, then its separate
+packaging step inherited the runner's default JDK 17. The packaging smoke now uses the JDK 21
+recorded in the successful Maven report, rejecting any other report version. Offline red/green
+validation with an invalid inherited JAVA_HOME and a focused script-wiring regression prove
+the runtime selection; all three production-main smoke cases pass. Production launch policy is
+unchanged. The superseding head requires a fresh complete CI run.
 
 Initial sandbox runs failed local socket/process permissions. A macOS retry also failed the
 strict public environment guard because that JDK exposes default proxy properties; its native
