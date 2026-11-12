@@ -66,10 +66,22 @@ Focused integration: `PersistenceIT,StrictPublicFetchProfileIT,NarrowContentPubl
 `NarrowContentPublicBronzeHistoryIT`. These are Maven `-Dtest` and `-Dit.test` selections;
 unit/integration counts overlap later full CI and must not be added as distinct coverage.
 
-Full Content API units and Reliability cancellation/retry regressions, the exhaustive native
-Content regressions, and hosted required checks must be reported separately on the draft PR
-head. The PR evidence is updated after the run, avoiding a documentation-only commit that
-would invalidate the exact tested head. No earlier CI run substitutes for it.
+The broader local invocation passed **977 unit cases with zero failures/errors and three
+existing optional generated-fixture skips**, plus **53 SQL cases** across QueuedCancelIT,
+RunningCancelIT, ReliabilityRetryIT, ReliabilityRetryEvidenceIT and ReliabilityRetryCancellationIT,
+with zero failures/errors/skips. Maven elapsed was **4m18s**. The three optional skips are
+ContentEnvelopeMeasurementTest, NarrowPublicationEnvelopesTest and PublicationProjectionParityTest;
+these require separately supplied measurement/projection corpora and are not claimed as passes.
+The Linux container required `--init` to reap deliberately orphaned test descendants: a run
+without it failed an existing BoundedProcessRunnerTest assertion, while the identical code
+passed with it. No application or test behavior was changed to accommodate the container.
+
+Exhaustive native Content regressions and hosted required checks must be reported separately
+on the draft PR head. The PR evidence is updated after the run, avoiding a documentation-only commit that
+would invalidate the exact tested head. No earlier CI run substitutes for it. Initial
+[CI #242](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/43276327883)
+found an extra blank line in this record (MD012). The document was corrected without changing
+the lint rule or application tree; its superseding head requires a fresh complete CI run.
 
 Initial sandbox runs failed local socket/process permissions. A macOS retry also failed the
 strict public environment guard because that JDK exposes default proxy properties; its native
@@ -93,7 +105,6 @@ authorizes no ordinary dispatch, deployment, continuation or recovery reauthoriz
 E5.2-B should first propose the bounded packaged public-path qualification and its evidence
 contract. Ordinary worker lifecycle/dispatch, cancellation behavior and activation should be
 reviewed explicitly before implementation, with no automatic retry or refetch.
-
 
 ## Contract compatibility and exact changed files
 
