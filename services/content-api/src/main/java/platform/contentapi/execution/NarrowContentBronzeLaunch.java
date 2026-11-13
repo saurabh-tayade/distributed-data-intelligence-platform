@@ -113,7 +113,7 @@ final class NarrowContentBronzeLaunch {
         checkCommand(guard,owner,material,directory,command,false);
         phase(guard,owner,operation,"FILES_READY",null,null,null,null);fault.accept(Boundary.FILES_READY);
         var current=new WorkerRepository.Owner[]{owner};
-        var result=new ReadOnlyVerifierProcess().run(runtime.command(),runtime.environment(),guard.binding().root(),Duration.ofSeconds(180),new ReadOnlyVerifierProcess.BootstrapObserver(){
+        var result=new ReadOnlyVerifierProcess(false,workers::stopping).run(runtime.command(),runtime.environment(),guard.binding().root(),Duration.ofSeconds(180),new ReadOnlyVerifierProcess.BootstrapObserver(){
             public void beforeStart(){
                 runtime.check();checkCommand(guard,current[0],material,directory,command,false);
                 phase(guard,current[0],operation,"START_AUTHORIZED",null,null,null,null);fault.accept(Boundary.START_AUTHORIZED);

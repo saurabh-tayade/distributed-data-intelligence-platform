@@ -105,6 +105,17 @@ final class StrictBronzeLaunchRuntime {
                     && (uri.getRawPath().isEmpty() || uri.getRawPath().equals("/")) && uri.getPort()>0 && uri.getPort()<=65535,RUNTIME_MISMATCH);
         }catch(PreflightFailure ex){throw ex;}catch(RuntimeException ex){throw new PreflightFailure(RUNTIME_MISMATCH);}
     }
+    /** Read-only installation check; registration is not accepted by the run-bound loader. */
+    static Runnable startupCheck(JdbcTemplate jdbc,ManagementTransactions tx,InstallationHostGuard guard,
+            NarrowContentRuntimeQualification.Registration registered,String id){
+        need(id!=null && id.matches("[A-Za-z0-9_-]{1,128}"),RUNTIME_MISMATCH);
+        var rows=tx.required(()->jdbc.queryForList("SELECT configuration_bytes,configuration_sha256 FROM ddip_management.content_bronze_launch_profiles WHERE launch_profile_id=?",id));
+        need(rows.size()==1,RUNTIME_MISMATCH);var row=rows.getFirst();byte[] raw=(byte[])row.get("configuration_bytes");String digest=(String)row.get("configuration_sha256");
+        need(SourceJson.sha(raw).equals(digest),RUNTIME_MISMATCH);var c=PreflightFiles.canonical(raw,65536);
+        validateRegistration(jdbc,tx,c,registered,guard.binding());
+        var installed=new StrictBronzeLaunchRuntime(id,digest,c,registered.storageBindings(),guard);
+        return installed::check;
+    }
     void check(){need(installed.equals(observe()),INPUT_CHANGED);}
     private Map<Path,FileObservation> observe(){
         guard.checkHeld(guard.binding().installationId());

@@ -70,7 +70,7 @@ final class NarrowContentBronzeCompletion {
         byte[] bootstrap=bootstrap(material,registered,metadata.expected(),metadata.current(),runtime.protocolDigest(),launch.candidateSha256());
         check(guard,current[0],material,runtime,launch,pins,false,false);
         phase(guard,current[0],operation,"VERIFY_BOUND",runtime,launch.candidateSha256(),null,null,null,null,()->{});fault.accept(Boundary.VERIFY_BOUND);
-        var result=ReadOnlyVerifierProcess.receiptReader().run(runtime.command(),runtime.environment(),guard.binding().root(),Duration.ofSeconds(90),new ReadOnlyVerifierProcess.BootstrapObserver(){
+        var result=ReadOnlyVerifierProcess.receiptReader(workers::stopping).run(runtime.command(),runtime.environment(),guard.binding().root(),Duration.ofSeconds(90),new ReadOnlyVerifierProcess.BootstrapObserver(){
             public void beforeStart(){
                 check(guard,current[0],material,runtime,launch,pins,false,false);
                 phase(guard,current[0],operation,"START_AUTHORIZED",null,null,null,null,null,null,()->{});fault.accept(Boundary.START_AUTHORIZED);
