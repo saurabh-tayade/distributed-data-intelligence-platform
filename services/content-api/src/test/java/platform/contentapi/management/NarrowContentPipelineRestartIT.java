@@ -94,7 +94,7 @@ class NarrowContentPipelineRestartIT extends NarrowContentPipelineFixtures {
     }
     private void noLegacyExecution() {
         assertThat(count("rss_deliveries")).isZero();assertThat(count("stage_invocations")).isZero();
-        assertThat(NarrowContentPipelineTestSupport.ordinaryContentDispatchAvailable()).isFalse();
+        assertThat(NarrowContentPipelineTestSupport.legacyCapabilitiesDispatchContent()).isFalse();
     }
     private Map<String,List<String>> allRows() {
         var rows=new TreeMap<String,List<String>>();

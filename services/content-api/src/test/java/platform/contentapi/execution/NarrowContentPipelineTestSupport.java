@@ -9,7 +9,12 @@ import tools.jackson.databind.node.ObjectNode;
 /** Test-only actual installed runtime registration; no metadata-only stage fabrication. */
 public final class NarrowContentPipelineTestSupport {
     public static void registerChain(JdbcTemplate jdbc,String profileId,ObjectNode profile,String product,tools.jackson.databind.JsonNode fetchManifest,java.nio.file.Path processing,java.nio.file.Path python)throws Exception{
+        registerChain(jdbc,profileId,profile,product,fetchManifest,processing,python,true);
+    }
+    /** Distinct source descriptor flag; the old overload retains literal-loopback semantics. */
+    public static void registerChain(JdbcTemplate jdbc,String profileId,ObjectNode profile,String product,tools.jackson.databind.JsonNode fetchManifest,java.nio.file.Path processing,java.nio.file.Path python,boolean testEndpoint)throws Exception{
         var fixture=new NarrowContentRuntimeQualificationTest.Fixture();
+        fixture.configs.get("fetch").put("testEndpoint",testEndpoint);
         String deployment=fetchManifest==null?fixture.deployment:SourceJson.sha(SourceJson.canonical(fetchManifest));
         if(fetchManifest!=null){
             fixture.configs.get("fetch").set("manifest",fetchManifest);
@@ -43,13 +48,14 @@ public final class NarrowContentPipelineTestSupport {
     }
     private static void insert(JdbcTemplate jdbc,String id,ObjectNode node){byte[] bytes=SourceJson.canonical(node);jdbc.update("INSERT INTO ddip_management.execution_profiles(profile_id,configuration_bytes,configuration_sha256) VALUES (?,?,?)",id,bytes,SourceJson.sha(bytes));}
 
-    public record Completed(UUID run,UUID attempt,UUID artifact,String proofSha256){}
+    public record Completed(UUID run,UUID attempt,UUID artifact,String proofSha256,WorkerRepository.Session worker){}
     public record Event(String operation,String boundary){}
     public static Completed execute(JdbcTemplate j,ManagementTransactions t,WorkerRepository w,InstallationHostGuard g,WorkerRepository.Owner o,String profile,java.util.function.Consumer<Event> fault){
         var result=new NarrowContentPipeline(j,t,w).executeOriginal(g,o,profile,e->fault.accept(new Event(e.operation().name(),e.boundary().name())));
-        return new Completed(result.run(),result.attempt(),result.artifact(),result.proofSha256());
+        return new Completed(result.run(),result.attempt(),result.artifact(),result.proofSha256(),result.worker());
     }
-    public static boolean ordinaryContentDispatchAvailable(){return WorkerExecutionCapability.RELIABILITY_V2.supports("CONTENT_RSS_V1") || WorkerExecutionCapability.NONE.supports("CONTENT_RSS_V1");}
+    /** Historical Reliability/NONE capabilities only; not the qualified Content capability. */
+    public static boolean legacyCapabilitiesDispatchContent(){return WorkerExecutionCapability.RELIABILITY_V2.supports("CONTENT_RSS_V1") || WorkerExecutionCapability.NONE.supports("CONTENT_RSS_V1");}
     public static List<Path> spareDirectories(JdbcTemplate j,ManagementTransactions t,InstallationHostGuard g,WorkerRepository.Owner o){
         var ready=NarrowContentAdmission.inspectReady(j,t,g,o.runId(),o.attemptId());var context=new NarrowContentEvidenceContext(ready);
         return List.of(context.originalDirectory("INSPECT_BRONZE",4),context.originalDirectory("CHECK_INPUTS",3));

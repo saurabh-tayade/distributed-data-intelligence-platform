@@ -34,6 +34,25 @@ final class NarrowContentRuntimeQualification {
         String digest(String family){return chain.get(Family.valueOf(family)).digest();}
         JsonNode configuration(String family){return chain.get(Family.valueOf(family)).configuration();}
     }
+    static Registration registration(JdbcTemplate j,ManagementTransactions tx,InstallationHostGuard guard,String profileId,String digest,String deployment){
+        guard.checkHeld(guard.binding().installationId());
+        return tx.required(()->{
+            var profile=load(j,profileId);need(profile.digest().equals(digest),RUNTIME_MISMATCH);
+            FrozenRunSelection.profile(profile.bytes(),digest,deployment);
+            need("CONTENT_RSS_V1".equals(text(profile.configuration(),"pipeline")),RUNTIME_MISMATCH);
+            integer(profile.configuration(),"runProfileVersion",2,2);
+            var rows=j.queryForList("SELECT b.* FROM ddip_management.storage_bindings b JOIN ddip_management.execution_profile_storage p USING(binding_id) WHERE p.profile_id=? ORDER BY b.binding_id LIMIT 129",profileId);
+            need(!rows.isEmpty() && rows.size()<=128,RUNTIME_MISMATCH);
+            var storage=SourceJson.object().putArray("bindings");Set<String> roles=new HashSet<>();
+            for(var row:rows){
+                need(guard.binding().installationId().equals(row.get("installation_id")) && ("content-intelligence".equals(row.get("product")) || "CONTROL".equals(row.get("role"))),RUNTIME_MISMATCH);
+                var b=SourceJson.object().put("bindingId",(String)row.get("binding_id")).put("productId",(String)row.get("product")).put("role",(String)row.get("role")).put("configurationSha256",(String)row.get("configuration_sha256"));
+                b.set("configuration",FrozenRunSelection.canonical((byte[])row.get("configuration_bytes"),(String)row.get("configuration_sha256"),65536));storage.add(b);roles.add((String)row.get("role"));
+            }
+            need(roles.containsAll(Set.of("BRONZE","SILVER","REFERENCE","GOLD","CONTENT","CONTROL","STAGING","TEMP")),RUNTIME_MISMATCH);
+            return correspondence(j,profile,storage,guard.binding(),load(j,text(profile.configuration(),"contentRuntimeId")).digest());
+        });
+    }
     static final class Snapshot {
         private final Map<Family,Registered> chain;
         private final Registration registration;

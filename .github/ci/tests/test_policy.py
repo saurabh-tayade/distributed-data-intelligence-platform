@@ -424,7 +424,7 @@ class WorkflowTests(unittest.TestCase):
     def test_all_managed_content_partitions_build_provision_and_always_cleanup(self):
         managed = "inputs.partition == 'ingestion' || inputs.partition == 'gold' || inputs.partition == 'content_recovery' || inputs.partition == 'native_fetch_recovery' || inputs.partition == 'native_bronze' || inputs.partition == 'native_publication' || inputs.partition == 'native_pipeline_recovery'"
         for name, condition, command in (
-            ("Build prebuilt Java RSS and Bronze adapters for managed acceptance", managed,
+            ("Build prebuilt Java RSS and Bronze adapters for managed acceptance", "inputs.partition == 'core' || " + managed,
              "mvn -B -ntp -f ingestion/pom.xml package -DskipTests"),
             ("Start isolated Bronze acceptance storage", managed, "docker run --detach"),
             ("Remove isolated Bronze acceptance storage", "always() && (" + managed + ")", "docker rm --force --volumes"),
@@ -433,6 +433,13 @@ class WorkflowTests(unittest.TestCase):
                 step = POSTGRES_WORKFLOW.split("      - name: " + name + "\n", 1)[1].split("\n      - name:", 1)[0]
                 self.assertIn("if: ${{ " + condition + " }}", step)
                 self.assertIn(command, step)
+
+    def test_core_worker_startup_builds_adapters_without_starting_object_storage(self):
+        build = POSTGRES_WORKFLOW.split("      - name: Build prebuilt Java RSS and Bronze adapters for managed acceptance\n", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("inputs.partition == 'core'", build)
+        for name in ("Start isolated Bronze acceptance storage", "Remove isolated Bronze acceptance storage"):
+            step = POSTGRES_WORKFLOW.split("      - name: " + name + "\n", 1)[1].split("\n      - name:", 1)[0]
+            self.assertNotIn("inputs.partition == 'core'", step)
 
     def test_graph_filters_and_required_contexts(self):
         for job in ("ingestion", "processing_python_core", "processing_python_reliability", "analytics_jdbc", "analytics_http", "content_postgres_core", "content_postgres_reliability", "content_postgres_ingestion", "content_postgres_gold", "content_postgres_content_recovery", "content_postgres_native_fetch_recovery", "content_postgres_native_bronze", "content_postgres_native_publication", "content_postgres_native_pipeline_recovery"):

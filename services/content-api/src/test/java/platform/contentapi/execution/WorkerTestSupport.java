@@ -11,9 +11,12 @@ public final class WorkerTestSupport {
         return new WorkerRepository(jdbc,tx,installation,WorkerExecutionCapability.RELIABILITY_V2);
     }
     public static WorkerRepository enabled(JdbcTemplate jdbc,ManagementTransactions tx,UUID installation) {
+        return enabled(jdbc,tx,installation,()->false);
+    }
+    public static WorkerRepository enabled(JdbcTemplate jdbc,ManagementTransactions tx,UUID installation,java.util.function.BooleanSupplier stopping) {
         return new WorkerRepository(jdbc,tx,installation,new WorkerExecutionCapability(){
             public boolean available(){return true;}
             public boolean supports(String pipeline){return java.util.Set.of("CONTENT_RSS_V1","RELIABILITY_V2").contains(pipeline);}
-        });
+        },stopping);
     }
 }

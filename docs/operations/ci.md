@@ -129,9 +129,12 @@ with positive test counts and no failures, errors or skips. This guards selectio
 well as test success. [PR #72 evidence](pr72-postgres-partitions.md) records all class assignments,
 hosted timing inputs, local measurements, commands and remaining hosted acceptance requirements.
 
-The current inventory is **core=18, reliability=10, ingestion=3, gold=3,
+The current inventory is **core=21, reliability=10, ingestion=3, gold=3,
 content_recovery=3, native_fetch_recovery=13, native_bronze=6, native_publication=5,
-native_pipeline_recovery=7 (68 total)**.
+native_pipeline_recovery=7 (71 total)**.
+Core includes the three E5.2-C startup/lifecycle classes. It packages ingestion/provider
+artifacts before those tests, without starting object storage for read-only startup.
+See the [worker integration evidence](e5-2c-original-content-worker.md).
 Gold contains `RssGoldIT`, `RssContentIT` and
 `ContentFinalizationIT`. Content recovery contains `ContentRecoveryIT`, `ContentResumeIT` and
 `ContentInheritedRecoveryIT`; their native cases retain separate original/resumed worker processes,

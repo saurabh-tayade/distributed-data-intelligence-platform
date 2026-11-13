@@ -91,12 +91,17 @@ final class StrictContentPipelineRuntime {
     static JsonNode versions(){return SourceJson.object().put("python","3.12.15").put("pyspark","4.0.2").put("py4j","0.10.9.9")
             .put("boto3","1.43.114").put("botocore","1.43.114").put("duckdb","1.4.5").put("java","21");}
     /** All required imports, actual interpreter/package versions and full closure must pass before FETCH. */
-    void probe(Runnable fence){
-        check();fence.run();
+    void probe(Runnable fence){probe(fence,()->{},()->false);}
+    void probe(Runnable fence,java.util.function.BooleanSupplier stopping){probe(fence,()->{},stopping);}
+    void probe(Runnable fence,Runnable heartbeat,java.util.function.BooleanSupplier stopping){
+        probe(config,environment(),guard,this::check,fence,heartbeat,stopping);
+    }
+    static void probe(JsonNode config,Map<String,String> environment,InstallationHostGuard guard,Runnable check,Runnable fence,Runnable heartbeat,java.util.function.BooleanSupplier stopping){
+        check.run();fence.run();
         String script="import sys,json; sys.path.insert(0,sys.argv[1]); import strict_native_content as n; "
                 +"print(json.dumps({'versions':n.runtime_probe(),'modules':list(n.MODULES)},sort_keys=True,separators=(',',':')),end='')";
-        var observed=ReadOnlyVerifierProcess.receiptReader().run(command(script),environment(),guard.binding().root(),Duration.ofSeconds(30),new ReadOnlyVerifierProcess.Observer(){
-            public void beforeStart(){check();fence.run();}public void started(InstallationHostGuard.ProcessIdentity child){fence.run();}public void heartbeat(){check();fence.run();}
+        var observed=ReadOnlyVerifierProcess.receiptReader(stopping).run(probeCommand(config,script),environment,guard.binding().root(),Duration.ofSeconds(30),new ReadOnlyVerifierProcess.Observer(){
+            public void beforeStart(){check.run();fence.run();}public void started(InstallationHostGuard.ProcessIdentity child){fence.run();}public void heartbeat(){check.run();fence.run();heartbeat.run();fence.run();}
         });
         need(observed.exitCode()==0 && observed.stderrBytes()==0 && observed.descendants().isEmpty() && observed.stdout()!=null,RUNTIME_MISMATCH);
         var result=PreflightFiles.canonical(observed.stdout(),65536);SourceJson.fields(result,"versions","modules");
@@ -105,7 +110,7 @@ final class StrictContentPipelineRuntime {
         need(actual.equals(expected),RUNTIME_MISMATCH);
         var names=new TreeSet<String>();for(var name:result.get("modules"))need(names.add(name.stringValue()),RUNTIME_MISMATCH);
         need(names.equals(new TreeSet<>(config.get("modules").propertyNames())),RUNTIME_MISMATCH);
-        check();fence.run();
+        check.run();fence.run();
     }
     void check(){nativeRuntime.check();need(pins.equals(observe()),INPUT_CHANGED);}
     private Map<Path,Pin> observe(){
@@ -129,6 +134,7 @@ final class StrictContentPipelineRuntime {
     }
     List<String> command(){return command("import sys; sys.path.insert(0,sys.argv[1]); from strict_native_content import main; sys.argv=sys.argv[:1]; sys.exit(main())");}
     private List<String> command(String script){return List.of(config.get("python").stringValue(),"-I","-B","-X","utf8","-X","pycache_prefix=/dev/null","-c",script,config.get("processingRoot").stringValue());}
+    private static List<String> probeCommand(JsonNode config,String script){return List.of(config.get("python").stringValue(),"-I","-B","-X","utf8","-X","pycache_prefix=/dev/null","-c",script,config.get("processingRoot").stringValue());}
     Map<String,String> environment(){return nativeRuntime.gold.silver.environment();}
     int seconds(String family){return family.equals("BRONZE")?180:registered.configuration(family).get("seconds").intValue();}
 }

@@ -172,8 +172,10 @@ class PostgresInventoryTests(unittest.TestCase):
         self.assertEqual(PARTITIONS.inventory(self.root), self.groups)
         self.assertEqual(len(sum(self.groups.values(), [])), len(set(sum(self.groups.values(), []))))
         self.assertEqual({k: len(v) for k, v in self.groups.items()},
-                         dict(core=18, reliability=10, ingestion=3, gold=3, content_recovery=3, native_fetch_recovery=13, native_bronze=6, native_publication=5, native_pipeline_recovery=7))
-        self.assertEqual(len(sum(self.groups.values(), [])), 68)
+                         dict(core=21, reliability=10, ingestion=3, gold=3, content_recovery=3, native_fetch_recovery=13, native_bronze=6, native_publication=5, native_pipeline_recovery=7))
+        self.assertEqual(len(sum(self.groups.values(), [])), 71)
+        for name in ('NarrowContentWorkerStartupIT', 'OrdinaryContentWorkerLifecycleIT', 'OrdinaryContentLegacyLifecycleIT'):
+            self.assertIn('platform.contentapi.management.' + name, self.groups['core'])
         self.assertEqual(tuple(self.groups['gold']), GOLD)
         self.assertEqual(tuple(self.groups['content_recovery']), CONTENT_RECOVERY)
         self.assertEqual(tuple(self.groups['native_fetch_recovery']), NATIVE_FETCH_RECOVERY)
