@@ -135,6 +135,12 @@ native_pipeline_recovery=7 (71 total)**.
 Core includes the three E5.2-C startup/lifecycle classes. It packages ingestion/provider
 artifacts before those tests, without starting object storage for read-only startup.
 See the [worker integration evidence](e5-2c-original-content-worker.md).
+
+The documentation job also runs the deterministic E5.2-D input/refusal tests in
+`scripts/tests/test_packaged_public_content.py`. These tests perform no public DNS/HTTP,
+Docker, database or worker execution. The separate
+[opt-in public acceptance runner](e5-2d-packaged-public-content-acceptance.md) is never invoked
+by default CI or ordinary startup. The PostgreSQL partition inventory is unchanged.
 Gold contains `RssGoldIT`, `RssContentIT` and
 `ContentFinalizationIT`. Content recovery contains `ContentRecoveryIT`, `ContentResumeIT` and
 `ContentInheritedRecoveryIT`; their native cases retain separate original/resumed worker processes,

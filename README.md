@@ -91,6 +91,8 @@ records the inherited-recovery increment. The [Gate B0 audit](docs/operations/co
 corrects Content's limit to 1–8 feeds and documents the unproved aggregate private-evidence envelope.
 The narrower [E5.2-C original-only worker](docs/operations/e5-2c-original-content-worker.md) reuses the existing 17-operation chain for one fresh source with complete public composition v2. Operational Content activation and broader recovery remain gated; public or local deployment readiness is not claimed. Analytical publication selection is unchanged.
 
+The [E5.2-D opt-in acceptance procedure](docs/operations/e5-2d-packaged-public-content-acceptance.md) validates a separately approved disposable Linux installation before any public qualification. Offline tests do not establish public DNS/TLS or packaged acceptance, and operational activation remains a separate owner decision.
+
 ## Execution bounds and performance evidence
 
 The current local admission policy allows **one globally active managed execution** and **at most 20 unfinished runs**, including active and recovery-required work. Reliability selections are bounded to **32 batches, 128 raw files, 1 GiB of raw input and 2 million physical occurrences**, subject to the stricter native per-file/profile limits. Writable volumes require at least **1 GiB free space** before stage authorization. These are admission limits, not measured throughput, guaranteed capacity or hard filesystem quotas; see the [accepted resource policy](docs/architecture/durable-execution.md#security-and-proposed-admission-limits).
