@@ -15,18 +15,18 @@ import static platform.contentapi.execution.WorkerFailure.Code.*;
 import static platform.contentapi.execution.NarrowContentOperationRouting.Operation;
 import static platform.contentapi.execution.NarrowContentPipelineCommands.*;
 
-/** Full original-invocation implementation. No public caller, dispatcher activation, retry or recovered continuation. */
+/** Full original-invocation implementation. Live lifecycle caller only; no retry or recovered continuation. */
 final class NarrowContentPipeline {
     enum Boundary { PREFLIGHT, RESERVED, FILES_READY, START_AUTHORIZED, CHILD_RECORDED, RELEASE_AUTHORIZED,
         BEFORE_DELIVERY, HEARTBEAT, BEFORE_CANDIDATE, CANDIDATE_EXITED, BEFORE_CHECKPOINT, CHECKPOINT_INSERTED, CHECKPOINT_COMMITTED,
         BEFORE_SUCCESS, SUCCESS_INSERTED, SUCCESS_COMMITTED }
     record Event(Operation operation,Boundary boundary) {}
-    record Completed(UUID run,UUID attempt,UUID artifact,String proofSha256) {}
+    record Completed(UUID run,UUID attempt,UUID artifact,String proofSha256,WorkerRepository.Session worker) {}
     private record Proof(UUID operation,Operation kind,JsonNode command,JsonNode result,JsonNode evidence,JsonNode selection,String sha256) {}
     private final JdbcTemplate jdbc;private final ManagementTransactions tx;private final WorkerRepository workers;
     NarrowContentPipeline(JdbcTemplate jdbc,ManagementTransactions tx,WorkerRepository workers){this.jdbc=jdbc;this.tx=tx;this.workers=workers;workers.requireAdmissionRepository(jdbc,tx);}
     static List<Operation> core(){return List.of(Operation.values()).subList(0,17);}
-    /** Called only by test support. The accepted ordinary Content execution/recovery gates are unchanged. */
+    /** Executes only the claimed original invocation; completion returns its acknowledged live Session. */
     Completed executeOriginal(InstallationHostGuard guard,WorkerRepository.Owner owner,String profile,Consumer<Event> fault){
         require(guard!=null && owner!=null && fault!=null && !org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive(),WORKER_CONFIGURATION_INVALID);
         var ready=NarrowContentAdmission.inspectReady(jdbc,tx,guard,owner.runId(),owner.attemptId());
@@ -37,10 +37,13 @@ final class NarrowContentPipeline {
             require(jdbc.queryForObject("SELECT count(*) FROM ddip_management.content_pipeline_operations WHERE attempt_id=?",Long.class,owner.attemptId())==0,WORKER_NOT_READY);return null;
         });
         qualifyBootstrapCapacity(ready,owner,registered);
-        runtime.probe(()->workers.narrowOperationTransaction(guard,owner,()->null));fault.accept(new Event(Operation.FETCH_SOURCE,Boundary.PREFLIGHT));
-        runtime.check();workers.narrowOperationTransaction(guard,owner,()->null);
+        var current=new WorkerRepository.Owner[]{owner};
+        runtime.probe(()->workers.narrowOperationTransaction(guard,current[0],()->null),
+                ()->current[0]=workers.heartbeat(guard,current[0]),workers::stopping);
+        fault.accept(new Event(Operation.FETCH_SOURCE,Boundary.PREFLIGHT));
+        runtime.check();workers.narrowOperationTransaction(guard,current[0],()->null);
         UUID fetch=UUID.randomUUID(),bronze=UUID.randomUUID(),silver=UUID.randomUUID();
-        return new NarrowContentFetchLaunch(jdbc,tx,workers).originalPipeline(guard,owner,fetch,runtime.config.get("fetchLaunchProfileId").stringValue(),afterFetch->
+        return new NarrowContentFetchLaunch(jdbc,tx,workers).originalPipeline(guard,current[0],fetch,runtime.config.get("fetchLaunchProfileId").stringValue(),afterFetch->
                 new NarrowContentBronzeLaunch(jdbc,tx,workers).originalPipeline(guard,afterFetch,fetch,bronze,
                         runtime.config.get("bronzeLaunchProfileId").stringValue(),runtime.config.get("bronzeVerificationProfileId").stringValue(),live->
                     new NarrowContentSilverReservation(jdbc,tx,workers).reserveThen(guard,live,silver,b->{},afterBronze->{
@@ -114,7 +117,7 @@ final class NarrowContentPipeline {
             phase(operation,op,"FILES_READY",commandSha,null,null,null);event(op,Boundary.FILES_READY);
             var base=bootstrap(op,ready,owner,operation,command,runtime.registered,credentialsSha);
             boolean spark=spark(op);
-            var child=new ReadOnlyVerifierProcess(spark).run(runtime.command(),runtime.environment(),guard.binding().root(),Duration.ofSeconds(runtime.seconds(op.family.name())),new ReadOnlyVerifierProcess.BootstrapObserver(){
+            var child=new ReadOnlyVerifierProcess(spark,workers::stopping).run(runtime.command(),runtime.environment(),guard.binding().root(),Duration.ofSeconds(runtime.seconds(op.family.name())),new ReadOnlyVerifierProcess.BootstrapObserver(){
                 private void verify(boolean released){check(released);prepared.verify(guard,owner,guard.binding().root().relativize(directory).toString(),commandSha);}
                 public void beforeStart(){verify(false);absentNative(op,command);phase(operation,op,"START_AUTHORIZED",commandSha,null,null,null);event(op,Boundary.START_AUTHORIZED);verify(false);}
                 public void started(InstallationHostGuard.ProcessIdentity child){phase(operation,op,"CHILD_RECORDED",commandSha,child,null,null);event(op,Boundary.CHILD_RECORDED);}
@@ -204,13 +207,13 @@ final class NarrowContentPipeline {
                 proof.put("bronzeVerifiedSha256",jdbc.queryForObject("SELECT verified_sha256 FROM ddip_management.content_bronze_checkpoints WHERE operation_id=?",String.class,bronze));return null;});
             var operations=proof.putArray("operations");for(var p:proofs.values())operations.addObject().put("operationId",p.operation().toString()).put("stepIndex",p.kind().ordinal()).put("proofSha256",p.sha256());
             byte[] bytes=SourceJson.canonical(proof);event(Operation.RECHECK_CONTENT,Boundary.BEFORE_SUCCESS);check(false);
-            workers.finishNarrowContent(guard,owner,id,()->{
+            var released=workers.finishNarrowContent(guard,owner,id,()->{
                 insertArtifact(id,"CONTENT",artifact.get("nativeFingerprint").stringValue(),artifact.get("storageBindingId").stringValue(),artifact.get("relativeAddress").stringValue(),raw,
                         List.of(new Dependency("GOLD",UUID.fromString(goldProof.get("artifactId").stringValue())),new Dependency("PUBLISHER_REFERENCE",UUID.fromString(RssContentInputs.reference(runtime.registered.frozenSelection()).get("artifactId").stringValue()))));
                 jdbc.update("INSERT INTO ddip_management.content_pipeline_completions(attempt_id,final_operation_id,artifact_id,proof_bytes,proof_sha256,owner_coordinator_version,owner_worker_version,owner_run_version,owner_attempt_version) VALUES (?,?,?,?,?,?,?,?,?)",
                         owner.attemptId(),finalProof.operation(),id,bytes,SourceJson.sha(bytes),owner.worker().coordinatorVersion(),owner.worker().workerVersion(),owner.runVersion(),owner.attemptVersion());event(Operation.RECHECK_CONTENT,Boundary.SUCCESS_INSERTED);
             });
-            event(Operation.RECHECK_CONTENT,Boundary.SUCCESS_COMMITTED);return new Completed(owner.runId(),owner.attemptId(),id,SourceJson.sha(bytes));
+            event(Operation.RECHECK_CONTENT,Boundary.SUCCESS_COMMITTED);return new Completed(owner.runId(),owner.attemptId(),id,SourceJson.sha(bytes),released);
         }
         private void absentNative(Operation op,JsonNode command){
             if(!Set.of(Operation.PUBLISH_SILVER,Operation.PUBLISH_GOLD,Operation.PUBLISH_CONTENT).contains(op))return;

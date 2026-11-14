@@ -11,7 +11,7 @@ import tools.jackson.databind.node.ObjectNode;
 import static platform.contentapi.execution.WorkerFailure.require;
 import static platform.contentapi.execution.WorkerFailure.Code.*;
 
-/** Inactive versioned native launch seam. No dispatcher, retry or recovered continuation authority. */
+/** Versioned original-only native launch seam. No retry or recovered continuation authority. */
 final class NarrowContentFetchLaunch {
     enum Boundary { RESERVED, LAUNCH_BOUND, DIRECTORY_CREATED, COMMAND_WRITTEN, FILES_READY, START_AUTHORIZED,
         CHILD_RECORDED, BEFORE_RELEASE, BEFORE_RELEASE_PHASE, RELEASE_AUTHORIZED, BEFORE_DELIVERY, HEARTBEAT, BEFORE_CANDIDATE, BEFORE_CANDIDATE_PHASE, CANDIDATE_EXITED }
@@ -138,7 +138,7 @@ final class NarrowContentFetchLaunch {
         checkCommand(guard,owner,context,directory,command,false);
         phase(guard,owner,operation,"FILES_READY",null,null,null);fault.accept(Boundary.FILES_READY);
         var current=new WorkerRepository.Owner[]{owner};
-        var result=new ReadOnlyVerifierProcess().run(runtime.command(),runtime.environment(),guard.binding().root(),Duration.ofSeconds(45),new ReadOnlyVerifierProcess.BootstrapObserver(){
+        var result=new ReadOnlyVerifierProcess(false,workers::stopping).run(runtime.command(),runtime.environment(),guard.binding().root(),Duration.ofSeconds(45),new ReadOnlyVerifierProcess.BootstrapObserver(){
             public void beforeStart(){
                 runtime.check();checkCommand(guard,current[0],context,directory,command,false);
                 phase(guard,current[0],operation,"START_AUTHORIZED",null,null,null);fault.accept(Boundary.START_AUTHORIZED);

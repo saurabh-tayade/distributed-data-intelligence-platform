@@ -1,7 +1,7 @@
 package platform.contentapi.execution;
 
-/** Internal C2 integration seam, not a configurable bean, executable or dispatch API.
- * A real adapter must supply preflight and stage supervision before enabling this boundary.
+/** Fixed packaged adapter eligibility, not a configurable bean or external dispatch API.
+ * Lifecycle startup and run-bound qualification remain independent prerequisites.
  */
 interface WorkerExecutionCapability {
     boolean available();
@@ -10,6 +10,11 @@ interface WorkerExecutionCapability {
     WorkerExecutionCapability RELIABILITY_V2=new WorkerExecutionCapability(){
         public boolean available(){return true;}
         public boolean supports(String pipeline){return "RELIABILITY_V2".equals(pipeline);}
+    };
+    /** Original-only strict Content adapter; lifecycle requires complete public composition-v2. */
+    WorkerExecutionCapability CONTENT_NARROW_ORIGINAL=new WorkerExecutionCapability(){
+        public boolean available(){return true;}
+        public boolean supports(String pipeline){return "CONTENT_RSS_V1".equals(pipeline);}
     };
     WorkerExecutionCapability NONE=new WorkerExecutionCapability(){
         public boolean available(){return false;}

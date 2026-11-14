@@ -17,7 +17,10 @@
     "platform.contentapi.management.NarrowContentOperationJournalIT",
     "platform.contentapi.management.ContentResumeControlIT",
     "platform.contentapi.management.StrictPublicFetchProfileIT",
-    "platform.contentapi.management.NarrowContentPublicHistoryIT"
+    "platform.contentapi.management.NarrowContentPublicHistoryIT",
+    "platform.contentapi.management.NarrowContentWorkerStartupIT",
+    "platform.contentapi.management.OrdinaryContentWorkerLifecycleIT",
+    "platform.contentapi.management.OrdinaryContentLegacyLifecycleIT"
   ],
   "reliability": [
     "platform.contentapi.execution.OperatorRecoveryIT",

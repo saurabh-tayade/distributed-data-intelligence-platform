@@ -10,7 +10,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import platform.contentapi.execution.*;
 import static org.assertj.core.api.Assertions.*;
 
-/** Actual original-owner chain. Ordinary dispatch remains disabled. No fabricated stages/deliveries. */
+/** Isolated loopback original-owner chain, not ordinary public dispatch. No fabricated stages/deliveries. */
 class NarrowContentPipelineIT extends NarrowContentPipelineFixtures {
     NarrowContentPipelineTestSupport.Completed execute(java.util.function.Consumer<NarrowContentPipelineTestSupport.Event> fault){
         return NarrowContentPipelineTestSupport.execute(jdbc,tx,workers,guard,owner,PIPELINE_PROFILE,fault);
@@ -42,7 +42,7 @@ class NarrowContentPipelineIT extends NarrowContentPipelineFixtures {
         assertThat(history.get(owner.runId().toString()).get("counts").get("articles").stringValue()).isEqualTo("64");
         assertThat(history.get(owner.runId().toString()).get("result").get("artifactId").stringValue()).isEqualTo(complete.artifact().toString());
         assertThat(filesystem()).isEqualTo(before);
-        assertThat(NarrowContentPipelineTestSupport.ordinaryContentDispatchAvailable()).isFalse();
+        assertThat(NarrowContentPipelineTestSupport.legacyCapabilitiesDispatchContent()).isFalse();
         System.out.println("CONTENT_ENVELOPE_MEASUREMENT "+new String(SourceJson.canonical(report),java.nio.charset.StandardCharsets.UTF_8));
     }
     @Test void firstByteBeyondFetchLimitCannotReachBronzeOrSuccess()throws Exception{
@@ -61,13 +61,13 @@ class NarrowContentPipelineIT extends NarrowContentPipelineFixtures {
         var before=filesystem();int calls=requests.get();
         assertThatThrownBy(()->execute(e->{})).isInstanceOf(RuntimeException.class);
         assertThat(requests).hasValue(calls);assertThat(filesystem()).isEqualTo(before);
-        assertThat(NarrowContentPipelineTestSupport.ordinaryContentDispatchAvailable()).isFalse();
+        assertThat(NarrowContentPipelineTestSupport.legacyCapabilitiesDispatchContent()).isFalse();
         var report=NarrowContentEnvelopeTestSupport.measure(jdbc,attemptRoot(),owner.runId(),owner.attemptId(),"demo-feed");
         report.put("corpus","first-rejected-fetch-byte");
         System.out.println("CONTENT_ENVELOPE_MEASUREMENT "+new String(SourceJson.canonical(report),java.nio.charset.StandardCharsets.UTF_8));
     }
     @Test void originalFetchThroughContentUsesAllSeventeenOperationsAndRealFinalProof()throws Exception{
-        original();assertThat(NarrowContentPipelineTestSupport.ordinaryContentDispatchAvailable()).isFalse();var spare=NarrowContentPipelineTestSupport.spareDirectories(jdbc,tx,guard,owner);var events=new ArrayList<NarrowContentPipelineTestSupport.Event>();
+        original();assertThat(NarrowContentPipelineTestSupport.legacyCapabilitiesDispatchContent()).isFalse();var spare=NarrowContentPipelineTestSupport.spareDirectories(jdbc,tx,guard,owner);var events=new ArrayList<NarrowContentPipelineTestSupport.Event>();
         var completed=execute(e->{events.add(e);if(!e.boundary().equals("HEARTBEAT"))System.out.println("STRICT_PIPELINE_EVENT "+e);});
         assertThat(completed.run()).isEqualTo(owner.runId());assertThat(completed.attempt()).isEqualTo(owner.attemptId());
         assertThat(count("content_native_operations")).isEqualTo(1);assertThat(count("content_fetch_checkpoints")).isEqualTo(1);assertThat(count("content_bronze_checkpoints")).isEqualTo(1);
@@ -77,13 +77,17 @@ class NarrowContentPipelineIT extends NarrowContentPipelineFixtures {
         assertThat(jdbc.queryForObject("SELECT state FROM ddip_management.runs WHERE run_id=?",String.class,owner.runId())).isEqualTo("SUCCEEDED");
         assertThat(jdbc.queryForObject("SELECT result_artifact_id FROM ddip_management.runs WHERE run_id=?",UUID.class,owner.runId())).isEqualTo(completed.artifact());
         assertThat(jdbc.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isNull();
+        assertThat(completed.worker().coordinatorVersion()).isEqualTo(jdbc.queryForObject("SELECT row_version FROM ddip_management.coordinator",Long.class));
+        assertThat(completed.worker().workerVersion()).isEqualTo(jdbc.queryForObject("SELECT row_version FROM ddip_management.worker_instances WHERE instance_id=?",Long.class,completed.worker().instanceId()));
+        // This is the acknowledged live token, not a Session reconstructed from completion history.
+        session=workers.heartbeatIdle(guard,completed.worker());
         byte[] proof=jdbc.queryForObject("SELECT proof_bytes FROM ddip_management.content_pipeline_completions WHERE attempt_id=?",byte[].class,owner.attemptId());
         assertThat(SourceJson.sha(proof)).isEqualTo(completed.proofSha256());
         assertThat(SourceJson.parse(proof).get("operations")).hasSize(15);
         var artifact=SourceJson.parse(jdbc.queryForObject("SELECT evidence_bytes FROM ddip_management.artifacts WHERE artifact_id=?",byte[].class,completed.artifact()));
         assertThat(artifact.get("kind").stringValue()).isEqualTo("CONTENT");
         assertThat(artifact.get("verification").get("status").stringValue()).isEqualTo("VERIFIED");
-        for(var path:spare)assertThat(path).doesNotExist();assertThat(NarrowContentPipelineTestSupport.ordinaryContentDispatchAvailable()).isFalse();
+        for(var path:spare)assertThat(path).doesNotExist();assertThat(NarrowContentPipelineTestSupport.legacyCapabilitiesDispatchContent()).isFalse();
         assertThat(events.getLast().boundary()).isEqualTo("SUCCESS_COMMITTED");assertThat(requests).hasValue(1);assertThat(objectWrites).hasValue(2);
         NarrowContentPipelineSqlIT.assertCompletedGraphAndCounts(jdbc,owner.runId(),owner.attemptId(),completed.artifact());
         var before=metadata();var nativeRows=jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_pipeline_checkpoints t ORDER BY operation_id",String.class);
@@ -115,7 +119,17 @@ class NarrowContentPipelineIT extends NarrowContentPipelineFixtures {
         var response=http(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(RUNS+"/"+owner.runId()+"/attempts/"+owner.attemptId()+"/native-operations?limit=100"));
         assertThat(response.getResponse().getStatus()).isEqualTo(200);assertThat(body(response).get("data")).hasSize(17);
         assertThat(metadata()).isEqualTo(before);assertThat(jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.content_pipeline_checkpoints t ORDER BY operation_id",String.class)).isEqualTo(nativeRows);
-        int reads=objectRequests.get();assertThatThrownBy(()->execute(e->{})).isInstanceOf(RuntimeException.class);assertThat(objectRequests).hasValue(reads);
+        int reads=objectRequests.get();
+        UUID nextRun=queue("after-acknowledged-success");
+        var next=NarrowContentAdmissionTestSupport.claim(workers,guard,session,UUID.randomUUID(),nextRun);
+        assertThat(next.owner()).isNotNull();assertThat(next.runId()).isEqualTo(nextRun);
+        assertThat(next.worker().epoch()).isEqualTo(completed.worker().epoch()+1);
+        assertThat(jdbc.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isEqualTo(next.owner().attemptId());
+        assertThat(jdbc.queryForObject("SELECT state FROM ddip_management.runs WHERE run_id=?",String.class,completed.run())).isEqualTo("SUCCEEDED");
+        assertThat(requests).hasValue(1);assertThat(objectRequests).hasValue(reads);
+        // The deliberate stale-owner replay poisons its repository; exercise it only after the
+        // acknowledged session has proved a genuine next claim, never bypass that poison.
+        assertThatThrownBy(()->execute(e->{})).isInstanceOf(RuntimeException.class);assertThat(objectRequests).hasValue(reads);
     }
     @Test void cancellationAfterBronzeBeforeFirstNativeChildNeverContinues()throws Exception{
         original();assertThatThrownBy(()->execute(e->{if(e.operation().equals("BRONZE_BEFORE_SILVER") && e.boundary().equals("RESERVED"))cancel();})).isInstanceOf(RuntimeException.class);
@@ -123,6 +137,16 @@ class NarrowContentPipelineIT extends NarrowContentPipelineFixtures {
         assertThat(count("content_pipeline_checkpoints")).isZero();assertThat(count("content_pipeline_completions")).isZero();assertThat(count("rss_deliveries")).isZero();
         assertThat(jdbc.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isEqualTo(owner.attemptId());
         int reads=objectRequests.get();assertThatThrownBy(()->execute(e->{})).isInstanceOf(RuntimeException.class);assertThat(objectRequests).hasValue(reads);
+    }
+    @Test void persistentStopAfterPreflightPreventsFetchAndRetainsOriginalOccupancy(){
+        original();var stopping=new AtomicBoolean();var w=WorkerTestSupport.enabled(jdbc,tx,INSTALL,stopping::get);
+        assertThatThrownBy(()->NarrowContentPipelineTestSupport.execute(jdbc,tx,w,guard,owner,PIPELINE_PROFILE,e->{
+            if(e.boundary().equals("PREFLIGHT")){stopping.set(true);Thread.interrupted();}
+        })).hasMessage("WORKER_NOT_READY");
+        assertThat(count("content_native_operations")).isZero();assertThat(count("content_pipeline_operations")).isZero();
+        assertThat(requests).hasValue(0);assertThat(objectRequests).hasValue(0);
+        assertThat(jdbc.queryForObject("SELECT active_attempt_id FROM ddip_management.coordinator",UUID.class)).isEqualTo(owner.attemptId());
+        assertThat(jdbc.queryForObject("SELECT state FROM ddip_management.attempts WHERE attempt_id=?",String.class,owner.attemptId())).isEqualTo("CLAIMED");
     }
     @Test void lostReleaseAcknowledgmentConsumesSlotWithoutContinuation(){
         original();var armed=new AtomicBoolean();var wrapped=loseCommitAcknowledgment(armed);

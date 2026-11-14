@@ -9,7 +9,7 @@ import tools.jackson.databind.node.ObjectNode;
 import static platform.contentapi.execution.WorkerFailure.require;
 import static platform.contentapi.execution.WorkerFailure.Code.*;
 
-/** Inactive admission seam. Durable facts never grant an Owner token or stage authority. */
+/** Original-only durable admission. Historical facts never grant an Owner token or stage authority. */
 final class NarrowContentAdmission {
     enum Boundary { PREPARING_COMMITTED, FILES_PREPARED, BEFORE_READY, READY_COMMITTED }
     private final JdbcTemplate jdbc;
@@ -29,8 +29,10 @@ final class NarrowContentAdmission {
             milestone(jdbc,owner.attemptId(),"PREPARING",receipt(n));return n;
         });
         fault.accept(Boundary.PREPARING_COMMITTED);
+        workers.checkNarrowActive();
         var prepared=NarrowContentPreparation.prepare(guard,new NarrowContentPreparation.Specification(NarrowContentProfile.POLICY,
-                owner.runId(),owner.attemptId(),enrollment.get("sourceId").stringValue(),guard.binding(),identities(enrollment)));
+                owner.runId(),owner.attemptId(),enrollment.get("sourceId").stringValue(),guard.binding(),identities(enrollment)),
+                (boundary,path)->workers.checkNarrowActive());
         fault.accept(Boundary.FILES_PREPARED);
         new NarrowContentEvidenceContext(prepared.expected()).inspect(guard,prepared.independentlySupplied());
         fault.accept(Boundary.BEFORE_READY);

@@ -92,6 +92,17 @@ final class StrictPublicFetchLaunchRuntime implements ContentFetchLaunchRuntime 
                     && binding.id().equals(c.get("controlBindingId").stringValue()),RUNTIME_MISMATCH);
         }catch(PreflightFailure ex){throw ex;}catch(RuntimeException ex){throw new PreflightFailure(RUNTIME_MISMATCH);}
     }
+    /** Read-only installation check; registration is not accepted by the run-bound loader. */
+    static Runnable startupCheck(JdbcTemplate jdbc,ManagementTransactions tx,InstallationHostGuard guard,
+            NarrowContentRuntimeQualification.Registration registered,String id){
+        need(id!=null && id.matches("[A-Za-z0-9_-]{1,128}"),RUNTIME_MISMATCH);
+        var rows=tx.required(()->jdbc.queryForList("SELECT configuration_bytes,configuration_sha256 FROM ddip_management.content_fetch_launch_profiles WHERE launch_profile_id=?",id));
+        need(rows.size()==1,RUNTIME_MISMATCH);var row=rows.getFirst();byte[] raw=(byte[])row.get("configuration_bytes");String digest=(String)row.get("configuration_sha256");
+        need(SourceJson.sha(raw).equals(digest),RUNTIME_MISMATCH);var c=PreflightFiles.canonical(raw,65536);
+        validateRegistration(c,registered,guard.binding());
+        var installed=new StrictPublicFetchLaunchRuntime(id,digest,c,registered.storageBindings(),guard);
+        return installed::check;
+    }
     public void check(){need(installed.equals(observe()),INPUT_CHANGED);}
     private Map<Path,FileObservation> observe(){
         guard.checkHeld(guard.binding().installationId());

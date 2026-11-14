@@ -52,6 +52,12 @@ interface ContentFetchLaunchRuntime {
         return profile.version()==1?StrictFetchLaunchRuntime.load(jdbc,tx,guard,registered,id)
                 :StrictPublicFetchLaunchRuntime.load(jdbc,tx,guard,registered,id);
     }
+    static Runnable startupCheck(JdbcTemplate jdbc,ManagementTransactions tx,InstallationHostGuard guard,
+            NarrowContentRuntimeQualification.Registration registered,String id){
+        var profile=registered(jdbc,tx,registered,guard.binding(),id);
+        return profile.version()==1?StrictFetchLaunchRuntime.startupCheck(jdbc,tx,guard,registered,id)
+                :StrictPublicFetchLaunchRuntime.startupCheck(jdbc,tx,guard,registered,id);
+    }
     static int version(JsonNode c,String key){
         need(c.has(key) && c.get(key).isInt() && (c.get(key).intValue()==1 || c.get(key).intValue()==2),RUNTIME_MISMATCH);
         return c.get(key).intValue();

@@ -22,7 +22,7 @@ Statuses describe scoped capabilities and evidence, not production readiness.
 | Managed Reliability Processing | ✓ Implemented and locally tested | JSONL/Parquet inputs, fixed-profile worker execution, Spark publication and independent output verification |
 | Durable Source and Run Management | ✓ Implemented and locally tested | Source revisions, verified imports, frozen run submissions and bounded execution history |
 | Execution Recovery | ◐ Partially implemented | [Controlled local Reliability recovery](docs/operations/reliability-recovery.md) is implemented and tested for JSONL/Parquet with explicit operator approval, native verification and atomic disposition; broader E5 recovery remains unfinished |
-| Managed Content Processing | ◐ Partially implemented | Internal D1–D5a publication, independent verification, explicit recovery/resume and inherited-attempt reconciliation; ordinary Content worker dispatch remains blocked by incomplete Gate B0 recovery evidence qualification |
+| Managed Content Processing | ◐ Partially implemented | Original-only worker integration and the native chain have isolated test coverage; public execution, packaged public acceptance, live-stop review and operational activation remain gated |
 | React Operations | ✓ Implemented and locally tested | Source management, guarded Reliability submission and run/attempt/stage/audit inspection; full browser acceptance remains pending |
 | Cancellation and Retry | ◐ Partial | [Queued cancellation](docs/operations/queued-run-cancellation.md), [Reliability running cancellation](docs/operations/running-run-cancellation.md), and [guarded recovery-qualified Reliability retry](docs/operations/reliability-retry.md); cancellation covers the original execution and validated explicit retries, not Content |
 | Product Authorization and Governed Exports | — Deferred | Product-scoped access policy and export/download workflows remain unimplemented |
@@ -69,7 +69,7 @@ flowchart TB
     contentSQL -->|"bounded enriched catalog"| api
     worker -->|"fixed publisher"| spark
     worker -->|"independent verification"| reliabilitySQL
-    worker -.-> managedContent["Managed Content internal success path<br/>production dispatch disabled"]
+    worker -.-> managedContent["Original-only Content integration<br/>operational activation gated"]
     managedContent -.-> feeds
 
     classDef standalone fill:#eaf2ff,stroke:#315a8a,color:#172c46;
@@ -80,17 +80,16 @@ flowchart TB
     class managedContent planned;
 ```
 
-Solid arrows show implemented paths; dashed arrows show planned managed Content execution. Content batches already work independently of the worker. The current React application consumes Gold analytics, the separately pinned enriched Content catalog, discovery/coverage reports and bounded Reliability request windows, input coverage and reference coverage; native report readers remain authoritative. PostgreSQL stores control and qualification metadata; native files remain the data authority. A newly verified worker result does not automatically replace the API's selected analytics publication.
+Solid arrows show implemented paths; dashed arrows show managed Content integration with operational activation still gated. Content batches already work independently of the worker. The current React application consumes Gold analytics, the separately pinned enriched Content catalog, discovery/coverage reports and bounded Reliability request windows, input coverage and reference coverage; native report readers remain authoritative. PostgreSQL stores control and qualification metadata; native files remain the data authority. A newly verified worker result does not automatically replace the API's selected analytics publication.
 
-One worker startup is pinned to one approved execution profile and deployment digest. JSONL and Parquet use separate reviewed startups; stop the worker before changing profiles. It processes compatible runs in submission order. Content and other-profile runs remain queued. Ambiguous execution retains occupied ownership and blocks further dispatch; an expired heartbeat is never permission to take over.
+One worker startup is pinned to one approved execution profile and deployment digest. JSONL and Parquet use separate reviewed startups; stop the worker before changing profiles. It processes compatible runs in submission order; other-profile runs remain queued. The operational Reliability worker leaves Content runs queued. The [original-only Content integration](docs/operations/e5-2c-original-content-worker.md) requires complete public composition v2 and remains subject to separate qualification and activation decisions. Ambiguous execution retains occupied ownership and blocks further dispatch; an expired heartbeat is never permission to take over.
 
 [D1 managed RSS fetch and private journaling](docs/operations/managed-rss-fetch.md) is implemented as an internal checkpoint. It preserves one authorized retrieval and its original provenance; it does not enable Content dispatch, Bronze PUT, Silver/Gold/Content processing or publication activation.
 
 [D5b-2b inherited recovery and activation limits](docs/operations/d5b2b-inherited-recovery-validation.md)
 records the inherited-recovery increment. The [Gate B0 audit](docs/operations/content-recovery-envelope.md)
 corrects Content's limit to 1–8 feeds and documents the unproved aggregate private-evidence envelope.
-Content dispatch remains unavailable. No enable switch or local deployment readiness
-is claimed. Analytical publication selection is unchanged.
+The narrower [E5.2-C original-only worker](docs/operations/e5-2c-original-content-worker.md) reuses the existing 17-operation chain for one fresh source with complete public composition v2. Operational Content activation and broader recovery remain gated; public or local deployment readiness is not claimed. Analytical publication selection is unchanged.
 
 ## Execution bounds and performance evidence
 
