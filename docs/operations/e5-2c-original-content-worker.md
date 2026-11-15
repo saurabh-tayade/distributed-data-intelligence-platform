@@ -147,6 +147,14 @@ Every failed log remains in ignored evidence. Final successful results do not re
 
 ## Hosted CI and activation limits
 
+Historical closeout, November 14, 2026: the owner manually merged
+[PR #156](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/pull/156)
+at `63afe5c69d0c3f0c0982f3c0a27edcaf0c85d303` after reviewing the exact-head PR CI.
+Post-merge [main CI #43624475522](https://github.com/saurabh-tayade/distributed-data-intelligence-platform/actions/runs/43624475522)
+then passed all 20 jobs on attempt 1. The draft/pending language below records the preparation
+state at the time; the public qualification and activation limits remain open. See the subsequent
+[E5.2-D procedure](e5-2d-packaged-public-content-acceptance.md).
+
 The explicit PostgreSQL inventory is now 71 classes: core=21, reliability=10, ingestion=3,
 gold=3, content_recovery=3, native_fetch_recovery=13, native_bronze=6, native_publication=5,
 native_pipeline_recovery=7. Core builds ingestion/provider artifacts for the new startup tests;
