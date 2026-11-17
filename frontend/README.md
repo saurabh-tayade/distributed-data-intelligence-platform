@@ -914,7 +914,7 @@ or mismatched HTTP 202 remains uncertain. A valid receipt shows the actual persi
 
 The [operator and verification record](../docs/operations/e53-content-queued-submission-ui.md) covers
 selection, failure handling, fixture parity, commands and separate manual-browser acceptance.
-The full frontend run includes existing Reliability tests. PostgreSQL core CI additionally requires
+The full frontend run includes existing Reliability tests. PostgreSQL native publication CI additionally requires
 `contentSubmissionNativeParity.test.tsx` against genuine isolated backend discovery and queued
 HTTP 202 responses; local frontend-only runs skip that suite without the generated fixture.
 No worker startup, public-feed execution, backend schema, new dependency or Analytics selection is

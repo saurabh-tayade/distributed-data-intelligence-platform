@@ -7,7 +7,7 @@ import { parseContentProfiles, parseContentRequest, parseContentSources, parsePu
 import { readRunIntent } from './operations/runIntent';
 import { fixture, jsonResponse } from './test/fixtures';
 
-// Mandatory in PostgreSQL core CI after the genuine isolated backend test generates it.
+// Mandatory in PostgreSQL native publication CI after the genuine isolated backend test generates it.
 // Local frontend-only tests have no database and skip this separate fixture-dependent suite.
 const path = process.env.DDIP_CONTENT_SUBMISSION_HTTP_FIXTURES;
 describe.skipIf(!path)('real isolated queued Content HTTP contract parity', () => {

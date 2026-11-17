@@ -112,7 +112,7 @@ leaves the inspected metadata unchanged and queue admission leaves the coordinat
 A publisher-reference fixture is prepared/imported locally. This is offline API admission evidence,
 not public-feed or packaged worker qualification.
 
-The test writes ignored `services/content-api/target/content-submission-http.json`. PostgreSQL core CI
+The test writes ignored `services/content-api/target/content-submission-http.json`. PostgreSQL native publication CI
 then runs the mandatory frontend parser and UI parity tests against those actual HTTP DTOs:
 
 ```bash
@@ -125,7 +125,7 @@ DDIP_CONTENT_SUBMISSION_HTTP_FIXTURES=../services/content-api/target/content-sub
 
 The parity UI consumes captured real responses; it does not itself connect a browser to PostgreSQL
 or create a second backend run. A configured fixture path that is absent or invalid fails the test.
-The hosted core job creates a fresh file from its real isolated test before running parity.
+The hosted native publication job creates a fresh file from its real isolated test before running parity.
 The existing exhaustive PostgreSQL class inventory, required job names, timeouts and classifier
 are preserved. The CI workflow change selects full regression under the trusted base policy.
 Hosted outcomes and counts must be tied to the exact PR head and linked in the PR/final report;

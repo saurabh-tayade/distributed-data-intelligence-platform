@@ -19,10 +19,10 @@ acceptance statements for those workflow changes, without claiming full-regressi
 
 ## Content submission HTTP parity
 
-PostgreSQL core generates `services/content-api/target/content-submission-http.json` from
+PostgreSQL native publication generates `services/content-api/target/content-submission-http.json` from
 `NarrowContentSubmissionDiscoveryIT`: real scoped metadata, a current source recheck, genuine
 Content HTTP 202/QUEUED admission, same-key replay and history, without a worker or feed request.
-The core job runs two mandatory frontend parser/UI cases with
+The native publication job runs two mandatory frontend parser/UI cases with
 `DDIP_CONTENT_SUBMISSION_HTTP_FIXTURES`; a missing or invalid generated file fails. Local frontend-only
 runs may skip this separate fixture suite. It demonstrates DTO/UI compatibility with isolated queue
 admission, not public execution or live-browser acceptance. Existing partition membership, timeouts,
