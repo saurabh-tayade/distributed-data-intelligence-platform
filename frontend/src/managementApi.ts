@@ -102,6 +102,29 @@ export interface ReliabilityRequest {
   pipeline: 'RELIABILITY_V2'; executionProfileId: string; sources: { sourceId: string; revision: number }[];
   batchArtifactIds: string[]; serviceReferenceArtifactId: string;
 }
+export interface ContentMetadata {
+  dispatchDisabled: true; qualificationScope: 'REGISTRATION_METADATA_ONLY'; runtimeQualification: 'NOT_CHECKED';
+}
+export interface ContentProfile extends ContentMetadata {
+  executionProfileId: string; productId: 'content-intelligence'; pipeline: 'CONTENT_RSS_V1'; runProfileVersion: 2; pipelineVersion: 1;
+  sourceProfile: 'rss-atom-v1'; inputFormat: 'RSS_ATOM'; configurationSha256: string; createdAt: string;
+  supportedSelection: { freshSourceCount: 1; retainedSilverCount: 0; publisherReferenceCount: 1 };
+}
+export interface ContentSource extends ContentMetadata {
+  executionProfileId: string; productId: 'content-intelligence'; pipeline: 'CONTENT_RSS_V1'; sourceId: string; revision: number;
+  sourceProfile: 'rss-atom-v1'; configurationSha256: string;
+}
+export interface PublisherReference extends ContentMetadata {
+  artifactId: string; productId: 'content-intelligence'; kind: 'PUBLISHER_REFERENCE'; role: 'PUBLISHER_REFERENCE';
+  contractVersion: 1; processorRevision: 1; nativeFormat: null; storageBindingId: string; nativeFingerprint: string; verifiedAt: string;
+  identity: { referenceId: string; revision: string };
+}
+export interface ContentDiscoveryQuery extends RevisionQuery { executionProfileId: string }
+export interface ContentRequest {
+  pipeline: 'CONTENT_RSS_V1'; executionProfileId: string; fetchSources: [{ sourceId: string; revision: number }];
+  retainedSilverArtifactIds: []; publisherReferenceArtifactId: string;
+}
+export type RunRequest = ReliabilityRequest | ContentRequest;
 export interface RunSubmissionCommand { key: string; body: string }
 export interface RunSubmissionResponse extends RunDetailResponse { location: string }
 export interface RunAttempt {
@@ -291,9 +314,71 @@ export function parseReliabilityRequest(value: unknown): ReliabilityRequest {
   need(new Set(row.batchArtifactIds).size === row.batchArtifactIds.length && isManagementId(row.serviceReferenceArtifactId) && !row.batchArtifactIds.includes(row.serviceReferenceArtifactId));
   return { pipeline: row.pipeline, executionProfileId: row.executionProfileId, sources, batchArtifactIds: [...row.batchArtifactIds], serviceReferenceArtifactId: row.serviceReferenceArtifactId };
 }
-export function validateRunSubmission(command: RunSubmissionCommand): ReliabilityRequest {
+const metadataFields = ['dispatchDisabled', 'qualificationScope', 'runtimeQualification'];
+function contentMetadata(row: Record<string, unknown>): ContentMetadata {
+  need(row.dispatchDisabled === true && row.qualificationScope === 'REGISTRATION_METADATA_ONLY' && row.runtimeQualification === 'NOT_CHECKED');
+  return { dispatchDisabled: true, qualificationScope: 'REGISTRATION_METADATA_ONLY', runtimeQualification: 'NOT_CHECKED' };
+}
+export function parseContentProfiles(value: unknown, query: RevisionQuery = {}): ManagementPage<ContentProfile> {
+  let previous = '';
+  return parsePage(value, query, (item) => {
+    const row = object(item);
+    fields(row, ['executionProfileId', 'productId', 'pipeline', 'runProfileVersion', 'pipelineVersion', 'sourceProfile', 'inputFormat', 'configurationSha256', 'createdAt', 'supportedSelection', ...metadataFields]);
+    need(isManagementId(row.executionProfileId) && previous < row.executionProfileId); previous = row.executionProfileId;
+    need(row.productId === 'content-intelligence' && row.pipeline === 'CONTENT_RSS_V1' && row.runProfileVersion === 2 && row.pipelineVersion === 1
+      && row.sourceProfile === 'rss-atom-v1' && row.inputFormat === 'RSS_ATOM' && hash(row.configurationSha256));
+    const selection = object(row.supportedSelection); fields(selection, ['freshSourceCount', 'retainedSilverCount', 'publisherReferenceCount']);
+    need(selection.freshSourceCount === 1 && selection.retainedSilverCount === 0 && selection.publisherReferenceCount === 1);
+    return { ...contentMetadata(row), executionProfileId: row.executionProfileId, productId: row.productId, pipeline: row.pipeline,
+      runProfileVersion: 2, pipelineVersion: 1, sourceProfile: row.sourceProfile, inputFormat: row.inputFormat, configurationSha256: row.configurationSha256,
+      createdAt: timestamp(row.createdAt), supportedSelection: { freshSourceCount: 1, retainedSilverCount: 0, publisherReferenceCount: 1 } };
+  });
+}
+function contentParameters(query: ContentDiscoveryQuery): URLSearchParams {
+  if (!isManagementId(query.executionProfileId) || Object.keys(query).some((key) => !['executionProfileId', 'limit', 'cursor'].includes(key))) throw new ManagementError('invalid-request');
+  const search = parameters(query); search.set('executionProfileId', query.executionProfileId); return search;
+}
+export function parseContentSources(value: unknown, query: ContentDiscoveryQuery): ManagementPage<ContentSource> {
+  contentParameters(query); let previous = '';
+  return parsePage(value, query, (item) => {
+    const row = object(item);
+    fields(row, ['executionProfileId', 'productId', 'pipeline', 'sourceId', 'revision', 'sourceProfile', 'configurationSha256', ...metadataFields]);
+    need(row.executionProfileId === query.executionProfileId && row.productId === 'content-intelligence' && row.pipeline === 'CONTENT_RSS_V1'
+      && isSourceId(row.sourceId) && previous < row.sourceId && revisionNumber(row.revision) && row.sourceProfile === 'rss-atom-v1' && hash(row.configurationSha256));
+    previous = row.sourceId;
+    return { ...contentMetadata(row), executionProfileId: row.executionProfileId, productId: row.productId, pipeline: row.pipeline,
+      sourceId: row.sourceId, revision: row.revision, sourceProfile: row.sourceProfile, configurationSha256: row.configurationSha256 };
+  });
+}
+export function parsePublisherReferences(value: unknown, query: ContentDiscoveryQuery): ManagementPage<PublisherReference> {
+  contentParameters(query); let previous = '';
+  return parsePage(value, query, (item) => {
+    const row = object(item);
+    fields(row, ['artifactId', 'productId', 'kind', 'role', 'contractVersion', 'processorRevision', 'nativeFormat', 'storageBindingId', 'nativeFingerprint', 'verifiedAt', 'identity', ...metadataFields]);
+    need(isManagementId(row.artifactId) && previous < row.artifactId); previous = row.artifactId;
+    need(row.productId === 'content-intelligence' && row.kind === 'PUBLISHER_REFERENCE' && row.role === 'PUBLISHER_REFERENCE'
+      && row.contractVersion === 1 && row.processorRevision === 1 && row.nativeFormat === null && token(row.storageBindingId) && hash(row.nativeFingerprint));
+    const identity = object(row.identity); fields(identity, ['referenceId', 'revision']);
+    need(typeof identity.referenceId === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(identity.referenceId)
+      && typeof identity.revision === 'string' && /^[a-z0-9][a-z0-9_-]{0,31}$/.test(identity.revision));
+    return { ...contentMetadata(row), artifactId: row.artifactId, productId: row.productId, kind: row.kind, role: row.role, contractVersion: 1,
+      processorRevision: 1, nativeFormat: null, storageBindingId: row.storageBindingId, nativeFingerprint: row.nativeFingerprint,
+      verifiedAt: timestamp(row.verifiedAt), identity: { referenceId: identity.referenceId, revision: identity.revision } };
+  });
+}
+/** The UI deliberately supports only the narrow one-source, zero-retained-Silver contract. */
+export function parseContentRequest(value: unknown): ContentRequest {
+  const row = object(value); fields(row, ['pipeline', 'executionProfileId', 'fetchSources', 'retainedSilverArtifactIds', 'publisherReferenceArtifactId']);
+  need(row.pipeline === 'CONTENT_RSS_V1' && isManagementId(row.executionProfileId) && isManagementId(row.publisherReferenceArtifactId));
+  need(Array.isArray(row.fetchSources) && row.fetchSources.length === 1 && Array.isArray(row.retainedSilverArtifactIds) && row.retainedSilverArtifactIds.length === 0);
+  const source = object(row.fetchSources[0]); fields(source, ['sourceId', 'revision']); need(isSourceId(source.sourceId) && revisionNumber(source.revision));
+  return { pipeline: row.pipeline, executionProfileId: row.executionProfileId, fetchSources: [{ sourceId: source.sourceId, revision: source.revision }],
+    retainedSilverArtifactIds: [], publisherReferenceArtifactId: row.publisherReferenceArtifactId };
+}
+export function validateRunSubmission(command: RunSubmissionCommand): RunRequest {
   need(command && Object.keys(command).length === 2 && token(command.key) && typeof command.body === 'string' && command.body.length <= 16384);
-  return parseReliabilityRequest(JSON.parse(command.body));
+  const request: unknown = JSON.parse(command.body);
+  return object(request).pipeline === 'CONTENT_RSS_V1' ? parseContentRequest(request) : parseReliabilityRequest(request);
 }
 
 const summaryFields = ['productId', 'sourceId', 'displayName', 'enabled', 'currentRevision', 'rowVersion', 'configSha256', 'createdAt', 'updatedAt'];
@@ -672,6 +757,17 @@ export async function fetchReliabilityProfiles(query: RevisionQuery, signal: Abo
 export async function fetchReliabilityArtifacts(query: ArtifactsQuery, signal: AbortSignal): Promise<ManagementPage<ReliabilityArtifact>> {
   return read(`/api/management/v1/artifacts?${artifactParameters(query)}`, signal, (body) => parseReliabilityArtifacts(body, query));
 }
+export async function fetchContentProfiles(query: RevisionQuery, signal: AbortSignal): Promise<ManagementPage<ContentProfile>> {
+  const search = parameters(query); search.set('pipeline', 'CONTENT_RSS_V1');
+  return read(`/api/management/v1/execution-profiles?${search}`, signal, (body) => parseContentProfiles(body, query));
+}
+export async function fetchContentSources(query: ContentDiscoveryQuery, signal: AbortSignal): Promise<ManagementPage<ContentSource>> {
+  return read(`/api/management/v1/execution-profile-sources?${contentParameters(query)}`, signal, (body) => parseContentSources(body, query));
+}
+export async function fetchPublisherReferences(query: ContentDiscoveryQuery, signal: AbortSignal): Promise<ManagementPage<PublisherReference>> {
+  const search = contentParameters(query); search.set('role', 'PUBLISHER_REFERENCE');
+  return read(`/api/management/v1/artifacts?${search}`, signal, (body) => parsePublisherReferences(body, query));
+}
 export class RunSubmissionError extends Error {
   constructor(public readonly status: number | null, public readonly code: string | null, public readonly correlationId: string | null,
     public readonly retryable: boolean | null, public readonly ambiguous: boolean) {
@@ -698,10 +794,12 @@ export async function sendRunSubmission(command: RunSubmissionCommand, signal: A
     need(response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() === 'application/json');
     const body: unknown = await response.json(), { row } = recordEnvelope(body); need(isManagementId(row.runId));
     const receipt = parseRunDetail(body, row.runId, response.headers.get('ETag'));
-    need(receipt.data.pipeline === 'RELIABILITY_V2' && receipt.data.productId === 'application-reliability');
+    const content = request.pipeline === 'CONTENT_RSS_V1';
+    need(receipt.data.pipeline === request.pipeline && receipt.data.productId === (content ? 'content-intelligence' : 'application-reliability'));
     const sortSources = (sources: ReliabilityRequest['sources']) => [...sources].sort((a, b) => a.sourceId < b.sourceId ? -1 : a.sourceId > b.sourceId ? 1 : 0);
-    need(JSON.stringify(receipt.data.sourceRevisions) === JSON.stringify(sortSources(request.sources)));
-    need(JSON.stringify([...receipt.data.inputArtifactIds].sort()) === JSON.stringify([...request.batchArtifactIds, request.serviceReferenceArtifactId].sort()));
+    need(JSON.stringify(receipt.data.sourceRevisions) === JSON.stringify(sortSources(content ? request.fetchSources : request.sources)));
+    const inputs = content ? [request.publisherReferenceArtifactId] : [...request.batchArtifactIds, request.serviceReferenceArtifactId];
+    need(JSON.stringify([...receipt.data.inputArtifactIds].sort()) === JSON.stringify(inputs.sort()));
     const expected = `/api/management/v1/runs/${receipt.data.runId}`, location = response.headers.get('Location'); need(location !== null);
     const url = new URL(location, window.location.origin);
     need(url.origin === window.location.origin && url.pathname === expected && !url.search && !url.hash && !url.username && !url.password);

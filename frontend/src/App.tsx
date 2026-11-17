@@ -10,6 +10,7 @@ import { useAnalytics } from './useAnalytics';
 import { SourceRegistration } from './operations/SourceEditor';
 import { SourceCommandPanel } from './operations/SourceCommandPanel';
 import { ReliabilitySubmission } from './operations/ReliabilitySubmission';
+import { ContentSubmission } from './operations/ContentSubmission';
 import { RetryRunPanel } from './operations/RetryRunPanel';
 import { CancelRunPanel } from './operations/CancelRunPanel';
 import { RunSubmissionPanel } from './operations/RunSubmissionPanel';
@@ -25,7 +26,8 @@ export function App() {
   const inspection = typeof route === 'object' && route.kind === 'run-detail' ? route : null;
   const executionContext = executions ?? inspection;
   const sourceArea = route === 'sources' || route === 'source-new' || !!source;
-  const submission = route === 'run-submit';
+  const reliabilitySubmission = route === 'run-submit', contentSubmission = route === 'content-submit';
+  const submission = reliabilitySubmission || contentSubmission;
   const operations = !!(sourceArea || executionContext || submission);
   const model = useAnalytics(route === 'analytics');
   const content = useContent(route === 'content');
@@ -33,7 +35,7 @@ export function App() {
   const analyticsArea = route === 'analytics' || route === 'content' || route === 'reliability';
   const previousRoute = useRef(route);
   const section = route === 'analytics' ? analyticsViews.find((item) => item.id === model.view)!.label
-    : route === 'content' ? content.report === 'catalog' ? 'Enriched Content catalog' : content.report === 'source_discovery_daily' ? 'Daily source discovery' : 'Publisher reference coverage' : route === 'reliability' ? `Reliability ${reliability.report === 'request-windows' ? 'request windows' : reliability.report === 'input-coverage' ? 'input coverage' : 'reference coverage'}` : source ? 'Source detail' : route === 'source-new' ? 'Register source' : submission ? 'Submit Reliability Run' : inspection ? 'Run detail' : executions ? 'Executions' : route === 'sources' ? 'Sources' : 'Page not found';
+    : route === 'content' ? content.report === 'catalog' ? 'Enriched Content catalog' : content.report === 'source_discovery_daily' ? 'Daily source discovery' : 'Publisher reference coverage' : route === 'reliability' ? `Reliability ${reliability.report === 'request-windows' ? 'request windows' : reliability.report === 'input-coverage' ? 'input coverage' : 'reference coverage'}` : source ? 'Source detail' : route === 'source-new' ? 'Register source' : contentSubmission ? 'Submit Queued Content Run' : reliabilitySubmission ? 'Submit Reliability Run' : inspection ? 'Run detail' : executions ? 'Executions' : route === 'sources' ? 'Sources' : 'Page not found';
   useEffect(() => {
     document.title = `${section} | DDIP`;
   }, [section]);
@@ -51,7 +53,8 @@ export function App() {
     {operations && <nav className="operations-navigation" aria-label="Operations views">
       <a href="#/operations/sources" aria-current={sourceArea ? 'page' : undefined}>Sources</a>
       <a href="#/operations/executions" aria-current={executionContext ? 'page' : undefined}>Executions</a>
-      <a href="#/operations/submit" aria-current={submission ? 'page' : undefined}>Submit Reliability Run</a>
+      <a href="#/operations/submit" aria-current={reliabilitySubmission ? 'page' : undefined}>Submit Reliability Run</a>
+      <a href="#/operations/submit/content" aria-current={contentSubmission ? 'page' : undefined}>Submit Queued Content Run</a>
     </nav>}
     <SourceCommandPanel key={JSON.stringify(route)} visible={operations} />
     <RunSubmissionPanel visible={operations} />
@@ -63,7 +66,8 @@ export function App() {
     <div hidden={route !== 'reliability'}><ReliabilityWorkspace model={reliability} /></div>
     <div hidden={route !== 'sources'}><SourceList active={route === 'sources'} /></div>
     {route === 'source-new' && <SourceRegistration />}
-    {submission && <ReliabilitySubmission />}
+    {reliabilitySubmission && <ReliabilitySubmission />}
+    {contentSubmission && <ContentSubmission />}
     {source && <SourceDetail key={`${source.productId}:${source.sourceId}`} identity={source} />}
     {executionContext && <div hidden={!executions}><RunList key={JSON.stringify(executionContext.query)} query={executionContext.query} active={!!executions} /></div>}
     {inspection && <RunDetail key={inspection.runId} runId={inspection.runId} returnQuery={inspection.query} />}

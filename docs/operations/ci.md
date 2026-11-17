@@ -17,6 +17,18 @@ The [November 4 hosted evidence](ci-hosted-evidence-2026-11-04.md) records succe
 full main runs and measured Gold/Content recovery headroom. It supersedes earlier pending hosted
 acceptance statements for those workflow changes, without claiming full-regression speed or cost savings.
 
+## Content submission HTTP parity
+
+PostgreSQL native publication generates `services/content-api/target/content-submission-http.json` from
+`NarrowContentSubmissionDiscoveryIT`: real scoped metadata, a current source recheck, genuine
+Content HTTP 202/QUEUED admission, same-key replay and history, without a worker or feed request.
+The native publication job runs two mandatory frontend parser/UI cases with
+`DDIP_CONTENT_SUBMISSION_HTTP_FIXTURES`; a missing or invalid generated file fails. Local frontend-only
+runs may skip this separate fixture suite. It demonstrates DTO/UI compatibility with isolated queue
+admission, not public execution or live-browser acceptance. Existing partition membership, timeouts,
+required contexts and selection policy are unchanged. See the
+[E5.3 record](e53-content-queued-submission-ui.md).
+
 ## Reliability native parser parity
 
 The analytics HTTP job also generates both-format Reliability coverage fixtures, compares all

@@ -95,6 +95,19 @@ jobs:
             "-Dit.test=$selection" "-DskipUnitTests=$skip_units"
           python3 .github/ci/postgres_partitions.py --partition "$POSTGRES_PARTITION" \
             --reports services/content-api/target/failsafe-reports
+      - name: Set up Node for Content submission HTTP contract parity
+        if: ${{ inputs.partition == 'native_publication' }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install pinned frontend dependencies for Content admission parity
+        if: ${{ inputs.partition == 'native_publication' }}
+        run: npm ci --prefix frontend --ignore-scripts --no-audit --no-fund
+      - name: Verify actual queued Content HTTP metadata and receipt through the UI
+        if: ${{ inputs.partition == 'native_publication' }}
+        run: DDIP_CONTENT_SUBMISSION_HTTP_FIXTURES=../services/content-api/target/content-submission-http.json npm --prefix frontend test -- contentSubmissionNativeParity.test.tsx
       - name: Remove isolated Bronze acceptance storage
         if: ${{ always() && (inputs.partition == 'ingestion' || inputs.partition == 'gold' || inputs.partition == 'content_recovery' || inputs.partition == 'native_fetch_recovery' || inputs.partition == 'native_bronze' || inputs.partition == 'native_publication' || inputs.partition == 'native_pipeline_recovery') }}
         run: docker rm --force --volumes "ddip-ci-bronze-${POSTGRES_PARTITION}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" || true

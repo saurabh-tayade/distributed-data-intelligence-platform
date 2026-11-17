@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
 import { fetchReliabilityArtifacts, fetchReliabilityProfiles, fetchSource, fetchSources, ManagementError, parseReliabilityRequest } from '../managementApi';
-import type { ManagementPage, ReliabilityArtifact, ReliabilityBatch, ReliabilityProfile, RevisionQuery, ServiceReference, SourceRecord, SourceSummary } from '../managementApi';
+import type { ReliabilityArtifact, ReliabilityBatch, ReliabilityProfile, RevisionQuery, ServiceReference, SourceRecord, SourceSummary } from '../managementApi';
 import { Timestamp } from '../components/Timestamp';
-import { InspectionError } from './InspectionError';
 import { ManagementErrorDetails } from './ManagementErrorDetails';
 import { reviewRunSubmission, useRunIntent } from './runIntent';
-import { useSubmissionPage } from './useSubmissionPage';
+import { SubmissionCatalog as Catalog } from './SubmissionCatalog';
 
 export function batchMatches(profile: ReliabilityProfile, sources: SourceRecord[], batch: ReliabilityBatch): boolean {
   const source = sources.find((item) => item.sourceId === batch.identity.sourceId);
@@ -26,25 +24,6 @@ export function selectionErrors(profile: ReliabilityProfile | null, sources: Sou
   return errors;
 }
 
-function Catalog<T>({ title, scope, active, load, empty, children }: {
-  title: string; scope: string; active: boolean; load: (query: RevisionQuery, signal: AbortSignal) => Promise<ManagementPage<T>>;
-  empty: string; children: (rows: T[]) => ReactNode;
-}) {
-  const model = useSubmissionPage(scope, active, load), current = model.current;
-  return <section className="panel submission-catalog" aria-label={title}>
-    <h2>{title}</h2>
-    <button type="button" className="secondary-button" disabled={!active} onClick={model.refresh}>Refresh {title.toLowerCase()}</button>
-    {active && current === null && <p role="status">Loading {title.toLowerCase()}…</p>}
-    {active && current?.status === 'error' && <InspectionError title={`Unable to load ${title.toLowerCase()}`} error={current.error} retry={model.retry} restart={model.refresh} />}
-    {active && current?.status === 'ready' && (current.page.data.length ? children(current.page.data) : <p role="status">{empty}</p>)}
-    <nav className="source-pagination" aria-label={`${title} pages`}>
-      <button type="button" className="secondary-button" disabled={!active || !current || !model.canGoBack} onClick={model.back}>Previous {title.toLowerCase()}</button>
-      {current?.status === 'ready' && <p role="status">{current.page.data.length} returned · {current.page.meta.hasMore ? 'More available' : 'End of results'}</p>}
-      <button type="button" className="secondary-button" disabled={!active || current?.status !== 'ready' || !current.page.meta.hasMore} onClick={model.next}>Next {title.toLowerCase()}</button>
-    </nav>
-    {model.truncated && <p>Only the latest 20 cursor positions are retained. Refresh to restart from the first page.</p>}
-  </section>;
-}
 function ArtifactMetadata({ artifact }: { artifact: ReliabilityArtifact }) {
   return <details><summary>Historical registration metadata</summary><dl className="source-metadata">
     <div><dt>Contract / processor</dt><dd>{artifact.contractVersion} / {artifact.processorRevision}</dd></div>

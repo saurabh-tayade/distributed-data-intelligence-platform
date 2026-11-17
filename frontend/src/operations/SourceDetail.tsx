@@ -46,7 +46,11 @@ export function SourceDetail({ identity }: { identity: SourceIdentity }) {
       <p className="page-description">{productLabel(identity.productId)} <span aria-hidden="true">/</span> <code>{identity.sourceId}</code></p>
     </div><button className="secondary-button" type="button" onClick={model.refresh}>Refresh source and revisions</button></div>
     <div className="source-action-buttons"><a className="secondary-button" href={executionsHref(identity)}>View executions for this source</a>
-      {source?.productId === 'application-reliability' && source.enabled && <a className="primary-button" href="#/operations/submit">Choose Reliability inputs</a>}</div>
+      {source?.productId === 'application-reliability' && source.enabled && <a className="primary-button" href="#/operations/submit">Choose Reliability inputs</a>}
+      {source?.productId === 'content-intelligence' && source.enabled && source.config.profile === 'rss-atom-v1'
+        && <a className="primary-button" href="#/operations/submit/content">Choose queued Content inputs</a>}</div>
+    {source?.productId === 'content-intelligence' && <p className="inspection-note">Choose a registered compatible Content profile, then deliberately select a current source revision and imported publisher reference.
+      Inputs are not preselected from this page. Public execution remains unqualified; queue admission may leave a run queued indefinitely.</p>}
     <p className="scope-notice">Enabled is an admission gate, not health or revision approval. A registered source does not imply ingestion or processing. Content dispatch is not activated here.</p>
     {source?.productId === 'application-reliability' && <p className="inspection-note">{source.enabled
       ? 'Next: choose an approved execution profile, then deliberately select this source and batches matching its current revision. Inputs are not preselected from this page.'

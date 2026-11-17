@@ -305,6 +305,7 @@ describe('workspace navigation and independent Analytics session', () => {
     expect(within(screen.getByRole('navigation', { name: 'Operations views' })).getByRole('link', { name: 'Sources' })).toHaveFocus();
     await user.tab(); expect(screen.getByRole('link', { name: 'Executions' })).toHaveFocus();
     await user.tab(); expect(screen.getByRole('link', { name: 'Submit Reliability Run' })).toHaveFocus();
+    await user.tab(); expect(screen.getByRole('link', { name: 'Submit Queued Content Run' })).toHaveFocus();
     await user.tab(); expect(screen.getByRole('link', { name: 'Register source' })).toHaveFocus();
     await user.tab(); expect(screen.getByRole('link', { name: 'Choose Reliability inputs' })).toHaveFocus();
     await user.tab(); expect(screen.getByRole('combobox', { name: 'Product' })).toHaveFocus();
