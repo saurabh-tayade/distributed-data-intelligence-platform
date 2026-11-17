@@ -2,6 +2,8 @@ import { useSyncExternalStore } from 'react';
 import { isManagementId, RUN_STATES, validateRunSubmission } from '../managementApi';
 import type { RunState, RunSubmissionCommand, RunSubmissionResponse } from '../managementApi';
 
+// Keep the original tab slot and v1 envelope: legacy Reliability bytes remain valid without migration.
+// The exact command body's pipeline discriminates Content from Reliability.
 export const RUN_INTENT_KEY = 'ddip.reliability-run-intent.v1';
 const EVENT = 'ddip-run-intent';
 export interface RunIntent {

@@ -154,3 +154,5 @@ semantics and does not activate a launcher, receipt commit or ordinary Content d
 - [0049: Inactive bounded public FETCH and immutable Content composition v2](0049-inactive-bounded-public-content-composition.md)
 
 - [0050: Original-only managed Content worker lifecycle](0050-original-only-content-worker-lifecycle.md)
+
+- [0051: Explicit queued Content submission UI](0051-explicit-queued-content-submission-ui.md)

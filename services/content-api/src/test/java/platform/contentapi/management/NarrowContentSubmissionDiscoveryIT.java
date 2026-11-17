@@ -23,7 +23,7 @@ class NarrowContentSubmissionDiscoveryIT extends NarrowContentPipelineFixtures {
     DiscoveryRepository discovery(){return new DiscoveryRepository(jdbc,tx,INSTALL,catalog,new SourceCursor(KEY));}
     @Override void start(){
         // Preserve the real boundary and advice while using the fixture's reviewed loopback catalog.
-        mvc=MockMvcBuilders.standaloneSetup(new DiscoveryController(discovery()),new RunController(runs,new RunHistoryRepository(jdbc,tx,new SourceCursor(KEY))))
+        mvc=MockMvcBuilders.standaloneSetup(new DiscoveryController(discovery()),new SourceController(sources,catalog),new RunController(runs,new RunHistoryRepository(jdbc,tx,new SourceCursor(KEY))))
                 .setControllerAdvice(new SourceAdvice()).addFilters(new ManagementBoundary(new ManagementConfiguration.LocalPolicy(Set.of(origin),Set.of(host)))).build();
     }
     ObjectNode narrow(){var n=content();n.withArray("retainedSilverArtifactIds").removeAll();return n;}
@@ -58,6 +58,35 @@ class NarrowContentSubmissionDiscoveryIT extends NarrowContentPipelineFixtures {
         code(http(postRun(narrow().put("publisherReferenceArtifactId",SERVICE),"wrong-reference")),400,"INVALID_ARGUMENT");
         var accepted=http(postRun(narrow(),"accepted"));assertThat(accepted.getResponse().getStatus()).isEqualTo(202);assertThat(body(accepted).get("data").get("state").stringValue()).isEqualTo("QUEUED");
         assertThat(count("run_sources")).isEqualTo(1);assertThat(count("run_inputs")).isEqualTo(1);noEffects();
+    }
+    @Test void queuedContentUiFixtureUsesDiscoveredSelectionAndGenuineAdmissionWithoutWorker()throws Exception {
+        receipt(PUB);
+        var before=metadata();var fixture=SourceJson.object();
+        var profiles=choices(CONTENT_PROFILES);fixture.set("profiles",profiles);
+        var profile=profiles.get("data").get(0);String profileId=profile.get("executionProfileId").stringValue();
+        var candidates=choices("/api/management/v1/execution-profile-sources?executionProfileId="+profileId);fixture.set("sources",candidates);
+        var candidate=candidates.get("data").get(0);String sourceId=candidate.get("sourceId").stringValue();
+        var references=choices("/api/management/v1/artifacts?executionProfileId="+profileId+"&role=PUBLISHER_REFERENCE");fixture.set("references",references);
+        var current=http(get("/api/management/v1/sources/"+CONTENT+"/"+sourceId));assertThat(current.getResponse().getStatus()).isEqualTo(200);
+        fixture.set("sourceRecord",body(current));fixture.put("sourceEtag",current.getResponse().getHeader("ETag"));
+        assertThat(body(current).get("data").get("enabled").booleanValue()).isTrue();
+        assertThat(body(current).get("data").get("currentRevision").intValue()).isEqualTo(candidate.get("revision").intValue());
+        assertThat(metadata()).isEqualTo(before);noEffects();
+        var request=SourceJson.object().put("pipeline","CONTENT_RSS_V1").put("executionProfileId",profileId);
+        request.putArray("fetchSources").addObject().put("sourceId",sourceId).put("revision",candidate.get("revision").intValue());
+        request.putArray("retainedSilverArtifactIds");request.put("publisherReferenceArtifactId",references.get("data").get(0).get("artifactId").stringValue());
+        fixture.set("request",request);fixture.put("key","e53-ui-fixture");
+        var accepted=http(postRun(request,"e53-ui-fixture"));assertThat(accepted.getResponse().getStatus()).isEqualTo(202);
+        var admission=body(accepted);fixture.set("admission",admission);fixture.put("etag",accepted.getResponse().getHeader("ETag"));fixture.put("location",accepted.getResponse().getHeader("Location"));
+        assertThat(admission.get("data").get("state").stringValue()).isEqualTo("QUEUED");
+        assertThat(count("runs")).isEqualTo(1);assertThat(count("run_sources")).isEqualTo(1);assertThat(count("run_inputs")).isEqualTo(1);
+        assertThat(count("worker_instances")).isZero();noEffects();
+        var replay=http(postRun(request,"e53-ui-fixture"));assertThat(replay.getResponse().getStatus()).isEqualTo(202);
+        assertThat(body(replay).get("data")).isEqualTo(admission.get("data"));assertThat(count("runs")).isEqualTo(1);
+        var history=choices("/api/management/v1/runs?productId="+CONTENT+"&sourceId="+sourceId);fixture.set("history",history);
+        assertThat(history.get("data").size()).isEqualTo(1);assertThat(history.get("data").get(0).get("runId")).isEqualTo(admission.get("data").get("runId"));
+        assertThat(jdbc.queryForList("SELECT to_jsonb(t)::text FROM ddip_management.coordinator t ORDER BY to_jsonb(t)::text",String.class)).isEqualTo(before.get("coordinator"));noEffects();
+        var target=java.nio.file.Path.of("target/content-submission-http.json");Files.createDirectories(target.getParent());Files.write(target,SourceJson.canonical(fixture));
     }
     @Test void oldV2ProfileStillAcceptsRetainedSilverAndKeepsOriginalBytes() {
         String legacy=UUID.randomUUID().toString();jdbc.update("INSERT INTO ddip_management.execution_profiles(profile_id,configuration_bytes,configuration_sha256) SELECT ?,configuration_bytes,configuration_sha256 FROM ddip_management.execution_profiles WHERE profile_id=?",legacy,CONTENT_PROFILE);

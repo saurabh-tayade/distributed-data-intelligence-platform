@@ -392,7 +392,7 @@ start a worker to populate execution history. Tear down only the disposable reso
 
 Choose **Submit Reliability Run** in Operations, or open `#/operations/submit` directly.
 This form uses the existing [Reliability discovery contracts](../docs/operations/reliability-submission-discovery.md)
-and `POST /api/management/v1/runs`. Content submission remains unavailable.
+and `POST /api/management/v1/runs`. The separate [E5.3 Content journey](#e53--explicit-queued-content-submission) shares its retained-intent safeguards.
 
 1. Select a registered `RELIABILITY_V2` execution profile and its input format.
 2. Select 1–32 enabled `application-reliability` sources. The UI checks each current
@@ -887,3 +887,36 @@ Browser host and supported disposable-demo prerequisites were unavailable during
 no existing installation was adopted or removed. #53 and the joint #145 browser review remain
 open. Ordinary Content execution remains disabled; no backend, processing, schema, identity,
 selection, upload or recovery capability is added by R1.1.
+
+## E5.3 — Explicit queued Content submission
+
+Choose **Submit Queued Content Run** in Operations, or `#/operations/submit/content`. An enabled
+RSS/Atom source detail offers **Choose queued Content inputs** without preselecting inputs. Select
+one registered Content execution profile, one compatible current source revision and one imported
+publisher-reference artifact; retained Silver is fixed at zero. Current source admission, revision
+and configuration digest are rechecked before freezing the exact request.
+
+Discovery is explicitly `REGISTRATION_METADATA_ONLY`, with `runtimeQualification: "NOT_CHECKED"`
+and `dispatchDisabled: true`. It does not establish installed-runtime readiness or worker operation.
+Review performs no POST. A new Content confirmation requires acknowledgment that public execution
+has not completed operational qualification, admission does not start or guarantee processing,
+a run may remain queued indefinitely and consumes shared unfinished capacity (20 total), a separately
+approved compatible worker could claim it later, and successful processing does not automatically
+change the Analytics publication selected for reading.
+
+Content and Reliability use the same original `ddip.reliability-run-intent.v1` tab entry and one mounted
+review/receipt panel. Existing Reliability intent bytes remain valid without migration. A pending or
+uncertain request prevents another intent in either product. Refresh/navigation retain the original
+key and exact body; **Resolve same run request** deliberately replays them without repeating the
+new-request acknowledgment or rediscovering dependencies. There is no automatic retry. A malformed
+or mismatched HTTP 202 remains uncertain. A valid receipt shows the actual persisted state and
+**Open admitted run** for existing execution inspection/history.
+
+The [operator and verification record](../docs/operations/e53-content-queued-submission-ui.md) covers
+selection, failure handling, fixture parity, commands and separate manual-browser acceptance.
+The full frontend run includes existing Reliability tests. PostgreSQL core CI additionally requires
+`contentSubmissionNativeParity.test.tsx` against genuine isolated backend discovery and queued
+HTTP 202 responses; local frontend-only runs skip that suite without the generated fixture.
+No worker startup, public-feed execution, backend schema, new dependency or Analytics selection is
+introduced. Public qualification (#47), general UI polish (#145) and browser/release acceptance (#53)
+remain separate.

@@ -3,7 +3,7 @@ import { isManagementId, isSourceIdentity, runsParameters } from './managementAp
 import type { RunsQuery, SourceIdentity } from './managementApi';
 
 export type ExecutionFilters = Omit<RunsQuery, 'cursor'>;
-export type WorkspaceRoute = 'analytics' | 'content' | 'reliability' | 'sources' | 'source-new' | 'run-submit' | 'not-found' | (SourceIdentity & { kind: 'source-detail' })
+export type WorkspaceRoute = 'analytics' | 'content' | 'reliability' | 'sources' | 'source-new' | 'run-submit' | 'content-submit' | 'not-found' | (SourceIdentity & { kind: 'source-detail' })
   | { kind: 'executions'; query: ExecutionFilters } | { kind: 'run-detail'; runId: string; query: ExecutionFilters };
 
 /** Only the four supported execution filters live in the hash; cursors stay in memory. */
@@ -42,6 +42,7 @@ export function parseWorkspaceRoute(hash: string): WorkspaceRoute {
   if (hash === '#/operations' || hash === '#/operations/sources') return 'sources';
   if (hash === '#/operations/sources/new') return 'source-new';
   if (hash === '#/operations/submit') return 'run-submit';
+  if (hash === '#/operations/submit/content') return 'content-submit';
   const executions = /^#\/operations\/executions(?:\?([^#]*))?$/.exec(hash);
   if (executions) {
     const query = executionQuery(executions[1]); return query ? { kind: 'executions', query } : 'not-found';

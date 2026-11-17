@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { parseReliabilityRequest, RunSubmissionError, sendRunSubmission } from '../managementApi';
+import { validateRunSubmission, RunSubmissionError, sendRunSubmission } from '../managementApi';
 import { runHref } from '../navigation';
 import { ManagementErrorDetails } from './ManagementErrorDetails';
 import { confirmedRunIntent, readRunIntent, saveRunIntent, useRunIntent } from './runIntent';
@@ -21,8 +21,11 @@ function explanation(status: number | null) {
 export function RunSubmissionPanel({ visible }: { visible: boolean }) {
   const { intent, unavailable } = useRunIntent();
   const [busy, setBusy] = useState(false), [storageError, setStorageError] = useState(false);
+  const [acknowledgedKey, setAcknowledgedKey] = useState<string | null>(null);
   const controller = useRef<AbortController | null>(null), heading = useRef<HTMLHeadingElement>(null);
   const key = intent?.command.key;
+  const selection = intent ? validateRunSubmission(intent.command) : null;
+  const content = selection?.pipeline === 'CONTENT_RSS_V1';
   useEffect(() => { if (visible && key) heading.current?.focus(); }, [key, visible]);
   useEffect(() => () => {
     controller.current?.abort(); controller.current = null;
@@ -35,8 +38,9 @@ export function RunSubmissionPanel({ visible }: { visible: boolean }) {
   }
   async function submit() {
     if (controller.current || !intent || !['review', 'uncertain', 'pending'].includes(intent.phase)) return;
+    if (content && intent.phase === 'review' && acknowledgedKey !== intent.command.key) return;
     const original = intent, abort = new AbortController(); controller.current = abort; setBusy(true);
-    const current = () => { try { return !abort.signal.aborted && readRunIntent()?.command.key === original.command.key; } catch { return false; } };
+    const current = () => { try { const saved = readRunIntent(); return !abort.signal.aborted && saved?.command.key === original.command.key && saved.command.body === original.command.body; } catch { return false; } };
     try {
       if (!retain({ version: 1, command: original.command, phase: 'pending' })) return;
       const response = await sendRunSubmission(original.command, abort.signal);
@@ -52,23 +56,29 @@ export function RunSubmissionPanel({ visible }: { visible: boolean }) {
   if (!visible) return null;
   if (unavailable) return <div className="state-panel error-state" role="alert"><h2>Run submission unavailable</h2>
     <p>Tab storage is unavailable or contains an invalid unresolved run intent. Preserve it for operator inspection. New run submissions are disabled.</p></div>;
-  if (!intent) return null;
+  if (!intent || !selection) return null;
   const { command, phase, error, receipt } = intent;
-  const selection = parseReliabilityRequest(JSON.parse(command.body));
   return <section className="panel source-action-review" aria-labelledby="run-review-title" aria-busy={busy}>
-    <h2 id="run-review-title" ref={heading} tabIndex={-1}>{phase === 'review' ? 'Review Reliability run' : 'Reliability submission receipt'}</h2>
-    <p>Pipeline: <strong>RELIABILITY_V2</strong> · Product: Application Reliability.</p>
-    <p>Review all immutable identifiers and source revisions below. Admission does not start a worker or activate Analytics results. Subsequent processing depends on the configured Reliability worker.</p>
+    <h2 id="run-review-title" ref={heading} tabIndex={-1}>{phase === 'review' ? `Review ${content ? 'Content' : 'Reliability'} run` : `${content ? 'Content' : 'Reliability'} submission receipt`}</h2>
+    <p>Pipeline: <strong>{selection.pipeline}</strong> · Product: {content ? 'Content Intelligence' : 'Application Reliability'}.</p>
+    {content ? <aside className="scope-notice" aria-label="Content queue limitations">
+      <p>Public Content execution has not completed operational qualification. Queue admission does not start or guarantee processing.</p>
+      <p>This run may remain queued indefinitely and consumes shared unfinished-run capacity (20 total). A separately approved compatible worker could claim it in the future.</p>
+      <p>Successful processing does not automatically change the Analytics publication selected for reading. The backend remains authoritative for admission, capacity, validation and execution controls.</p>
+      <p>Discovery qualification: REGISTRATION_METADATA_ONLY · Runtime qualification: NOT_CHECKED · Dispatch disabled: true. Registration does not prove installed-runtime readiness or that a worker is operating.</p>
+    </aside> : <p>Review all immutable identifiers and source revisions below. Admission does not start a worker or activate Analytics results. Subsequent processing depends on the configured Reliability worker.</p>}
     <section aria-label="Frozen selection summary">
       <h3>Frozen selection</h3>
       <dl className="source-metadata">
         <div><dt>Execution profile</dt><dd><code>{selection.executionProfileId}</code></dd></div>
-        <div><dt>Selected input batches</dt><dd>{selection.batchArtifactIds.length}</dd></div>
-        <div><dt>Captured source revisions</dt><dd><ul className="inspection-references">{selection.sources.map((source) => <li key={source.sourceId}>
+        {selection.pipeline === 'RELIABILITY_V2' ? <div><dt>Selected input batches</dt><dd>{selection.batchArtifactIds.length}</dd></div>
+          : <div><dt>Retained Silver artifacts</dt><dd>0</dd></div>}
+        <div><dt>Captured source revisions</dt><dd><ul className="inspection-references">{(selection.pipeline === 'CONTENT_RSS_V1' ? selection.fetchSources : selection.sources).map((source) => <li key={source.sourceId}>
           <code>{source.sourceId}</code> · revision {source.revision}</li>)}</ul></dd></div>
-        <div><dt>Service-reference artifact</dt><dd><code>{selection.serviceReferenceArtifactId}</code></dd></div>
+        {selection.pipeline === 'CONTENT_RSS_V1' ? <div><dt>Publisher-reference artifact</dt><dd><code>{selection.publisherReferenceArtifactId}</code></dd></div>
+          : <div><dt>Service-reference artifact</dt><dd><code>{selection.serviceReferenceArtifactId}</code></dd></div>}
       </dl>
-      <details><summary>Selected batch artifact IDs</summary><ul className="inspection-references">{selection.batchArtifactIds.map((id) => <li key={id}><code>{id}</code></li>)}</ul></details>
+      {selection.pipeline === 'RELIABILITY_V2' && <details><summary>Selected batch artifact IDs</summary><ul className="inspection-references">{selection.batchArtifactIds.map((id) => <li key={id}><code>{id}</code></li>)}</ul></details>}
     </section>
     <p>Idempotency key: <code>{command.key}</code></p>
     <details><summary>Complete frozen submission</summary><pre className="source-request-body">{JSON.stringify(JSON.parse(command.body), null, 2)}</pre></details>
@@ -80,8 +90,11 @@ export function RunSubmissionPanel({ visible }: { visible: boolean }) {
       <p>Run ETag: <code>{receipt.etag}</code> · Reference: <code>{receipt.correlationId}</code></p>
       <a className="primary-button" href={runHref(receipt.runId)}>Open admitted run</a></div>}
     {storageError && <p role="alert">Tab storage could not be updated. Preserve the original request in this tab; do not start another intent.</p>}
+    {content && phase === 'review' && <label className="scope-notice"><input type="checkbox" checked={acknowledgedKey === command.key} disabled={busy}
+      onChange={(event) => setAcknowledgedKey(event.target.checked ? command.key : null)} />
+      I acknowledge the Content queue limitations above and deliberately submit this unqualified Content request for queue admission.</label>}
     <div className="source-action-buttons">
-      {phase === 'review' && <><button type="button" className="primary-button" disabled={busy} onClick={() => void submit()}>Confirm Reliability submission</button>
+      {phase === 'review' && <><button type="button" className="primary-button" disabled={busy || content && acknowledgedKey !== command.key} onClick={() => void submit()}>Confirm {content ? 'Content' : 'Reliability'} submission</button>
         <button type="button" className="secondary-button" disabled={busy} onClick={() => retain(null)}>Cancel run review</button></>}
       {(phase === 'pending' || phase === 'uncertain') && <button type="button" className="primary-button" disabled={busy} onClick={() => void submit()}>{busy ? 'Request pending' : 'Resolve same run request'}</button>}
       {phase === 'rejected' && <button type="button" className="secondary-button" onClick={() => retain(null)}>Return to selection and deliberate review</button>}

@@ -1,7 +1,8 @@
 # Gated Content submission and discovery
 
 This is a metadata-only prerequisite of [ADR 0043](../adr/0043-integrated-original-content-pipeline.md).
-Normal Content dispatch remains disabled. Discovery and HTTP 202 admission do not qualify installed
+Public Content operational activation remains deferred. The separately configured original worker
+lifecycle does not turn discovery into readiness. Discovery and HTTP 202 admission do not qualify installed
 packages, files, source reachability, current artifact bytes, worker readiness or publication activation.
 The original-run native executor must independently qualify the complete runtime before FETCH.
 
@@ -79,3 +80,13 @@ old Flyway version. That helper retains genuine frozen selections, qualification
 audit records while returning only the seed run identity/state. It creates no V21 tables and fabricates
 no native evidence; the original Flyway upgrade and history-preservation assertions still run. Current
 API/repository paths retain the required V21 schema and never fall back when tables are absent.
+
+## E5.3 explicit queued UI
+
+The owner-approved [queued Content UI](e53-content-queued-submission-ui.md) consumes these unchanged
+GET contracts and the narrow POST shape. It requires an explicit new-request acknowledgment and
+preserves one retained same-key/body intent across Content and Reliability. Queue admission may
+remain unfinished indefinitely and can be claimed by a separately approved compatible worker later;
+it neither starts a worker nor establishes public qualification or changes Analytics selection.
+The frontend requires all metadata-only markers and rechecks the current source before review.
+Public execution remains deferred under #47; backend validation and execution controls are authoritative.
